@@ -1,0 +1,17 @@
+[package]
+name = "gun-rs"
+version = "0.1.0"
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+serde = { version =  "1.0", features = ["derive"] }
+serde_json = "1.0.64"
+rand = "^0.8"
+clap = "2.33.3"
+pretty_env_logger = "0.4.0"
+futures = "0.3.17"
+tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1.7"
+warp = "0.3"
