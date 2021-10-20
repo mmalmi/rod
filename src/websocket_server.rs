@@ -13,6 +13,7 @@ use warp::ws::{Message, WebSocket};
 use warp::Filter;
 
 use serde_json::Value;
+use gun_rs::Node;
 
 /// Our global unique user id counter.
 static NEXT_USER_ID: AtomicUsize = AtomicUsize::new(1);
@@ -35,7 +36,7 @@ type Users = Arc<RwLock<HashMap<usize, User>>>;
 
 #[tokio::main]
 pub async fn serve() {
-//    let node = Node::new();
+    let node = Node::new();
 
     pretty_env_logger::init();
 
