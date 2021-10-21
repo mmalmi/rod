@@ -1,12 +1,12 @@
-mod websocket_server;
 extern crate clap;
 use clap::{Arg, App, SubCommand};
+use gun_rs::Node;
 
 fn main() {
     let matches = App::new("My Super Program")
                           .version("1.0")
-                          .author("Kevin K. <kbknapp@gmail.com>")
-                          .about("Does awesome things")
+                          .author("Martti Malmi")
+                          .about("Gun runner")
                           .arg(Arg::with_name("config")
                                .short("c")
                                .long("config")
@@ -14,9 +14,7 @@ fn main() {
                                .help("Sets a custom config file")
                                .takes_value(true))
                           .subcommand(SubCommand::with_name("serve")
-                                      .about("runs the rod server")
-                                      .version("1.3")
-                                      .author("Someone E. <someone_else@other.com>")
+                                      .about("runs the gun server")
                                       .arg(Arg::with_name("debug")
                                           .short("d")
                                           .help("print debug information verbosely")))
@@ -29,6 +27,6 @@ fn main() {
         if matches.is_present("debug") {
             println!("Printing debug info...");
         }
-        websocket_server::serve();
+        let _ = Node::new();
     }
 }

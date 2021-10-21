@@ -1,4 +1,6 @@
 mod utils;
+mod websocket_server;
+use websocket_server::WebsocketServer;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::SystemTime;
 use std::sync::{
@@ -35,8 +37,13 @@ impl From<String> for GunValue {
     }
 }
 
-trait Adapter {
-    fn send_with_str(&self, m: &String) -> Result<String, String>;
+pub type NetworkAdapterCallback = Box<dyn FnMut(&SerdeJsonValue) -> ()>;
+
+pub trait NetworkAdapter {
+    fn on_message(&mut self, callback: NetworkAdapterCallback);
+    fn start(&self);
+    fn stop(&self);
+    fn send_str(&self, m: &String);
 }
 
 // Nodes need to be cloneable so that each instance points to the same data in the graph.
@@ -48,7 +55,7 @@ type Children = Arc<RwLock<BTreeMap<String, usize>>>;
 type Parents = Arc<RwLock<HashSet<(usize, String)>>>;
 type Subscriptions = Arc<RwLock<HashMap<usize, Callback>>>;
 type SharedNodeStore = Arc<RwLock<HashMap<usize, Node>>>;
-type SharedWebSockets = Arc<RwLock<HashMap<String, Box<dyn Adapter>>>>;
+type NetworkAdapters = Arc<RwLock<HashMap<String, Box<dyn NetworkAdapter>>>>;
 
 // TODO proper automatic tests
 // TODO break into submodules
@@ -66,12 +73,12 @@ pub struct Node {
     on_subscriptions: Subscriptions,
     map_subscriptions: Subscriptions,
     store: SharedNodeStore,
-    websockets: SharedWebSockets
+    network_adapters: NetworkAdapters
 }
 
 impl Node {
     pub fn new() -> Self {
-        Self {
+        let node = Self {
             id: 0,
             updated_at: Arc::new(RwLock::new(0.0)),
             key: "".to_string(),
@@ -82,8 +89,17 @@ impl Node {
             on_subscriptions: Subscriptions::default(),
             map_subscriptions: Subscriptions::default(),
             store: SharedNodeStore::default(),
-            websockets: SharedWebSockets::default()
-        }
+            network_adapters: NetworkAdapters::default()
+        };
+        let mut server = WebsocketServer::new();
+        let mut node_clone = node.clone();
+        server.on_message(Box::new(move |msg: &SerdeJsonValue| {
+            node_clone.incoming_message(msg, false);
+            println!("received from websocket: {}", msg);
+        }));
+        server.start();
+        node.network_adapters.write().unwrap().insert("ws_server".to_string(), Box::new(server));
+        node
     }
 
     fn new_child(&self, key: String) -> usize {
@@ -106,7 +122,7 @@ impl Node {
             on_subscriptions: Subscriptions::default(),
             map_subscriptions: Subscriptions::default(),
             store: self.store.clone(),
-            websockets: self.websockets.clone()
+            network_adapters: self.network_adapters.clone()
         };
         self.store.write().unwrap().insert(id, node);
         self.children.write().unwrap().insert(key, id);
@@ -123,7 +139,7 @@ impl Node {
         let subscription_id = get_id();
         self.on_subscriptions.write().unwrap().insert(subscription_id, callback);
         let m = self.create_get_msg();
-        if self.websockets.read().unwrap().len() > 0 {
+        if self.network_adapters.read().unwrap().len() > 0 {
             self.ws_send(&m.to_string());
         }
         subscription_id
@@ -294,11 +310,15 @@ impl Node {
     }
 
     fn ws_send(&self, msg: &String) {
-        for ws in self.websockets.read().unwrap().values() {
-            match ws.send_with_str(&msg) {
+        for ws in self.network_adapters.read().unwrap().values() {
+            ws.send_str(&msg);
+            println!("sent: {}", msg);
+            /*
+            match ws.send_str(&msg) {
                 Ok(_) => println!("sent: {}", msg),
                 Err(err) => println!("error sending message: {:?}", err),
             }
+            */
         }
     }
 
@@ -363,7 +383,7 @@ impl Node {
     pub fn put(&mut self, value: GunValue) {
         let time: f64 = (SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_nanos() as f64) / 1000.0;
         self.put_local(value.clone(), time);
-        if self.websockets.read().unwrap().len() > 0 {
+        if self.network_adapters.read().unwrap().len() > 0 {
             let m = self.create_put_msg(&value, time);
             self.ws_send(&m);
         }
