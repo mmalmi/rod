@@ -6,14 +6,16 @@ use std::sync::{
 };
 use std::env;
 
-use futures::{SinkExt, StreamExt, TryFutureExt};
+use futures_util::{SinkExt, StreamExt, TryFutureExt};
 use tokio::sync::{mpsc, RwLock};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use warp::ws::{Message, WebSocket};
 use warp::Filter;
+use async_trait::async_trait;
 
 use serde_json::Value;
-use crate::{NetworkAdapter, NetworkAdapterCallback};
+use crate::types::NetworkAdapter;
+use crate::Node;
 
 /// Our global unique user id counter.
 static NEXT_USER_ID: AtomicUsize = AtomicUsize::new(1);
@@ -35,16 +37,23 @@ impl User {
 type Users = Arc<RwLock<HashMap<usize, User>>>;
 
 pub struct WebsocketServer {
-    on_message_callback: Option<NetworkAdapterCallback>
+    node: Node,
+    users: Users
 }
 
+#[async_trait]
 impl NetworkAdapter for WebsocketServer {
-    fn on_message(&mut self, callback: NetworkAdapterCallback) {
-        self.on_message_callback = Some(callback);
+    fn new(node: Node) -> Self {
+        WebsocketServer {
+            node: node.clone(),
+            users: Users::default()
+        }
     }
 
-    fn start(&self) {
-        self.serve();
+    async fn start(&self) {
+        let node = self.node.clone();
+        let users = self.users.clone();
+        Self::serve(node, users).await;
     }
 
     fn stop(&self) {
@@ -52,24 +61,25 @@ impl NetworkAdapter for WebsocketServer {
     }
 
     fn send_str(&self, m: &String) -> () {
-
+        let users = self.users.clone();
+        let m = m.clone();
+        tokio::task::spawn(async move {
+            Self::send_str(users, &m).await;
+        });
     }
 }
 
 impl WebsocketServer {
-    pub fn new() -> Self {
-        WebsocketServer {
-            on_message_callback: None
+    async fn send_str(users: Users, m: &String) {
+        for user in users.read().await.values() {
+            println!("out {}\n", m);
+            let _ = user.sender.send(Message::text(m));
         }
     }
 
-    #[tokio::main]
-    pub async fn serve(&self) {
+    async fn serve(node: Node, users: Users) {
         pretty_env_logger::init();
 
-        // Keep track of all connected users, key is usize, value
-        // is a websocket sender.
-        let users = Users::default();
         // Turn our "state" into a new Filter...
         let users = warp::any().map(move || users.clone());
 
@@ -78,14 +88,16 @@ impl WebsocketServer {
             // The `ws()` filter will prepare Websocket handshake...
             .and(warp::ws())
             .and(users)
-            .map(|ws: warp::ws::Ws, users| {
+            .map(move |ws: warp::ws::Ws, users| {
                 // This will call our function if the handshake succeeds.
-                ws.on_upgrade(move |socket| Self::user_connected(socket, users))
+                let node_clone = node.clone();
+                ws.on_upgrade(move |socket| Self::user_connected(node_clone.clone(), socket, users))
             });
 
         let iris = warp::fs::dir("assets/iris");
+        let assets = warp::fs::dir("assets");
 
-        let routes = iris.or(chat);
+        let routes = iris.or(assets).or(chat);
 
         let port: u16 = match env::var("PORT") {
             Ok(p) => p.parse::<u16>().unwrap(),
@@ -96,7 +108,7 @@ impl WebsocketServer {
         warp::serve(routes).run(([0, 0, 0, 0], port)).await;
     }
 
-    async fn user_connected(ws: WebSocket, users: Users) {
+    async fn user_connected(mut node: Node, ws: WebSocket, users: Users) {
         // Use a counter to assign a new unique ID for this user.
         let my_id = NEXT_USER_ID.fetch_add(1, Ordering::Relaxed);
 
@@ -131,6 +143,8 @@ impl WebsocketServer {
         let user = User::new(tx);
         users.write().await.insert(my_id, user);
 
+        node.get("node_stats").get("connection_count").put(users.read().await.len().to_string().into());
+
         // Return a `Future` that is basically a state machine managing
         // this specific user's connection.
 
@@ -144,15 +158,16 @@ impl WebsocketServer {
                     break;
                 }
             };
-            Self::user_message(my_id, msg, &users).await;
+            Self::user_message(&mut node, my_id, msg, &users).await;
         }
 
         // user_ws_rx stream will keep processing as long as the user stays
         // connected. Once they disconnect, then...
         Self::user_disconnected(my_id, &users).await;
+        node.get("node_stats").get("connection_count").put(users.read().await.len().to_string().into());
     }
 
-    async fn user_message(my_id: usize, msg: Message, users: &Users) {
+    async fn user_message(node: &mut Node, my_id: usize, msg: Message, users: &Users) {
         let msg_str = if let Ok(s) = msg.to_str() {
             s
         } else {
@@ -164,25 +179,27 @@ impl WebsocketServer {
             Err(_) => { return; }
         };
 
-        println!("{}", json);
+        //println!("{}", json);
 
         if json.is_array() {
             for sth in json.as_array().iter() {
                 for obj in sth.iter() {
-                    Self::user_message_single(my_id, users, obj, msg_str).await;
+                    Self::user_message_single(node, my_id, users, obj, msg_str).await;
                 }
             }
         } else {
-            Self::user_message_single(my_id, users, &json, msg_str).await;
+            Self::user_message_single(node, my_id, users, &json, msg_str).await;
         }
     }
 
-    async fn user_message_single(my_id: usize, users: &Users, json: &Value, msg_str: &str) {
+    async fn user_message_single(node: &mut Node, my_id: usize, users: &Users, json: &Value, msg_str: &str) {
         // eprintln!("user {} sent request with id {}, get {} and put {}", my_id, json["#"], json["get"], json["put"]);
         if json["#"] == Value::Null || (json["get"] == Value::Null && json["put"] == Value::Null) {
             // eprintln!("user {} sent funny request {}", my_id, msg_str);
             return;
         }
+
+        node.incoming_message(json, false);
 
         if json["get"] != Value::Null {
             match users.write().await.get_mut(&my_id) {
@@ -225,7 +242,7 @@ impl WebsocketServer {
     }
 
     async fn user_disconnected(my_id: usize, users: &Users) {
-        eprintln!("good bye user: {}", my_id);
+        eprintln!("good bye user: {}", my_id); // TODO there are often many connections started per client but not closed
 
         // Stream closed up, so remove from the user list
         users.write().await.remove(&my_id);

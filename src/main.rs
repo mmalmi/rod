@@ -1,8 +1,10 @@
 extern crate clap;
 use clap::{Arg, App, SubCommand};
 use gun_rs::Node;
+use gun_rs::types::GunValue;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let matches = App::new("My Super Program")
                           .version("1.0")
                           .author("Martti Malmi")
@@ -27,6 +29,14 @@ fn main() {
         if matches.is_present("debug") {
             println!("Printing debug info...");
         }
-        let _ = Node::new();
+        let mut node = Node::new();
+
+        node.get("asdf").get("fasd").on(Box::new(|value: GunValue, key: String| { // TODO how to do it without Box? https://stackoverflow.com/questions/41081240/idiomatic-callbacks-in-rust
+            if let GunValue::Text(str) = value {
+                println!("key {} value {}", &key, &str);
+            }
+        }));
+
+        node.start().await;
     }
 }

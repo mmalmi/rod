@@ -11,7 +11,9 @@ serde_json = "1.0.64"
 rand = "^0.8"
 clap = "2.33.3"
 pretty_env_logger = "0.4.0"
-futures = "0.3.17"
-tokio = { version = "1", features = ["full"] }
+futures-channel = "0.3.17"
+futures-util = "0.3.17"
+tokio = { version = "1.12.0", default-features = false, features = ["io-std", "macros", "net", "rt-multi-thread", "time"] }
 tokio-stream = "0.1.7"
-warp = "0.3"
+warp = "0.3.1"
+async-trait = "0.1.51"
