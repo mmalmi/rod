@@ -16,6 +16,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 use crate::types::NetworkAdapter;
 use crate::Node;
+use log::{debug};
 
 /// Our global unique user id counter.
 static NEXT_USER_ID: AtomicUsize = AtomicUsize::new(1);
@@ -72,7 +73,7 @@ impl NetworkAdapter for WebsocketServer {
 impl WebsocketServer {
     async fn send_str(users: Users, m: &String) {
         for user in users.read().await.values() {
-            println!("out {}\n", m);
+            debug!("out {}\n", m);
             let _ = user.sender.try_send(Message::text(m));
         }
     }
@@ -104,7 +105,7 @@ impl WebsocketServer {
             _ => 5000
         };
 
-        eprintln!("Starting server at http://localhost:{}", port);
+        debug!("Starting server at http://localhost:{}", port);
         warp::serve(routes).run(([0, 0, 0, 0], port)).await;
     }
 
@@ -112,7 +113,7 @@ impl WebsocketServer {
         // Use a counter to assign a new unique ID for this user.
         let my_id = NEXT_USER_ID.fetch_add(1, Ordering::Relaxed);
 
-        eprintln!("new chat user: {}", my_id);
+        debug!("new chat user: {}", my_id);
 
         // Split the socket into a sender and receive of messages.
         let (mut user_ws_tx, mut user_ws_rx) = ws.split();
@@ -134,7 +135,7 @@ impl WebsocketServer {
                 user_ws_tx
                     .send(message)
                     .unwrap_or_else(|e| {
-                        eprintln!("websocket send error: {}", e);
+                        debug!("websocket send error: {}", e);
                         errored = true;
                     })
                     .await;
@@ -160,7 +161,7 @@ impl WebsocketServer {
             let msg = match result {
                 Ok(msg) => msg,
                 Err(e) => {
-                    eprintln!("websocket error(uid={}): {}", my_id, e);
+                    debug!("websocket error(uid={}): {}", my_id, e);
                     break;
                 }
             };
@@ -185,7 +186,7 @@ impl WebsocketServer {
             Err(_) => { return; }
         };
 
-        //println!("{}", json);
+        //debug!("{}", json);
 
         if json.is_array() {
             for sth in json.as_array().iter() {
@@ -199,9 +200,9 @@ impl WebsocketServer {
     }
 
     async fn user_message_single(node: &mut Node, my_id: usize, users: &Users, json: &Value, msg_str: &str) {
-        // eprintln!("user {} sent request with id {}, get {} and put {}", my_id, json["#"], json["get"], json["put"]);
+        // debug!("user {} sent request with id {}, get {} and put {}", my_id, json["#"], json["get"], json["put"]);
         if json["#"] == Value::Null || (json["get"] == Value::Null && json["put"] == Value::Null) {
-            // eprintln!("user {} sent funny request {}", my_id, msg_str);
+            // debug!("user {} sent funny request {}", my_id, msg_str);
             return;
         }
 
@@ -248,7 +249,7 @@ impl WebsocketServer {
     }
 
     async fn user_disconnected(my_id: usize, users: &Users) {
-        eprintln!("good bye user: {}", my_id); // TODO there are often many connections started per client but not closed
+        debug!("good bye user: {}", my_id); // TODO there are often many connections started per client but not closed
 
         // Stream closed up, so remove from the user list
         users.write().await.remove(&my_id);

@@ -9,6 +9,7 @@ use serde_json::{json, Value as SerdeJsonValue};
 use crate::types::*;
 use crate::utils::random_string;
 use crate::adapters::WebsocketServer;
+use log::{debug};
 
 static COUNTER: AtomicUsize = AtomicUsize::new(1);
 fn get_id() -> usize { COUNTER.fetch_add(1, Ordering::Relaxed) }
@@ -211,7 +212,7 @@ impl Node {
             return;
         }
         if let Some(obj) = msg.as_object() {
-            println!("in {}\n", msg);
+            debug!("in {}\n", msg);
             if let Some(put) = obj.get("put") {
                 if let Some(obj) = put.as_object() {
                     self.incoming_put(obj);
@@ -320,7 +321,7 @@ impl Node {
         if let Some(path) = get.get("#") {
             if let Some(path) = path.as_str() {
                 if let Some(key) = get.get(".") {
-                    // println!("yes . {} {}", path, key);
+                    // debug!("yes . {} {}", path, key);
                     if let Some(key) = key.as_str() {
                         let mut split = path.split("/");
                         let mut node = self.get(split.nth(0).unwrap());
@@ -338,7 +339,7 @@ impl Node {
                     }
                     node.send_get_response_if_have();
 
-                    // println!("no {}", path);
+                    // debug!("no {}", path);
                 }
             }
         }
@@ -354,7 +355,7 @@ impl Node {
     }
 
     fn put_local(&mut self, value: GunValue, time: f64) {
-        println!("put_local\n {}\n {:?}\n", self.path.join("/"), value);
+        debug!("put_local\n {}\n {:?}\n", self.path.join("/"), value);
         // root.get(soul).get(key).put(jsvalue)
         // TODO handle javascript Object values
         // TODO: if "children" is replaced with "value", remove backreference from linked objects
@@ -420,6 +421,6 @@ mod tests {
         }
         let duration = start.elapsed();
         let per_second = (n as f64) / (duration.as_nanos() as f64) * 1000000000.0;
-        println!("Wrote {} entries in {:?} ({} / second)", n, duration, per_second);
+        debug!("Wrote {} entries in {:?} ({} / second)", n, duration, per_second);
     }
 }
