@@ -345,7 +345,7 @@ impl Node {
     }
 
     pub fn put(&mut self, value: GunValue) {
-        let time: f64 = (SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis() as f64);
+        let time: f64 = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis() as f64;
         self.put_local(value.clone(), time);
         if self.network_adapters.read().unwrap().len() > 0 {
             let m = self.create_put_msg(&value, time);
