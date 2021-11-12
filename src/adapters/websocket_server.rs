@@ -22,12 +22,11 @@ use log::{debug};
 static NEXT_USER_ID: AtomicUsize = AtomicUsize::new(1);
 
 struct User {
-    sender: mpsc::Sender<Message>,
-    subscriptions: HashSet<String>
+    sender: mpsc::Sender<Message>
 }
 impl User {
     fn new(sender: mpsc::Sender<Message>) -> User {
-        User { sender, subscriptions: HashSet::new() }
+        User { sender }
     }
 }
 
@@ -207,45 +206,8 @@ impl WebsocketServer {
         }
 
         node.incoming_message(json, false);
-
-        if json["get"] != Value::Null {
-            match users.write().await.get_mut(&my_id) {
-                Some(user) => {
-                    match json["get"]["#"].as_str() {
-                        Some(path) => { user.subscriptions.insert(path.to_string()); },
-                        _ => {}
-                    }
-                },
-                _ => { return; }
-            }
-        }
-
-        // New message from this user, relay it to everyone else (except same uid)...
-        for (&uid, user) in users.read().await.iter() {
-            if my_id != uid {
-                match &json["put"] {
-                    Value::Object(put) => {
-                        let mut has = false;
-                        for (put_path, _v) in put.into_iter() {
-                            for s in user.subscriptions.iter() {
-                                if s.find(put_path) != None || put_path.find(s) != None {
-                                    has = true;
-                                    break;
-                                }
-                            }
-                            if has {
-                                break;
-                            }
-                        }
-                        if !has {
-                            continue;
-                        }
-                    },
-                    _ => {}
-                }
-                let _ = user.sender.try_send(Message::text(json.to_string()));
-            }
-        }
+        
+        let _ = user.sender.try_send(Message::text(json.to_string()));
     }
 
     async fn user_disconnected(my_id: usize, users: &Users) {
