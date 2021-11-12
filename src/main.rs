@@ -1,6 +1,3 @@
-#[macro_use]
-extern crate log;
-
 extern crate clap;
 use clap::{Arg, App, SubCommand};
 use gun_rs::Node;

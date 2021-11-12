@@ -1,5 +1,5 @@
 // #![deny(warnings)]
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
@@ -190,15 +190,15 @@ impl WebsocketServer {
         if json.is_array() {
             for sth in json.as_array().iter() {
                 for obj in sth.iter() {
-                    Self::user_message_single(node, my_id, users, obj, msg_str).await;
+                    Self::user_message_single(node, my_id, users, obj).await;
                 }
             }
         } else {
-            Self::user_message_single(node, my_id, users, &json, msg_str).await;
+            Self::user_message_single(node, my_id, users, &json).await;
         }
     }
 
-    async fn user_message_single(node: &mut Node, my_id: usize, users: &Users, json: &Value, msg_str: &str) {
+    async fn user_message_single(node: &mut Node, my_id: usize, users: &Users, json: &Value) {
         // debug!("user {} sent request with id {}, get {} and put {}", my_id, json["#"], json["get"], json["put"]);
         if json["#"] == Value::Null || (json["get"] == Value::Null && json["put"] == Value::Null) {
             // debug!("user {} sent funny request {}", my_id, msg_str);
@@ -206,8 +206,13 @@ impl WebsocketServer {
         }
 
         node.incoming_message(json, false);
-        
-        let _ = user.sender.try_send(Message::text(json.to_string()));
+
+        // New message from this user, relay it to everyone else (except same uid)...
+        for (&uid, user) in users.read().await.iter() {
+            if my_id != uid {
+                let _ = user.sender.try_send(Message::text(json.to_string()));
+            }
+        }
     }
 
     async fn user_disconnected(my_id: usize, users: &Users) {
