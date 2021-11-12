@@ -234,16 +234,17 @@ impl Node {
             }
             if let Some(updated_at_times) = update_data["_"][">"].as_object() {
                 for (child_key, incoming_val_updated_at) in updated_at_times.iter() {
-                    let incoming_val_updated_at = incoming_val_updated_at.as_f64().unwrap();
-                    let mut child = node.get(child_key);
-                    if *child.updated_at.read().unwrap() < incoming_val_updated_at {
-                        // TODO if incoming_val_updated_at > current_time { defer_operation() }
-                        if let Some(new_value) = update_data.get(child_key) {
-                            if let Ok(new_value) = serde_json::from_value::<GunValue>(new_value.clone()) {
-                                child.put_local(new_value, incoming_val_updated_at);
+                    if let Some(incoming_val_updated_at) = incoming_val_updated_at.as_f64() {
+                        let mut child = node.get(child_key);
+                        if *child.updated_at.read().unwrap() < incoming_val_updated_at {
+                            // TODO if incoming_val_updated_at > current_time { defer_operation() }
+                            if let Some(new_value) = update_data.get(child_key) {
+                                if let Ok(new_value) = serde_json::from_value::<GunValue>(new_value.clone()) {
+                                    child.put_local(new_value, incoming_val_updated_at);
+                                }
                             }
-                        }
-                    } // TODO else append to history
+                        } // TODO else append to history
+                    }
                 }
             }
         }
