@@ -119,7 +119,13 @@ impl WebsocketServer {
 
         // Use a channel to handle buffering and flushing of messages
         // to the websocket...
-        let (tx, rx) = mpsc::channel(10);
+
+        let channel_size: u16 = match env::var("RUST_CHANNEL_SIZE") {
+            Ok(p) => p.parse::<u16>().unwrap(),
+            _ => 10
+        };
+
+        let (tx, rx) = mpsc::channel(channel_size.into());
         let mut rx = ReceiverStream::new(rx);
 
         tokio::task::spawn(async move {
