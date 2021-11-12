@@ -15,7 +15,7 @@
 
 <script src="/stats/gun.js"></script>
 <script>
-gun = window.gun = GUN('http://localhost:5000/gun');
+gun = window.gun = GUN(document.location.origin + '/gun');
 
 gun.get('node_stats').get('connection_count').on((data, key) => {
   console.log(key, data);
