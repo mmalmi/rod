@@ -8,7 +8,7 @@ use std::env;
 
 use futures_util::{SinkExt, StreamExt, TryFutureExt};
 use tokio::sync::{mpsc, RwLock};
-use tokio_stream::wrappers::UnboundedReceiverStream;
+use tokio_stream::wrappers::ReceiverStream;
 use warp::ws::{Message, WebSocket};
 use warp::Filter;
 use async_trait::async_trait;
@@ -21,11 +21,11 @@ use crate::Node;
 static NEXT_USER_ID: AtomicUsize = AtomicUsize::new(1);
 
 struct User {
-    sender: mpsc::UnboundedSender<Message>,
+    sender: mpsc::Sender<Message>,
     subscriptions: HashSet<String>
 }
 impl User {
-    fn new(sender: mpsc::UnboundedSender<Message>) -> User {
+    fn new(sender: mpsc::Sender<Message>) -> User {
         User { sender, subscriptions: HashSet::new() }
     }
 }
@@ -73,7 +73,7 @@ impl WebsocketServer {
     async fn send_str(users: Users, m: &String) {
         for user in users.read().await.values() {
             println!("out {}\n", m);
-            let _ = user.sender.send(Message::text(m));
+            let _ = user.sender.try_send(Message::text(m));
         }
     }
 
@@ -119,8 +119,8 @@ impl WebsocketServer {
 
         // Use a channel to handle buffering and flushing of messages
         // to the websocket...
-        let (tx, rx) = mpsc::unbounded_channel();
-        let mut rx = UnboundedReceiverStream::new(rx);
+        let (tx, rx) = mpsc::channel(10);
+        let mut rx = ReceiverStream::new(rx);
 
         tokio::task::spawn(async move {
             while let Some(message) = rx.next().await {
@@ -236,7 +236,7 @@ impl WebsocketServer {
                     },
                     _ => {}
                 }
-                let _ = user.sender.send(Message::text(json.to_string()));
+                let _ = user.sender.try_send(Message::text(json.to_string()));
             }
         }
     }
