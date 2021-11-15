@@ -1,6 +1,6 @@
 # Gun-rs
 
-Pure Rust implementation of Gun. As of 15/11/2021 has in-memory and websocket server functionality. For a wasm version, check out [rusty-gun](https://github.com/mmalmi/rusty-gun).
+Pure Rust implementation of [Gun](https://github.com/amark/gun). As of 15/11/2021 has in-memory and websocket server functionality. For a wasm version, check out [rusty-gun](https://github.com/mmalmi/rusty-gun).
 
 Deployed at https://gun-rs.herokuapp.com (serves [iris-messenger](https://github.com/irislib/iris-messenger) at the root)
 
