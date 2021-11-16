@@ -11,7 +11,7 @@ Live stats: https://gun-rs.herokuapp.com/stats
 
 ```
 cargo install cargo-watch
-cargo watch -x 'run -- serve'
+RUST_LOG=debug cargo watch -x 'run -- serve'
 ```
 
 ## Run on Heroku

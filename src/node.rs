@@ -9,6 +9,7 @@ use serde_json::{json, Value as SerdeJsonValue};
 use crate::types::*;
 use crate::utils::random_string;
 use crate::adapters::WebsocketServer;
+use crate::adapters::WebsocketClient;
 use log::{debug};
 
 static COUNTER: AtomicUsize = AtomicUsize::new(1);
@@ -52,7 +53,9 @@ impl Node {
         };
 
         let server = WebsocketServer::new(node.clone());
+        let client = WebsocketClient::new(node.clone());
         node.network_adapters.write().unwrap().insert("ws_server".to_string(), Box::new(server));
+        node.network_adapters.write().unwrap().insert("ws_client".to_string(), Box::new(client));
         node
     }
 
