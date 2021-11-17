@@ -5,6 +5,7 @@ use gun_rs::types::GunValue;
 
 #[tokio::main]
 async fn main() {
+    env_logger::init();
     let matches = App::new("My Super Program")
                           .version("1.0")
                           .author("Martti Malmi")

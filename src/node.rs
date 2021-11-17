@@ -54,7 +54,7 @@ impl Node {
 
         let server = WebsocketServer::new(node.clone());
         let client = WebsocketClient::new(node.clone());
-        node.network_adapters.write().unwrap().insert("ws_server".to_string(), Box::new(server));
+        // node.network_adapters.write().unwrap().insert("ws_server".to_string(), Box::new(server));
         node.network_adapters.write().unwrap().insert("ws_client".to_string(), Box::new(client));
         node
     }
