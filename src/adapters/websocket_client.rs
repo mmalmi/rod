@@ -29,7 +29,7 @@ impl User {
 
 pub struct WebsocketClient {
     node: Node,
-    sockets: Sockets
+    users: Users
 }
 
 #[async_trait]
@@ -37,7 +37,7 @@ impl NetworkAdapter for WebsocketClient {
     fn new(node: Node) -> Self {
         WebsocketClient {
             node: node.clone(),
-            sockets: Sockets::default()
+            users: Users::default()
         }
     }
 
@@ -48,8 +48,8 @@ impl NetworkAdapter for WebsocketClient {
             Url::parse("wss://gun-us.herokuapp.com/gun").expect("Can't connect to URL"),
         ).await.unwrap();
         debug!("connected");
-        self.sockets.write().await.insert("sth".to_string(), socket);
-        listen(self.node.clone(), self.sockets.clone());
+        self.users.write().await.insert("sth".to_string(), socket);
+        listen(self.node.clone(), self.users.clone());
     }
 
     fn stop(&self) {
@@ -61,73 +61,73 @@ impl NetworkAdapter for WebsocketClient {
     }
 }
 
-    async fn user_connected(mut node: Node, ws: WebSocket, users: Users) { // TODO copied from server, need similar here.
-        // Use a counter to assign a new unique ID for this user.
-        let my_id = NEXT_USER_ID.fetch_add(1, Ordering::Relaxed);
+async fn user_connected(mut node: Node, ws: WebSocket, users: Users) { // TODO copied from server, need similar here.
+    // Use a counter to assign a new unique ID for this user.
+    let my_id = NEXT_USER_ID.fetch_add(1, Ordering::Relaxed);
 
-        debug!("new chat user: {}", my_id);
+    debug!("new chat user: {}", my_id);
 
-        // Split the socket into a sender and receive of messages.
-        let (mut user_ws_tx, mut user_ws_rx) = ws.split();
+    // Split the socket into a sender and receive of messages.
+    let (mut user_ws_tx, mut user_ws_rx) = ws.split();
 
-        // Use a channel to handle buffering and flushing of messages
-        // to the websocket...
+    // Use a channel to handle buffering and flushing of messages
+    // to the websocket...
 
-        let channel_size: u16 = match env::var("RUST_CHANNEL_SIZE") {
-            Ok(p) => p.parse::<u16>().unwrap(),
-            _ => 10
-        };
+    let channel_size: u16 = match env::var("RUST_CHANNEL_SIZE") {
+        Ok(p) => p.parse::<u16>().unwrap(),
+        _ => 10
+    };
 
-        let (tx, rx) = mpsc::channel(channel_size.into());
-        let mut rx = ReceiverStream::new(rx);
+    let (tx, rx) = mpsc::channel(channel_size.into());
+    let mut rx = ReceiverStream::new(rx);
 
-        tokio::task::spawn(async move {
-            while let Some(message) = rx.next().await {
-                let mut errored = false;
-                user_ws_tx
-                    .send(message)
-                    .unwrap_or_else(|e| {
-                        debug!("websocket send error: {}", e);
-                        errored = true;
-                    })
-                    .await;
-                if errored {
-                    let _ = user_ws_tx.close().await;
-                    break;
-                }
+    tokio::task::spawn(async move {
+        while let Some(message) = rx.next().await {
+            let mut errored = false;
+            user_ws_tx
+                .send(message)
+                .unwrap_or_else(|e| {
+                    debug!("websocket send error: {}", e);
+                    errored = true;
+                })
+                .await;
+            if errored {
+                let _ = user_ws_tx.close().await;
+                break;
             }
-        });
-
-        // Save the sender in our list of connected users.
-        let user = User::new(tx);
-        users.write().await.insert(my_id, user);
-
-        node.get("node_stats").get("connection_count").put(users.read().await.len().to_string().into());
-
-        // Return a `Future` that is basically a state machine managing
-        // this specific user's connection.
-
-        // Every time the user sends a message, broadcast it to
-        // all other users...
-        while let Some(result) = user_ws_rx.next().await {
-            let msg = match result {
-                Ok(msg) => msg,
-                Err(e) => {
-                    debug!("websocket error(uid={}): {}", my_id, e);
-                    break;
-                }
-            };
-            Self::user_message(&mut node, my_id, msg, &users).await;
         }
+    });
 
-        // user_ws_rx stream will keep processing as long as the user stays
-        // connected. Once they disconnect, then...
-        Self::user_disconnected(my_id, &users).await;
-        node.get("node_stats").get("connection_count").put(users.read().await.len().to_string().into());
+    // Save the sender in our list of connected users.
+    let user = User::new(tx);
+    users.write().await.insert(my_id, user);
+
+    node.get("node_stats").get("connection_count").put(users.read().await.len().to_string().into());
+
+    // Return a `Future` that is basically a state machine managing
+    // this specific user's connection.
+
+    // Every time the user sends a message, broadcast it to
+    // all other users...
+    while let Some(result) = user_ws_rx.next().await {
+        let msg = match result {
+            Ok(msg) => msg,
+            Err(e) => {
+                debug!("websocket error(uid={}): {}", my_id, e);
+                break;
+            }
+        };
+        Self::user_message(&mut node, my_id, msg, &users).await;
     }
 
-async fn listen(node: Node, sockets: Sockets) {
-    for socket in sockets.read().await.values() {
+    // user_ws_rx stream will keep processing as long as the user stays
+    // connected. Once they disconnect, then...
+    Self::user_disconnected(my_id, &users).await;
+    node.get("node_stats").get("connection_count").put(users.read().await.len().to_string().into());
+}
+
+async fn listen(node: Node, users: Users) {
+    for socket in users.read().await.values() {
         while let Some(msg) = socket.next().await {
             let msg = msg.unwrap();
             if msg.is_text() {
