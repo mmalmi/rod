@@ -1,11 +1,13 @@
 use futures_util::{SinkExt, StreamExt};
 use log::*;
+use std::env;
 use tokio_tungstenite::{
     connect_async,
-    tungstenite::{Error, Result},
+    tungstenite::{Error, Result, Message},
     WebSocketStream
 };
 use tokio::sync::{mpsc, RwLock};
+use tokio_stream::wrappers::ReceiverStream;
 use url::Url;
 use std::collections::HashMap;
 
@@ -44,12 +46,13 @@ impl NetworkAdapter for WebsocketClient {
     async fn start(&self) {
         debug!("starting WebsocketClient\n");
 
-        let (mut socket, _) = connect_async(
-            Url::parse("wss://gun-us.herokuapp.com/gun").expect("Can't connect to URL"),
-        ).await.unwrap();
-        debug!("connected");
-        self.users.write().await.insert("sth".to_string(), socket);
-        listen(self.node.clone(), self.users.clone());
+        loop {
+            let (mut socket, _) = connect_async(
+                Url::parse("wss://gun-us.herokuapp.com/gun").expect("Can't connect to URL"),
+            ).await.unwrap();
+            debug!("connected");
+            user_connected(self.node.clone(), socket, self.users.clone()).await;
+        }
     }
 
     fn stop(&self) {
@@ -61,9 +64,8 @@ impl NetworkAdapter for WebsocketClient {
     }
 }
 
-async fn user_connected(mut node: Node, ws: WebSocket, users: Users) { // TODO copied from server, need similar here.
-    // Use a counter to assign a new unique ID for this user.
-    let my_id = NEXT_USER_ID.fetch_add(1, Ordering::Relaxed);
+async fn user_connected(mut node: Node, ws: WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>, users: Users) { // TODO copied from server, need similar here.
+    let my_id = "wss://gun-us.herokuapp.com/gun".to_string();
 
     debug!("new chat user: {}", my_id);
 
@@ -83,24 +85,13 @@ async fn user_connected(mut node: Node, ws: WebSocket, users: Users) { // TODO c
 
     tokio::task::spawn(async move {
         while let Some(message) = rx.next().await {
-            let mut errored = false;
-            user_ws_tx
-                .send(message)
-                .unwrap_or_else(|e| {
-                    debug!("websocket send error: {}", e);
-                    errored = true;
-                })
-                .await;
-            if errored {
-                let _ = user_ws_tx.close().await;
-                break;
-            }
+            user_ws_tx.send(message).await;
         }
     });
 
     // Save the sender in our list of connected users.
     let user = User::new(tx);
-    users.write().await.insert(my_id, user);
+    users.write().await.insert(my_id.clone(), user);
 
     node.get("node_stats").get("connection_count").put(users.read().await.len().to_string().into());
 
@@ -113,88 +104,58 @@ async fn user_connected(mut node: Node, ws: WebSocket, users: Users) { // TODO c
         let msg = match result {
             Ok(msg) => msg,
             Err(e) => {
-                debug!("websocket error(uid={}): {}", my_id, e);
                 break;
             }
         };
-        Self::user_message(&mut node, my_id, msg, &users).await;
+        user_message(&mut node, my_id.clone(), msg, &users).await;
     }
 
     // user_ws_rx stream will keep processing as long as the user stays
     // connected. Once they disconnect, then...
-    Self::user_disconnected(my_id, &users).await;
+    users.write().await.remove(&my_id);
     node.get("node_stats").get("connection_count").put(users.read().await.len().to_string().into());
 }
 
-async fn listen(node: Node, users: Users) {
-    for socket in users.read().await.values() {
-        while let Some(msg) = socket.next().await {
-            let msg = msg.unwrap();
-            if msg.is_text() {
-                debug!("msg {}", msg);
-                let json: Value = match serde_json::from_str(&msg.into_text().unwrap()) {
-                    Ok(json) => json,
-                    Err(_) => { continue; }
-                };
-                node.clone().incoming_message(&json, false);
-            }
-        }
+async fn user_message(node: &mut Node, my_id: String, msg: Message, users: &Users) {
+    let msg_str = if let Ok(s) = msg.to_text() {
+        s
+    } else {
+        return;
     };
-}
 
-const AGENT: &str = "Tungstenite";
+    let json: Value = match serde_json::from_str(msg_str) {
+        Ok(json) => json,
+        Err(_) => { return; }
+    };
 
-async fn get_case_count() -> Result<u32> {
-    let (mut socket, _) = connect_async(
-        Url::parse("ws://localhost:9001/getCaseCount").expect("Can't connect to case count URL"),
-    )
-    .await?;
-    let msg = socket.next().await.expect("Can't fetch case count")?;
-    socket.close(None).await?;
-    Ok(msg.into_text()?.parse::<u32>().expect("Can't parse case count"))
-}
+    //debug!("{}", json);
 
-async fn update_reports() -> Result<()> {
-    let (mut socket, _) = connect_async(
-        Url::parse(&format!("ws://localhost:9001/updateReports?agent={}", AGENT))
-            .expect("Can't update reports"),
-    )
-    .await?;
-    socket.close(None).await?;
-    Ok(())
-}
-
-async fn run_test(case: u32) -> Result<()> {
-    info!("Running test case {}", case);
-    let case_url =
-        Url::parse(&format!("ws://localhost:9001/runCase?case={}&agent={}", case, AGENT))
-            .expect("Bad testcase URL");
-
-    let (mut ws_stream, _) = connect_async(case_url).await?;
-    while let Some(msg) = ws_stream.next().await {
-        let msg = msg?;
-        if msg.is_text() || msg.is_binary() {
-            ws_stream.send(msg).await?;
-        }
-    }
-
-    Ok(())
-}
-
-#[tokio::main]
-async fn main() {
-    env_logger::init();
-
-    let total = get_case_count().await.expect("Error getting case count");
-
-    for case in 1..=total {
-        if let Err(e) = run_test(case).await {
-            match e {
-                Error::ConnectionClosed | Error::Protocol(_) | Error::Utf8 => (),
-                err => error!("Testcase failed: {}", err),
+    if json.is_array() {
+        for sth in json.as_array().iter() {
+            for obj in sth.iter() {
+                user_message_single(node, my_id.clone(), users, obj).await;
             }
         }
+    } else {
+        user_message_single(node, my_id.clone(), users, &json).await;
+    }
+}
+
+async fn user_message_single(node: &mut Node, my_id: String, users: &Users, json: &Value) {
+    // debug!("user {} sent request with id {}, get {} and put {}", my_id, json["#"], json["get"], json["put"]);
+    if json["#"] == Value::Null || (json["get"] == Value::Null && json["put"] == Value::Null) {
+        // debug!("user {} sent funny request {}", my_id, msg_str);
+        return;
     }
 
-    update_reports().await.expect("Error updating reports");
+    node.incoming_message(json, false);
+
+    // New message from this user, relay it to everyone else (except same uid)...
+    for u in users.read().await.iter() {
+        let uid = u.0.clone();
+        if my_id != uid {
+            let user = u.1;
+            let _ = user.sender.try_send(Message::text(json.to_string()));
+        }
+    }
 }
