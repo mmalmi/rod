@@ -42,17 +42,18 @@ impl NetworkAdapter for WebsocketClient {
         }
     }
 
-    async fn start(&self) {
-        debug!("starting WebsocketClient\n");
-
-        loop {
-            let (socket, _) = connect_async(
-                Url::parse("wss://gun-rs.herokuapp.com/gun").expect("Can't connect to URL"),
-            ).await.unwrap();
-            debug!("connected");
-            user_connected(self.node.clone(), socket, self.users.clone()).await;
-            let sec = time::Duration::from_millis(1000);
-            thread::sleep(sec);
+    async fn start(&self) { // "wss://gun-us.herokuapp.com/gun"
+        if let Ok(peers) = env::var("PEERS") {
+            debug!("WebsocketClient connecting to {}\n", peers);
+            loop {
+                let (socket, _) = connect_async(
+                    Url::parse(&peers).expect("Can't connect to URL"),
+                ).await.unwrap();
+                debug!("connected");
+                user_connected(self.node.clone(), socket, self.users.clone()).await;
+                let sec = time::Duration::from_millis(1000);
+                thread::sleep(sec);
+            }
         }
     }
 
@@ -61,12 +62,19 @@ impl NetworkAdapter for WebsocketClient {
     }
 
     fn send_str(&self, m: &String) -> () {
-
+        let users = self.users.clone();
+        let m = m.clone();
+        tokio::task::spawn(async move {
+            for user in users.read().await.values() {
+                debug!("WS CLIENT SEND\n");
+                let _ = user.sender.try_send(Message::text(m.to_string()));
+            }
+        });
     }
 }
 
 async fn user_connected(mut node: Node, ws: WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>, users: Users) { // TODO copied from server, need similar here.
-    let my_id = "wss://gun-rs.herokuapp.com/gun".to_string();
+    let my_id = "wss://gun-us.herokuapp.com/gun".to_string();
 
     debug!("new chat user: {}", my_id);
 

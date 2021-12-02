@@ -71,7 +71,7 @@ impl NetworkAdapter for WebsocketServer {
 impl WebsocketServer {
     async fn send_str(users: Users, m: &String) {
         for user in users.read().await.values() {
-            debug!("out {}\n", m);
+            debug!("WS SERVER SEND\n");
             let _ = user.sender.try_send(Message::text(m));
         }
     }
