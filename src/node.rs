@@ -33,7 +33,8 @@ pub struct Node {
     on_subscriptions: Subscriptions,
     map_subscriptions: Subscriptions,
     store: SharedNodeStore,
-    network_adapters: NetworkAdapters
+    network_adapters: NetworkAdapters,
+    seen_messages: SeenMessages
 }
 
 impl Node {
@@ -49,7 +50,8 @@ impl Node {
             on_subscriptions: Subscriptions::default(),
             map_subscriptions: Subscriptions::default(),
             store: SharedNodeStore::default(),
-            network_adapters: NetworkAdapters::default()
+            network_adapters: NetworkAdapters::default(),
+            seen_messages: SeenMessages::default()
         };
 
         let server = WebsocketServer::new(node.clone());
@@ -88,7 +90,9 @@ impl Node {
             on_subscriptions: Subscriptions::default(),
             map_subscriptions: Subscriptions::default(),
             store: self.store.clone(),
-            network_adapters: self.network_adapters.clone()
+            network_adapters: self.network_adapters.clone(),
+            seen_messages: SeenMessages::default()
+
         };
         self.store.write().unwrap().insert(id, node);
         self.children.write().unwrap().insert(key, id);
@@ -208,25 +212,41 @@ impl Node {
         json.to_string()
     }
 
-    fn incoming_message_json(&mut self, msg: &SerdeJsonValue, is_from_array: bool) {
+    fn incoming_message_json(&mut self, msg: &SerdeJsonValue, is_from_array: bool, msg_str: Option<String>) {
         if let Some(array) = msg.as_array() {
             if is_from_array { return; } // don't allow array inside array
             for msg in array.iter() {
-                self.incoming_message_json(msg, true);
+                self.incoming_message_json(msg, true, None);
             }
             return;
         }
         if let Some(obj) = msg.as_object() {
-            debug!("in {}\n", msg);
-            if let Some(put) = obj.get("put") {
-                if let Some(obj) = put.as_object() {
-                    self.incoming_put(obj);
+            if let Some(msg_id) = obj.get("#") {
+                let msg_id = msg_id.to_string();
+                debug!("in ID {}\n", msg_id);
+                if self.seen_messages.read().unwrap().contains(&msg_id) {
+                    debug!("already have ID {}\n", msg_id);
+                    return;
                 }
-            }
-            if let Some(get) = obj.get("get") {
-                if let Some(obj) = get.as_object() {
-                    self.incoming_get(obj);
+                self.seen_messages.write().unwrap().insert(msg_id);
+                let msg_str = match msg_str {
+                    Some(s) => s,
+                    None => msg.to_string()
+                };
+                self.send_to_adapters(&msg_str);
+
+                if let Some(put) = obj.get("put") {
+                    if let Some(obj) = put.as_object() {
+                        self.incoming_put(obj);
+                    }
                 }
+                if let Some(get) = obj.get("get") {
+                    if let Some(obj) = get.as_object() {
+                        self.incoming_get(obj);
+                    }
+                }
+            } else {
+                debug!("msg without id: {}\n", msg);
             }
         }
     }
@@ -237,8 +257,7 @@ impl Node {
             Ok(json) => json,
             Err(_) => { return; }
         };
-        self.send_to_adapters(&msg);
-        self.incoming_message_json(&json, false);
+        self.incoming_message_json(&json, false, Some(msg));
     }
 
     fn incoming_put(&mut self, put: &serde_json::Map<String, SerdeJsonValue>) {

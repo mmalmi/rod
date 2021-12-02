@@ -50,4 +50,5 @@ pub type Children = Arc<RwLock<BTreeMap<String, usize>>>;
 pub type Parents = Arc<RwLock<HashSet<(usize, String)>>>;
 pub type Subscriptions = Arc<RwLock<HashMap<usize, Callback>>>;
 pub type SharedNodeStore = Arc<RwLock<HashMap<usize, Node>>>;
+pub type SeenMessages = Arc<RwLock<HashSet<String>>>;
 pub type NetworkAdapters = Arc<RwLock<HashMap<String, Box<dyn NetworkAdapter + Send + Sync>>>>;
