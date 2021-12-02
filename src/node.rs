@@ -12,6 +12,7 @@ use crate::adapters::WebsocketServer;
 use crate::adapters::WebsocketClient;
 use log::{debug};
 
+static SEEN_MSGS_MAX_SIZE: usize = 1000;
 static COUNTER: AtomicUsize = AtomicUsize::new(1);
 fn get_id() -> usize { COUNTER.fetch_add(1, Ordering::Relaxed) }
 
@@ -34,7 +35,7 @@ pub struct Node {
     map_subscriptions: Subscriptions,
     store: SharedNodeStore,
     network_adapters: NetworkAdapters,
-    seen_messages: SeenMessages
+    seen_messages: Arc<RwLock<BoundedHashSet>>
 }
 
 impl Node {
@@ -51,7 +52,7 @@ impl Node {
             map_subscriptions: Subscriptions::default(),
             store: SharedNodeStore::default(),
             network_adapters: NetworkAdapters::default(),
-            seen_messages: SeenMessages::default()
+            seen_messages: Arc::new(RwLock::new(BoundedHashSet::new(SEEN_MSGS_MAX_SIZE)))
         };
 
         let server = WebsocketServer::new(node.clone());
@@ -91,7 +92,7 @@ impl Node {
             map_subscriptions: Subscriptions::default(),
             store: self.store.clone(),
             network_adapters: self.network_adapters.clone(),
-            seen_messages: SeenMessages::default()
+            seen_messages: Arc::new(RwLock::new(BoundedHashSet::new(SEEN_MSGS_MAX_SIZE)))
 
         };
         self.store.write().unwrap().insert(id, node);
@@ -390,7 +391,7 @@ impl Node {
     }
 
     fn put_local(&mut self, value: GunValue, time: f64) {
-        debug!("put_local\n {}\n {:?}\n", self.path.join("/"), value);
+        //debug!("put_local\n {}\n {:?}\n", self.path.join("/"), value);
         // root.get(soul).get(key).put(jsvalue)
         // TODO handle javascript Object values
         // TODO: if "children" is replaced with "value", remove backreference from linked objects

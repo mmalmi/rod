@@ -1,5 +1,5 @@
 use serde::{Serialize, Deserialize};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::{Arc, RwLock};
 use crate::Node;
 use async_trait::async_trait;
@@ -41,6 +41,39 @@ pub trait NetworkAdapter {
     fn send_str(&self, m: &String);
 }
 
+pub struct BoundedHashSet {
+    set: HashSet<String>,
+    queue: VecDeque<String>,
+    max_size: usize
+}
+
+impl BoundedHashSet {
+    pub fn new(max_size: usize) -> Self {
+        BoundedHashSet {
+            set: HashSet::new(),
+            queue: VecDeque::new(),
+            max_size
+        }
+    }
+
+    pub fn insert(&mut self, s: String) {
+        if self.set.contains(&s) {
+            return;
+        }
+        if self.queue.len() >= self.max_size {
+            if let Some(removed) = self.queue.pop_back() {
+                self.set.remove(&removed);
+            }
+        }
+        self.queue.push_front(s.clone());
+        self.set.insert(s);
+    }
+
+    pub fn contains(&self, s: &str) -> bool {
+        return self.set.contains(s);
+    }
+}
+
 // Nodes need to be cloneable so that each instance points to the same data in the graph.
 // But can we somehow wrap Node itself into Arc<RwLock<>> instead of wrapping all its properties?
 // The code is not pretty with all these Arc-RwLock read/write().unwraps().
@@ -50,5 +83,4 @@ pub type Children = Arc<RwLock<BTreeMap<String, usize>>>;
 pub type Parents = Arc<RwLock<HashSet<(usize, String)>>>;
 pub type Subscriptions = Arc<RwLock<HashMap<usize, Callback>>>;
 pub type SharedNodeStore = Arc<RwLock<HashMap<usize, Node>>>;
-pub type SeenMessages = Arc<RwLock<HashSet<String>>>;
 pub type NetworkAdapters = Arc<RwLock<HashMap<String, Box<dyn NetworkAdapter + Send + Sync>>>>;

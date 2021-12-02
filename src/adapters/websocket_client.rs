@@ -46,11 +46,14 @@ impl NetworkAdapter for WebsocketClient {
         if let Ok(peers) = env::var("PEERS") {
             debug!("WebsocketClient connecting to {}\n", peers);
             loop {
-                let (socket, _) = connect_async(
+                let result = connect_async(
                     Url::parse(&peers).expect("Can't connect to URL"),
-                ).await.unwrap();
-                debug!("connected");
-                user_connected(self.node.clone(), socket, self.users.clone()).await;
+                ).await;
+                if let Ok(tuple) = result {
+                    let (socket, _) = tuple;
+                    debug!("connected");
+                    user_connected(self.node.clone(), socket, self.users.clone()).await;
+                }
                 let sec = time::Duration::from_millis(1000);
                 thread::sleep(sec);
             }

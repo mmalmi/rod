@@ -148,11 +148,7 @@ impl WebsocketServer {
 
         node.get("node_stats").get("websocket_server_connections").put(users.read().await.len().to_string().into());
 
-        // Return a `Future` that is basically a state machine managing
-        // this specific user's connection.
-
-        // Every time the user sends a message, broadcast it to
-        // all other users...
+        // Pass incoming messages to the Node
         while let Some(result) = user_ws_rx.next().await {
             let msg = match result {
                 Ok(msg) => msg,
