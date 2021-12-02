@@ -54,16 +54,18 @@ impl Node {
 
         let server = WebsocketServer::new(node.clone());
         let client = WebsocketClient::new(node.clone());
-        // node.network_adapters.write().unwrap().insert("ws_server".to_string(), Box::new(server));
+        node.network_adapters.write().unwrap().insert("ws_server".to_string(), Box::new(server));
         node.network_adapters.write().unwrap().insert("ws_client".to_string(), Box::new(client));
         node
     }
 
     pub async fn start(&self) {
         let adapters = self.network_adapters.read().unwrap();
+        let mut futures = Vec::new();
         for adapter in adapters.values() {
-            adapter.start().await; // TODO run all adapters in parallel. Now this is blocking.
+            futures.push(adapter.start());
         }
+        futures::future::join_all(futures).await;
     }
 
     fn new_child(&self, key: String) -> usize {

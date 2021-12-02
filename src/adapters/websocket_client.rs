@@ -1,9 +1,8 @@
 use futures_util::{SinkExt, StreamExt};
-use log::*;
 use std::env;
 use tokio_tungstenite::{
     connect_async,
-    tungstenite::{Error, Result, Message},
+    tungstenite::{Message},
     WebSocketStream
 };
 use tokio::sync::{mpsc, RwLock};
@@ -17,6 +16,7 @@ use async_trait::async_trait;
 use log::{debug};
 use serde_json::Value;
 use std::sync::Arc;
+use std::{thread, time};
 
 type Users = Arc<RwLock<HashMap<String, User>>>;
 
@@ -47,11 +47,13 @@ impl NetworkAdapter for WebsocketClient {
         debug!("starting WebsocketClient\n");
 
         loop {
-            let (mut socket, _) = connect_async(
+            let (socket, _) = connect_async(
                 Url::parse("wss://gun-us.herokuapp.com/gun").expect("Can't connect to URL"),
             ).await.unwrap();
             debug!("connected");
             user_connected(self.node.clone(), socket, self.users.clone()).await;
+            let sec = time::Duration::from_millis(1000);
+            thread::sleep(sec);
         }
     }
 
@@ -93,7 +95,7 @@ async fn user_connected(mut node: Node, ws: WebSocketStream<tokio_tungstenite::M
     let user = User::new(tx);
     users.write().await.insert(my_id.clone(), user);
 
-    node.get("node_stats").get("connection_count").put(users.read().await.len().to_string().into());
+    node.get("node_stats").get("websocket_client_connections").put(users.read().await.len().to_string().into());
 
     // Return a `Future` that is basically a state machine managing
     // this specific user's connection.
@@ -113,7 +115,7 @@ async fn user_connected(mut node: Node, ws: WebSocketStream<tokio_tungstenite::M
     // user_ws_rx stream will keep processing as long as the user stays
     // connected. Once they disconnect, then...
     users.write().await.remove(&my_id);
-    node.get("node_stats").get("connection_count").put(users.read().await.len().to_string().into());
+    node.get("node_stats").get("websocket_client_connections").put(users.read().await.len().to_string().into());
 }
 
 async fn user_message(node: &mut Node, my_id: String, msg: Message, users: &Users) {

@@ -78,8 +78,6 @@ impl WebsocketServer {
     }
 
     async fn serve(node: Node, users: Users) {
-        pretty_env_logger::init();
-
         // Turn our "state" into a new Filter...
         let users = warp::any().map(move || users.clone());
 
@@ -149,7 +147,7 @@ impl WebsocketServer {
         let user = User::new(tx);
         users.write().await.insert(my_id, user);
 
-        node.get("node_stats").get("connection_count").put(users.read().await.len().to_string().into());
+        node.get("node_stats").get("websocket_server_connections").put(users.read().await.len().to_string().into());
 
         // Return a `Future` that is basically a state machine managing
         // this specific user's connection.
@@ -170,7 +168,7 @@ impl WebsocketServer {
         // user_ws_rx stream will keep processing as long as the user stays
         // connected. Once they disconnect, then...
         Self::user_disconnected(my_id, &users).await;
-        node.get("node_stats").get("connection_count").put(users.read().await.len().to_string().into());
+        node.get("node_stats").get("websocket_server_connections").put(users.read().await.len().to_string().into());
     }
 
     async fn user_message(node: &mut Node, my_id: usize, msg: Message, users: &Users) {

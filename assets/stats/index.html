@@ -8,7 +8,11 @@
 <body>
 
 <p>
-  Active connections: <span id="connection_count"></span>
+  Incoming connections: <span id="websocket_server_connections"></span>
+</p>
+
+<p>
+  Outgoing connections: <span id="websocket_client_connections"></span>
 </p>
 
 </body>
@@ -17,9 +21,14 @@
 <script>
 gun = window.gun = GUN(document.location.origin + '/gun');
 
-gun.get('node_stats').get('connection_count').on((data, key) => {
+gun.get('node_stats').get('websocket_server_connections').on((data, key) => {
   console.log(key, data);
-  document.getElementById('connection_count').innerText = data;
+  document.getElementById('websocket_server_connections').innerText = data;
+});
+
+gun.get('node_stats').get('websocket_client_connections').on((data, key) => {
+  console.log(key, data);
+  document.getElementById('websocket_client_connections').innerText = data;
 });
 </script>
 
