@@ -208,11 +208,11 @@ impl Node {
         json.to_string()
     }
 
-    pub fn incoming_message(&mut self, msg: &SerdeJsonValue, is_from_array: bool) {
+    fn incoming_message_json(&mut self, msg: &SerdeJsonValue, is_from_array: bool) {
         if let Some(array) = msg.as_array() {
             if is_from_array { return; } // don't allow array inside array
             for msg in array.iter() {
-                self.incoming_message(msg, true);
+                self.incoming_message_json(msg, true);
             }
             return;
         }
@@ -229,6 +229,16 @@ impl Node {
                 }
             }
         }
+    }
+
+
+    pub fn incoming_message(&mut self, msg: String) {
+        let json: SerdeJsonValue = match serde_json::from_str(&msg) {
+            Ok(json) => json,
+            Err(_) => { return; }
+        };
+        self.send_to_adapters(&msg);
+        self.incoming_message_json(&json, false);
     }
 
     fn incoming_put(&mut self, put: &serde_json::Map<String, SerdeJsonValue>) {

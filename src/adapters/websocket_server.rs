@@ -13,7 +13,6 @@ use warp::ws::{Message, WebSocket};
 use warp::Filter;
 use async_trait::async_trait;
 
-use serde_json::Value;
 use crate::types::NetworkAdapter;
 use crate::Node;
 use log::{debug};
@@ -162,55 +161,15 @@ impl WebsocketServer {
                     break;
                 }
             };
-            Self::user_message(&mut node, my_id, msg, &users).await;
+            if let Ok(s) = msg.to_str() {
+                node.incoming_message(s.to_string());
+            }
         }
 
         // user_ws_rx stream will keep processing as long as the user stays
         // connected. Once they disconnect, then...
         Self::user_disconnected(my_id, &users).await;
         node.get("node_stats").get("websocket_server_connections").put(users.read().await.len().to_string().into());
-    }
-
-    async fn user_message(node: &mut Node, my_id: usize, msg: Message, users: &Users) {
-        let msg_str = if let Ok(s) = msg.to_str() {
-            s
-        } else {
-            return;
-        };
-
-        let json: Value = match serde_json::from_str(msg_str) {
-            Ok(json) => json,
-            Err(_) => { return; }
-        };
-
-        //debug!("{}", json);
-
-        if json.is_array() {
-            for sth in json.as_array().iter() {
-                for obj in sth.iter() {
-                    Self::user_message_single(node, my_id, users, obj).await;
-                }
-            }
-        } else {
-            Self::user_message_single(node, my_id, users, &json).await;
-        }
-    }
-
-    async fn user_message_single(node: &mut Node, my_id: usize, users: &Users, json: &Value) {
-        // debug!("user {} sent request with id {}, get {} and put {}", my_id, json["#"], json["get"], json["put"]);
-        if json["#"] == Value::Null || (json["get"] == Value::Null && json["put"] == Value::Null) {
-            // debug!("user {} sent funny request {}", my_id, msg_str);
-            return;
-        }
-
-        node.incoming_message(json, false);
-
-        // New message from this user, relay it to everyone else (except same uid)...
-        for (&uid, user) in users.read().await.iter() {
-            if my_id != uid {
-                let _ = user.sender.try_send(Message::text(json.to_string()));
-            }
-        }
     }
 
     async fn user_disconnected(my_id: usize, users: &Users) {

@@ -14,7 +14,6 @@ use crate::types::NetworkAdapter;
 use crate::Node;
 use async_trait::async_trait;
 use log::{debug};
-use serde_json::Value;
 use std::sync::Arc;
 use std::{thread, time};
 
@@ -48,7 +47,7 @@ impl NetworkAdapter for WebsocketClient {
 
         loop {
             let (socket, _) = connect_async(
-                Url::parse("wss://gun-us.herokuapp.com/gun").expect("Can't connect to URL"),
+                Url::parse("wss://gun-rs.herokuapp.com/gun").expect("Can't connect to URL"),
             ).await.unwrap();
             debug!("connected");
             user_connected(self.node.clone(), socket, self.users.clone()).await;
@@ -67,7 +66,7 @@ impl NetworkAdapter for WebsocketClient {
 }
 
 async fn user_connected(mut node: Node, ws: WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>, users: Users) { // TODO copied from server, need similar here.
-    let my_id = "wss://gun-us.herokuapp.com/gun".to_string();
+    let my_id = "wss://gun-rs.herokuapp.com/gun".to_string();
 
     debug!("new chat user: {}", my_id);
 
@@ -109,7 +108,9 @@ async fn user_connected(mut node: Node, ws: WebSocketStream<tokio_tungstenite::M
                 break;
             }
         };
-        user_message(&mut node, my_id.clone(), msg, &users).await;
+        if let Ok(s) = msg.to_text() {
+            node.incoming_message(s.to_string());
+        }
     }
 
     // user_ws_rx stream will keep processing as long as the user stays
@@ -118,46 +119,3 @@ async fn user_connected(mut node: Node, ws: WebSocketStream<tokio_tungstenite::M
     node.get("node_stats").get("websocket_client_connections").put(users.read().await.len().to_string().into());
 }
 
-async fn user_message(node: &mut Node, my_id: String, msg: Message, users: &Users) {
-    let msg_str = if let Ok(s) = msg.to_text() {
-        s
-    } else {
-        return;
-    };
-
-    let json: Value = match serde_json::from_str(msg_str) {
-        Ok(json) => json,
-        Err(_) => { return; }
-    };
-
-    //debug!("{}", json);
-
-    if json.is_array() {
-        for sth in json.as_array().iter() {
-            for obj in sth.iter() {
-                user_message_single(node, my_id.clone(), users, obj).await;
-            }
-        }
-    } else {
-        user_message_single(node, my_id.clone(), users, &json).await;
-    }
-}
-
-async fn user_message_single(node: &mut Node, my_id: String, users: &Users, json: &Value) {
-    // debug!("user {} sent request with id {}, get {} and put {}", my_id, json["#"], json["get"], json["put"]);
-    if json["#"] == Value::Null || (json["get"] == Value::Null && json["put"] == Value::Null) {
-        // debug!("user {} sent funny request {}", my_id, msg_str);
-        return;
-    }
-
-    node.incoming_message(json, false);
-
-    // New message from this user, relay it to everyone else (except same uid)...
-    for u in users.read().await.iter() {
-        let uid = u.0.clone();
-        if my_id != uid {
-            let user = u.1;
-            let _ = user.sender.try_send(Message::text(json.to_string()));
-        }
-    }
-}
