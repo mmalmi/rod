@@ -11,7 +11,7 @@ Live stats: https://gun-rs.herokuapp.com/stats
 
 - [x] Gun basic API
 - [x] Incoming websockets
-- [x] Outgoing websockets (PEERS=wss://some-server-url.herokuapp.com/gun)
+- [x] Outgoing websockets (env PEERS=wss://some-server-url.herokuapp.com/gun)
 - [x] In-memory storage
 - [ ] Disk storage
 - [ ] SEA
