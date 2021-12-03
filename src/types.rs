@@ -76,6 +76,7 @@ impl BoundedHashSet {
 
 // Nodes need to be cloneable so that each instance points to the same data in the graph.
 // But can we somehow wrap Node itself into Arc<RwLock<>> instead of wrapping all its properties?
+// Arc<RwLock<NodeInner>> pattern?
 // The code is not pretty with all these Arc-RwLock read/write().unwraps().
 pub type Callback = Box<dyn (Fn(GunValue, String) -> ()) + Send + Sync>;
 pub type Value = Arc<RwLock<Option<GunValue>>>;

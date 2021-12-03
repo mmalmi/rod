@@ -12,7 +12,7 @@ use crate::adapters::WebsocketServer;
 use crate::adapters::WebsocketClient;
 use log::{debug};
 
-static SEEN_MSGS_MAX_SIZE: usize = 1000;
+static SEEN_MSGS_MAX_SIZE: usize = 10000;
 static COUNTER: AtomicUsize = AtomicUsize::new(1);
 fn get_id() -> usize { COUNTER.fetch_add(1, Ordering::Relaxed) }
 
@@ -134,6 +134,7 @@ impl Node {
         }
         let subscription_id = get_id();
         self.map_subscriptions.write().unwrap().insert(subscription_id, callback);
+        // TODO: send get messages to adapters
         subscription_id
     }
 
@@ -234,16 +235,17 @@ impl Node {
                     Some(s) => s,
                     None => msg.to_string()
                 };
-                self.send_to_adapters(&msg_str);
 
                 if let Some(put) = obj.get("put") {
                     if let Some(obj) = put.as_object() {
                         self.incoming_put(obj);
+                        self.send_to_adapters(&msg_str);
                     }
                 }
                 if let Some(get) = obj.get("get") {
                     if let Some(obj) = get.as_object() {
                         self.incoming_get(obj);
+                        self.send_to_adapters(&msg_str);
                     }
                 }
             } else {
