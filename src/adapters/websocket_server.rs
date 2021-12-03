@@ -75,7 +75,7 @@ impl WebsocketServer {
             if from == id {
                 continue;
             }
-            debug!("WS SERVER SEND\n");
+            //debug!("WS SERVER SEND\n");
             let _ = user.sender.try_send(Message::text(m));
         }
     }

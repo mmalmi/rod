@@ -73,7 +73,7 @@ impl NetworkAdapter for WebsocketClient {
                 if id == &from {
                     continue;
                 }
-                debug!("WS CLIENT SEND\n");
+                //debug!("WS CLIENT SEND\n");
                 let _ = user.sender.try_send(Message::text(m.to_string()));
             }
         });
@@ -83,7 +83,7 @@ impl NetworkAdapter for WebsocketClient {
 async fn user_connected(mut node: Node, ws: WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>, users: Users) { // TODO copied from server, need similar here.
     let my_id = "wss://gun-us.herokuapp.com/gun".to_string();
 
-    debug!("new chat user: {}", my_id);
+    debug!("outgoing websocket opened: {}", my_id);
 
     // Split the socket into a sender and receive of messages.
     let (mut user_ws_tx, mut user_ws_rx) = ws.split();

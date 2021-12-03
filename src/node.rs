@@ -89,6 +89,7 @@ impl Node {
 
     fn new_child(&self, key: String) -> usize {
         assert!(key.len() > 0, "Key length must be greater than zero");
+        debug!("new child {} {}", self.path.join("/"), key);
         let mut parents = HashSet::new();
         parents.insert((self.id, key.clone()));
         let mut path = self.path.clone();
@@ -159,17 +160,13 @@ impl Node {
     }
 
     fn get_child_id(&mut self, key: String) -> usize {
-        if self.value.read().unwrap().is_some() {
-            self.new_child(key)
-        } else {
-            let existing_id = match self.children.read().unwrap().get(&key) {
-                Some(node_id) => Some(*node_id),
-                _ => None
-            };
-            match existing_id {
-                Some(id) => id,
-                _ => self.new_child(key)
-            }
+        let existing_id = match self.children.read().unwrap().get(&key) {
+            Some(node_id) => Some(*node_id),
+            _ => None
+        };
+        match existing_id {
+            Some(id) => id,
+            _ => self.new_child(key)
         }
     }
 
@@ -245,16 +242,18 @@ impl Node {
         if let Some(obj) = msg.as_object() {
             if let Some(msg_id) = obj.get("#") {
                 let msg_id = msg_id.to_string();
-                debug!("in ID {}\n", msg_id);
                 if self.seen_messages.read().unwrap().contains(&msg_id) {
                     debug!("already have ID {}\n", msg_id);
                     return;
                 }
-                self.seen_messages.write().unwrap().insert(msg_id);
+                self.seen_messages.write().unwrap().insert(msg_id.clone());
                 let msg_str = match msg_str {
                     Some(s) => s,
                     None => msg.to_string()
                 };
+                let s: String = msg_str.chars().take(300).collect();
+                debug!("in ID {}:\n{}\n", msg_id, s);
+
 
                 if let Some(put) = obj.get("put") {
                     if let Some(obj) = put.as_object() {
