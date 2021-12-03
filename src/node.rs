@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, HashSet};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
@@ -11,6 +11,7 @@ use crate::utils::random_string;
 use crate::adapters::WebsocketServer;
 use crate::adapters::WebsocketClient;
 use log::{debug};
+use std::thread;
 
 static SEEN_MSGS_MAX_SIZE: usize = 10000;
 static COUNTER: AtomicUsize = AtomicUsize::new(1);
@@ -64,6 +65,17 @@ impl Node {
         node
     }
 
+    fn update_stats(&self) {
+        let mut node = self.clone();
+        tokio::task::spawn(async move {
+            loop {
+                let count = node.store.read().unwrap().len().to_string();
+                node.get("node_stats").get("graph_node_count").put(count.into());
+                thread::sleep(Duration::from_millis(1000));
+            }
+        });
+    }
+
     pub async fn start(&mut self) {
         self.peer_id = Some(random_string(16)); // this should be a public key at some point
         let adapters = self.network_adapters.read().unwrap();
@@ -71,6 +83,7 @@ impl Node {
         for adapter in adapters.values() {
             futures.push(adapter.start());
         }
+        self.update_stats();
         futures::future::join_all(futures).await;
     }
 
