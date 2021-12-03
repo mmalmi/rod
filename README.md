@@ -6,6 +6,18 @@ Deployed at https://gun-rs.herokuapp.com (serves [iris-messenger](https://github
 
 Live stats: https://gun-rs.herokuapp.com/stats
 
+## Status
+
+- [x] Gun basic API
+- [x] Incoming websockets
+- [x] Outgoing websockets (PEERS=wss://some-server-url.herokuapp.com/gun)
+- [x] In-memory storage
+- [ ] Disk storage
+- [ ] SEA
+- [ ] Advanced deduplication
+
+- currently leaks memory and crashes on Heroku after some time
+
 ## Develop
 [Rust](https://doc.rust-lang.org/book/ch01-01-installation.html) is required.
 
