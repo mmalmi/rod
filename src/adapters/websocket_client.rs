@@ -64,11 +64,15 @@ impl NetworkAdapter for WebsocketClient {
 
     }
 
-    fn send_str(&self, m: &String) -> () {
+    fn send_str(&self, m: &String, from: &String) -> () {
         let users = self.users.clone();
         let m = m.clone();
+        let from = from.clone();
         tokio::task::spawn(async move {
-            for user in users.read().await.values() {
+            for (id, user) in users.read().await.iter() {
+                if id == &from {
+                    continue;
+                }
                 debug!("WS CLIENT SEND\n");
                 let _ = user.sender.try_send(Message::text(m.to_string()));
             }
@@ -120,7 +124,7 @@ async fn user_connected(mut node: Node, ws: WebSocketStream<tokio_tungstenite::M
             }
         };
         if let Ok(s) = msg.to_text() {
-            node.incoming_message(s.to_string());
+            node.incoming_message(s.to_string(), &my_id);
         }
     }
 

@@ -35,7 +35,8 @@ pub struct Node {
     map_subscriptions: Subscriptions,
     store: SharedNodeStore,
     network_adapters: NetworkAdapters,
-    seen_messages: Arc<RwLock<BoundedHashSet>>
+    seen_messages: Arc<RwLock<BoundedHashSet>>,
+    peer_id: Option<String>
 }
 
 impl Node {
@@ -52,7 +53,8 @@ impl Node {
             map_subscriptions: Subscriptions::default(),
             store: SharedNodeStore::default(),
             network_adapters: NetworkAdapters::default(),
-            seen_messages: Arc::new(RwLock::new(BoundedHashSet::new(SEEN_MSGS_MAX_SIZE)))
+            seen_messages: Arc::new(RwLock::new(BoundedHashSet::new(SEEN_MSGS_MAX_SIZE))),
+            peer_id: None
         };
 
         let server = WebsocketServer::new(node.clone());
@@ -62,7 +64,8 @@ impl Node {
         node
     }
 
-    pub async fn start(&self) {
+    pub async fn start(&mut self) {
+        self.peer_id = Some(random_string(16)); // this should be a public key at some point
         let adapters = self.network_adapters.read().unwrap();
         let mut futures = Vec::new();
         for adapter in adapters.values() {
@@ -92,8 +95,8 @@ impl Node {
             map_subscriptions: Subscriptions::default(),
             store: self.store.clone(),
             network_adapters: self.network_adapters.clone(),
-            seen_messages: Arc::new(RwLock::new(BoundedHashSet::new(SEEN_MSGS_MAX_SIZE)))
-
+            seen_messages: Arc::new(RwLock::new(BoundedHashSet::new(SEEN_MSGS_MAX_SIZE))),
+            peer_id: None
         };
         self.store.write().unwrap().insert(id, node);
         self.children.write().unwrap().insert(key, id);
@@ -105,13 +108,17 @@ impl Node {
         self.map_subscriptions.write().unwrap().remove(&subscription_id);
     }
 
+    fn get_peer_id(&self) -> String {
+        self.peer_id.as_ref().unwrap_or(&"".to_string()).to_string()
+    }
+
     pub fn on(&mut self, callback: Callback) -> usize {
         self.once_local(&callback, &self.key.clone());
         let subscription_id = get_id();
         self.on_subscriptions.write().unwrap().insert(subscription_id, callback);
         if self.network_adapters.read().unwrap().len() > 0 {
             let m = self.create_get_msg();
-            self.send_to_adapters(&m.to_string());
+            self.send_to_adapters(&m.to_string(), &self.get_peer_id());
         }
         subscription_id
     }
@@ -214,11 +221,11 @@ impl Node {
         json.to_string()
     }
 
-    fn incoming_message_json(&mut self, msg: &SerdeJsonValue, is_from_array: bool, msg_str: Option<String>) {
+    fn incoming_message_json(&mut self, msg: &SerdeJsonValue, is_from_array: bool, msg_str: Option<String>, from: &String) {
         if let Some(array) = msg.as_array() {
             if is_from_array { return; } // don't allow array inside array
             for msg in array.iter() {
-                self.incoming_message_json(msg, true, None);
+                self.incoming_message_json(msg, true, None, from);
             }
             return;
         }
@@ -239,13 +246,13 @@ impl Node {
                 if let Some(put) = obj.get("put") {
                     if let Some(obj) = put.as_object() {
                         self.incoming_put(obj);
-                        self.send_to_adapters(&msg_str);
+                        self.send_to_adapters(&msg_str, from);
                     }
                 }
                 if let Some(get) = obj.get("get") {
                     if let Some(obj) = get.as_object() {
                         self.incoming_get(obj);
-                        self.send_to_adapters(&msg_str);
+                        self.send_to_adapters(&msg_str, from);
                     }
                 }
             } else {
@@ -255,12 +262,12 @@ impl Node {
     }
 
 
-    pub fn incoming_message(&mut self, msg: String) {
+    pub fn incoming_message(&mut self, msg: String, from: &String) {
         let json: SerdeJsonValue = match serde_json::from_str(&msg) {
             Ok(json) => json,
             Err(_) => { return; }
         };
-        self.incoming_message_json(&json, false, Some(msg));
+        self.incoming_message_json(&json, false, Some(msg), from);
     }
 
     fn incoming_put(&mut self, put: &serde_json::Map<String, SerdeJsonValue>) {
@@ -312,9 +319,9 @@ impl Node {
         }
     }
 
-    fn send_to_adapters(&self, msg: &String) {
+    fn send_to_adapters(&self, msg: &String, from: &String) {
         for adapter in self.network_adapters.read().unwrap().values() {
-            adapter.send_str(&msg);
+            adapter.send_str(&msg, &from);
         }
     }
 
@@ -351,7 +358,7 @@ impl Node {
                 },
                 "#": msg_id,
             }).to_string();
-            self.send_to_adapters(&json);
+            self.send_to_adapters(&json, &self.get_peer_id());
         }
     }
 
@@ -388,7 +395,7 @@ impl Node {
         self.put_local(value.clone(), time);
         if self.network_adapters.read().unwrap().len() > 0 {
             let m = self.create_put_msg(&value, time);
-            self.send_to_adapters(&m);
+            self.send_to_adapters(&m, &self.get_peer_id());
         }
     }
 

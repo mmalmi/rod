@@ -33,7 +33,7 @@ impl User {
 ///
 /// - Key is their id
 /// - Value is a sender of `warp::ws::Message`
-type Users = Arc<RwLock<HashMap<usize, User>>>;
+type Users = Arc<RwLock<HashMap<String, User>>>;
 
 pub struct WebsocketServer {
     node: Node,
@@ -59,18 +59,22 @@ impl NetworkAdapter for WebsocketServer {
 
     }
 
-    fn send_str(&self, m: &String) -> () {
+    fn send_str(&self, m: &String, from: &String) -> () {
         let users = self.users.clone();
         let m = m.clone();
+        let from = from.clone();
         tokio::task::spawn(async move {
-            Self::send_str(users, &m).await;
+            Self::send_str(users, &m, &from).await;
         });
     }
 }
 
 impl WebsocketServer {
-    async fn send_str(users: Users, m: &String) {
-        for user in users.read().await.values() {
+    async fn send_str(users: Users, m: &String, from: &str) {
+        for (id, user) in users.read().await.iter() {
+            if from == id {
+                continue;
+            }
             debug!("WS SERVER SEND\n");
             let _ = user.sender.try_send(Message::text(m));
         }
@@ -108,6 +112,7 @@ impl WebsocketServer {
     async fn user_connected(mut node: Node, ws: WebSocket, users: Users) {
         // Use a counter to assign a new unique ID for this user.
         let my_id = NEXT_USER_ID.fetch_add(1, Ordering::Relaxed);
+        let my_id = format!("ws_server_{}", my_id).to_string();
 
         debug!("new chat user: {}", my_id);
 
@@ -144,7 +149,7 @@ impl WebsocketServer {
 
         // Save the sender in our list of connected users.
         let user = User::new(tx);
-        users.write().await.insert(my_id, user);
+        users.write().await.insert(my_id.clone(), user);
 
         node.get("node_stats").get("websocket_server_connections").put(users.read().await.len().to_string().into());
 
@@ -158,7 +163,7 @@ impl WebsocketServer {
                 }
             };
             if let Ok(s) = msg.to_str() {
-                node.incoming_message(s.to_string());
+                node.incoming_message(s.to_string(), &my_id);
             }
         }
 
@@ -168,7 +173,7 @@ impl WebsocketServer {
         node.get("node_stats").get("websocket_server_connections").put(users.read().await.len().to_string().into());
     }
 
-    async fn user_disconnected(my_id: usize, users: &Users) {
+    async fn user_disconnected(my_id: String, users: &Users) {
         debug!("good bye user: {}", my_id); // TODO there are often many connections started per client but not closed
 
         // Stream closed up, so remove from the user list
