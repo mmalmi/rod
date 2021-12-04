@@ -105,7 +105,16 @@ impl WebsocketServer {
             _ => 5000
         };
 
-        debug!("Starting server at http://localhost:{}", port);
+        if let Ok(cert_path) = env::var("CERT_PATH") {
+            if let Ok(key_path) = env::var("KEY_PATH") {
+                return warp::serve(routes)
+                    .tls()
+                    .cert_path(cert_path)
+                    .key_path(key_path)
+                    .run(([0, 0, 0, 0], port)).await;
+            }
+        }
+
         warp::serve(routes).run(([0, 0, 0, 0], port)).await;
     }
 
