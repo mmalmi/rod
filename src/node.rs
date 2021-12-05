@@ -71,7 +71,6 @@ impl Node {
         let mut node = self.clone();
         tokio::task::spawn(async move {
             loop {
-                debug!("update stats");
                 let count = node.store.read().unwrap().len().to_string();
                 node.get("node_stats").get("graph_node_count").put(count.into());
                 thread::sleep(Duration::from_millis(1000));
@@ -134,8 +133,8 @@ impl Node {
         let subscription_id = get_id();
         self.on_subscriptions.write().unwrap().insert(subscription_id, callback);
         if self.network_adapters.read().unwrap().len() > 0 {
-            let m = self.create_get_msg();
-            self.send_to_adapters(&m.to_string(), &self.get_peer_id());
+            let (m, id) = self.create_get_msg();
+            self.send_to_adapters(&m.to_string(), &self.get_peer_id(), id);
         }
         subscription_id
     }
@@ -173,29 +172,31 @@ impl Node {
         }
     }
 
-    fn create_get_msg(&self) -> String {
+    fn create_get_msg(&self) -> (String, String) {
         let msg_id = random_string(8);
         let key = self.key.clone();
+        let json;
         if self.path.len() > 0 {
             let path = self.path.join("/");
-            json!({
+            json = json!({
                 "get": {
                     "#": path,
                     ".": key
                 },
                 "#": msg_id
-            }).to_string()
+            }).to_string();
         } else {
-            json!({
+            json = json!({
                 "get": {
                     "#": key
                 },
                 "#": msg_id
-            }).to_string()
+            }).to_string();
         }
+        (json, msg_id)
     }
 
-    fn create_put_msg(&self, value: &GunValue, updated_at: f64) -> String {
+    fn create_put_msg(&self, value: &GunValue, updated_at: f64) -> (String, String) {
         let msg_id = random_string(8);
         let full_path = &self.path.join("/");
         let key = &self.key.clone();
@@ -231,7 +232,7 @@ impl Node {
             });
             puts[path] = path_obj;
         }
-        json.to_string()
+        (json.to_string(), msg_id)
     }
 
     fn incoming_message_json(&mut self, msg: &SerdeJsonValue, is_from_array: bool, msg_str: Option<String>, from: &String) {
@@ -244,30 +245,31 @@ impl Node {
         }
         if let Some(obj) = msg.as_object() {
             if let Some(msg_id) = obj.get("#") {
-                let msg_id = msg_id.to_string();
-                if self.seen_messages.read().unwrap().contains(&msg_id) {
-                    debug!("already have ID {}\n", msg_id);
-                    return;
-                }
-                self.seen_messages.write().unwrap().insert(msg_id.clone());
-                let msg_str = match msg_str {
-                    Some(s) => s,
-                    None => msg.to_string()
-                };
-                let s: String = msg_str.chars().take(300).collect();
-                debug!("in ID {}:\n{}\n", msg_id, s);
-
-
-                if let Some(put) = obj.get("put") {
-                    if let Some(obj) = put.as_object() {
-                        self.incoming_put(obj);
-                        self.send_to_adapters(&msg_str, from);
+                if let Some(msg_id) = msg_id.as_str() {
+                    let msg_id = msg_id.to_string();
+                    if self.seen_messages.read().unwrap().contains(&msg_id) {
+                        debug!("already have {}", &msg_id);
+                        return;
                     }
-                }
-                if let Some(get) = obj.get("get") {
-                    if let Some(obj) = get.as_object() {
-                        self.incoming_get(obj);
-                        self.send_to_adapters(&msg_str, from);
+                    self.seen_messages.write().unwrap().insert(msg_id.clone());
+                    let msg_str = match msg_str {
+                        Some(s) => s,
+                        None => msg.to_string()
+                    };
+                    let s: String = msg_str.chars().take(300).collect();
+                    debug!("in ID {}:\n{}\n", msg_id, s);
+
+                    if let Some(put) = obj.get("put") {
+                        if let Some(obj) = put.as_object() {
+                            self.incoming_put(obj);
+                            self.send_to_adapters(&msg_str, from, msg_id.clone());
+                        }
+                    }
+                    if let Some(get) = obj.get("get") {
+                        if let Some(obj) = get.as_object() {
+                            self.incoming_get(obj);
+                            self.send_to_adapters(&msg_str, from, msg_id);
+                        }
                     }
                 }
             } else {
@@ -333,8 +335,9 @@ impl Node {
         }
     }
 
-    fn send_to_adapters(&self, msg: &String, from: &String) {
-        // TODO self.seen_messages.write().unwrap().insert(msg_id.clone());
+    fn send_to_adapters(&self, msg: &String, from: &String, msg_id: String) {
+        debug!("sending msg {}", &msg_id);
+        self.seen_messages.write().unwrap().insert(msg_id); // TODO: doesn't seem to work, at least on multicast
         for adapter in self.network_adapters.read().unwrap().values() {
             adapter.send_str(&msg, &from);
         }
@@ -373,7 +376,7 @@ impl Node {
                 },
                 "#": msg_id,
             }).to_string();
-            self.send_to_adapters(&json, &self.get_peer_id());
+            self.send_to_adapters(&json, &self.get_peer_id(), msg_id);
         }
     }
 
@@ -409,8 +412,8 @@ impl Node {
         let time: f64 = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis() as f64;
         self.put_local(value.clone(), time);
         if self.network_adapters.read().unwrap().len() > 0 {
-            let m = self.create_put_msg(&value, time);
-            self.send_to_adapters(&m, &self.get_peer_id());
+            let (m, id) = self.create_put_msg(&value, time);
+            self.send_to_adapters(&m, &self.get_peer_id(), id);
         }
     }
 
