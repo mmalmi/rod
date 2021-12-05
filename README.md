@@ -20,6 +20,7 @@ Live stats: https://gun-rs.herokuapp.com/stats
 - [ ] Advanced deduplication
 
 - currently leaks memory and crashes on Heroku after some time
+- networking fails to connect on some ubuntu settings, investigating
 
 ## Develop
 [Rust](https://doc.rust-lang.org/book/ch01-01-installation.html) is required.
