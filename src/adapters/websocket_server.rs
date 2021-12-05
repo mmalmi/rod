@@ -44,7 +44,7 @@ pub struct WebsocketServer {
 impl NetworkAdapter for WebsocketServer {
     fn new(node: Node) -> Self {
         WebsocketServer {
-            node: node.clone(),
+            node,
             users: Users::default()
         }
     }

@@ -37,7 +37,7 @@ pub struct WebsocketClient {
 impl NetworkAdapter for WebsocketClient {
     fn new(node: Node) -> Self {
         WebsocketClient {
-            node: node.clone(),
+            node,
             users: Users::default()
         }
     }
@@ -68,7 +68,7 @@ impl NetworkAdapter for WebsocketClient {
         let users = self.users.clone();
         let m = m.clone();
         let from = from.clone();
-        tokio::task::spawn(async move {
+        tokio::task::spawn(async move { // TODO instead, send a message to a sender task via bounded channel
             for (id, user) in users.read().await.iter() {
                 if id == &from {
                     continue;

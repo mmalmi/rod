@@ -10,6 +10,7 @@ use crate::types::*;
 use crate::utils::random_string;
 use crate::adapters::WebsocketServer;
 use crate::adapters::WebsocketClient;
+use crate::adapters::Multicast;
 use log::{debug};
 use std::thread;
 
@@ -57,9 +58,10 @@ impl Node {
             seen_messages: Arc::new(RwLock::new(BoundedHashSet::new(SEEN_MSGS_MAX_SIZE))),
             peer_id: None
         };
-
+        let multicast = Multicast::new(node.clone());
         let server = WebsocketServer::new(node.clone());
         let client = WebsocketClient::new(node.clone());
+        node.network_adapters.write().unwrap().insert("multicast".to_string(), Box::new(multicast));
         node.network_adapters.write().unwrap().insert("ws_server".to_string(), Box::new(server));
         node.network_adapters.write().unwrap().insert("ws_client".to_string(), Box::new(client));
         node
@@ -69,6 +71,7 @@ impl Node {
         let mut node = self.clone();
         tokio::task::spawn(async move {
             loop {
+                debug!("update stats");
                 let count = node.store.read().unwrap().len().to_string();
                 node.get("node_stats").get("graph_node_count").put(count.into());
                 thread::sleep(Duration::from_millis(1000));
@@ -273,7 +276,6 @@ impl Node {
         }
     }
 
-
     pub fn incoming_message(&mut self, msg: String, from: &String) {
         let json: SerdeJsonValue = match serde_json::from_str(&msg) {
             Ok(json) => json,
@@ -332,6 +334,7 @@ impl Node {
     }
 
     fn send_to_adapters(&self, msg: &String, from: &String) {
+        // TODO self.seen_messages.write().unwrap().insert(msg_id.clone());
         for adapter in self.network_adapters.read().unwrap().values() {
             adapter.send_str(&msg, &from);
         }
