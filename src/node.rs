@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, HashSet};
-use std::time::{Duration, SystemTime};
+use std::time::{SystemTime};
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
@@ -12,7 +12,7 @@ use crate::adapters::WebsocketServer;
 use crate::adapters::WebsocketClient;
 use crate::adapters::Multicast;
 use log::{debug};
-use std::thread;
+use tokio::time::{sleep, Duration};
 
 static SEEN_MSGS_MAX_SIZE: usize = 10000;
 static COUNTER: AtomicUsize = AtomicUsize::new(1);
@@ -73,7 +73,7 @@ impl Node {
             loop {
                 let count = node.store.read().unwrap().len().to_string();
                 node.get("node_stats").get("graph_node_count").put(count.into());
-                thread::sleep(Duration::from_millis(1000));
+                sleep(Duration::from_millis(1000)).await;
             }
         });
     }
