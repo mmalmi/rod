@@ -1,6 +1,6 @@
 # Gun-rs
 
-Pure Rust implementation of [Gun](https://github.com/amark/gun). For a wasm version, check out [rusty-gun](https://github.com/mmalmi/rusty-gun).
+Pure Rust implementation of [Gun](https://github.com/amark/gun). For a wasm version, check out [gun-rs-wasm](https://github.com/mmalmi/gun-rs-wasm).
 
 Deployed at https://gun-rs.herokuapp.com (serves [iris-messenger](https://github.com/irislib/iris-messenger) at the root)
 
