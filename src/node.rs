@@ -83,7 +83,7 @@ impl Node {
         let adapters = self.network_adapters.read().unwrap();
         let mut futures = Vec::new();
         for adapter in adapters.values() {
-            futures.push(adapter.start());
+            futures.push(adapter.start()); // adapters must be non-blocking: use async functions or spawn_blocking
         }
         self.update_stats();
         futures::future::join_all(futures).await;

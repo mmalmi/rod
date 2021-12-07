@@ -54,8 +54,7 @@ impl NetworkAdapter for WebsocketClient {
                     debug!("connected");
                     user_connected(self.node.clone(), socket, self.users.clone()).await;
                 }
-                let sec = Duration::from_millis(1000);
-                sleep(sec).await;
+                sleep(Duration::from_millis(1000)).await;
             }
         }
     }

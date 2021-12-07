@@ -1,15 +1,11 @@
 use multicast_socket::MulticastSocket;
-use std::net::{SocketAddrV4, Ipv4Addr};
-
-use futures_util::{SinkExt, StreamExt};
-use std::env;
+use std::net::{SocketAddrV4};
 
 use crate::types::NetworkAdapter;
 use crate::Node;
 use async_trait::async_trait;
 use log::{debug, error};
 use std::sync::{Arc, RwLock};
-use std::{thread, time};
 
 pub struct Multicast {
     node: Node,
@@ -31,7 +27,7 @@ impl NetworkAdapter for Multicast {
 
         let mut node = self.node.clone();
         let socket = self.socket.clone();
-        tokio::task::spawn(async move {
+        tokio::task::spawn_blocking(move || {
             loop {
                 if let Ok(message) = socket.read().unwrap().receive() {
                     if let Ok(data) = std::str::from_utf8(&message.data) {
@@ -47,7 +43,7 @@ impl NetworkAdapter for Multicast {
 
     }
 
-    fn send_str(&self, m: &String, from: &String) -> () {
+    fn send_str(&self, m: &String, _from: &String) -> () {
         let m = m.clone();
         let socket = self.socket.clone();
         tokio::task::spawn(async move { // TODO instead, send a message to a sender task via bounded channel
