@@ -15,7 +15,7 @@ use crate::Node;
 use async_trait::async_trait;
 use log::{debug};
 use std::sync::Arc;
-use std::{thread, time};
+use tokio::time::{sleep, Duration};
 
 type Users = Arc<RwLock<HashMap<String, User>>>;
 
@@ -54,8 +54,8 @@ impl NetworkAdapter for WebsocketClient {
                     debug!("connected");
                     user_connected(self.node.clone(), socket, self.users.clone()).await;
                 }
-                let sec = time::Duration::from_millis(1000);
-                thread::sleep(sec);
+                let sec = Duration::from_millis(1000);
+                sleep(sec).await;
             }
         }
     }
