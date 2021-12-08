@@ -1,1 +1,1 @@
-web: ./target/release/gun_rs serve
+web: ./target/release/gun serve

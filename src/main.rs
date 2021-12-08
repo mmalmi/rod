@@ -1,7 +1,7 @@
 extern crate clap;
 use clap::{Arg, App, SubCommand};
-use gun_rs::Node;
-use gun_rs::types::GunValue;
+use gun::Node;
+use gun::types::GunValue;
 
 #[tokio::main]
 async fn main() {
