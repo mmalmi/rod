@@ -33,7 +33,7 @@ impl NetworkAdapter for Multicast {
                 if let Ok(message) = socket.read().await.receive() {
                     if let Ok(data) = std::str::from_utf8(&message.data) {
                         let uid = format!("multicast_{:?}", message.interface).to_string();
-                        node.incoming_message(data.to_string(), &uid);
+                        node.incoming_message(data.to_string(), &uid); // TODO this calls blocking std::sync::RwLock stuff
                     }
                 };
             }
