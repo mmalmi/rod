@@ -61,8 +61,7 @@ impl Node {
         let multicast = Multicast::new(node.clone());
         let server = WebsocketServer::new(node.clone());
         let client = WebsocketClient::new(node.clone());
-        // disable multicast for now, spawn_blocking causes slowness?
-        // node.network_adapters.write().unwrap().insert("multicast".to_string(), Box::new(multicast));
+        node.network_adapters.write().unwrap().insert("multicast".to_string(), Box::new(multicast));
         node.network_adapters.write().unwrap().insert("ws_server".to_string(), Box::new(server));
         node.network_adapters.write().unwrap().insert("ws_client".to_string(), Box::new(client));
         node
