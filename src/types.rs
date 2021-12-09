@@ -21,6 +21,12 @@ impl From<usize> for GunValue {
     }
 }
 
+impl From<f32> for GunValue {
+    fn from(n: f32) -> GunValue {
+        GunValue::Number(n as f64)
+    }
+}
+
 impl From<u64> for GunValue {
     fn from(n: u64) -> GunValue {
         GunValue::Number(n as f64)

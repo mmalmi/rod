@@ -53,6 +53,14 @@
                                         <span id="total_memory">-</span>
                                     </td>
                                   </tr>
+                                  <tr>
+                                    <td>
+                                      CPU usage
+                                    </td>
+                                    <td class="text-center">
+                                        <span id="cpu_usage">-</span>
+                                    </td>
+                                  </tr>
                                 </tbody>
                             </table>
                         </div>
@@ -80,30 +88,36 @@
 <script src="/stats/gun.js"></script>
 <script>
 gun = window.gun = GUN(document.location.origin + '/gun');
+stats = gun.get('node_stats');
 
-gun.get('node_stats').get('websocket_server_connections').on((data, key) => {
+stats.get('websocket_server_connections').on((data, key) => {
   console.log(key, data);
   document.getElementById('websocket_server_connections').innerText = data;
 });
 
-gun.get('node_stats').get('websocket_client_connections').on((data, key) => {
+stats.get('websocket_client_connections').on((data, key) => {
   console.log(key, data);
   document.getElementById('websocket_client_connections').innerText = data;
 });
 
-gun.get('node_stats').get('graph_node_count').on((data, key) => {
+stats.get('graph_node_count').on((data, key) => {
   console.log(key, data);
   document.getElementById('graph_node_count').innerText = data;
 });
 
-gun.get('node_stats').get('total_memory').on((data, key) => {
+stats.get('total_memory').on((data, key) => {
   console.log(key, data);
   document.getElementById('total_memory').innerText = data;
 });
 
-gun.get('node_stats').get('used_memory').on((data, key) => {
+stats.get('used_memory').on((data, key) => {
   console.log(key, data);
   document.getElementById('used_memory').innerText = data;
+});
+
+stats.get('cpu_usage').on((data, key) => {
+  console.log(key, data);
+  document.getElementById('cpu_usage').innerText = data;
 });
 </script>
 

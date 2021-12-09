@@ -13,7 +13,7 @@ use crate::adapters::WebsocketClient;
 use crate::adapters::Multicast;
 use log::{debug};
 use tokio::time::{sleep, Duration};
-use sysinfo::{NetworkExt, NetworksExt, ProcessExt, System, SystemExt};
+use sysinfo::{NetworkExt, NetworksExt, ProcessExt, ProcessorExt, System, SystemExt};
 
 static SEEN_MSGS_MAX_SIZE: usize = 10000;
 static COUNTER: AtomicUsize = AtomicUsize::new(1);
@@ -79,6 +79,7 @@ impl Node {
                 stats.get("graph_node_count").put(count.into());
                 stats.get("total_memory").put(format!("{} KB", sys.total_memory()).into());
                 stats.get("used_memory").put(format!("{} KB", sys.used_memory()).into());
+                stats.get("cpu_usage").put(sys.global_processor_info().cpu_usage().into());
                 sleep(Duration::from_millis(1000)).await;
             }
         });
