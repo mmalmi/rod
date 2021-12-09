@@ -9,7 +9,7 @@ use async_trait::async_trait;
 pub enum GunValue {
     Null,
     Bit(bool),
-    Number(f32),
+    Number(f64),
     Text(String),
     Link(usize),
     Children(BTreeMap<String, GunValue>)
@@ -17,7 +17,13 @@ pub enum GunValue {
 
 impl From<usize> for GunValue {
     fn from(n: usize) -> GunValue {
-        GunValue::Number(n as f32)
+        GunValue::Number(n as f64)
+    }
+}
+
+impl From<u64> for GunValue {
+    fn from(n: u64) -> GunValue {
+        GunValue::Number(n as f64)
     }
 }
 

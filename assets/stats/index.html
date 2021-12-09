@@ -3,21 +3,77 @@
 <head>
     <meta charset="UTF-8">
     <title>Stats</title>
+    <link rel="stylesheet" href="/stats/css/black-dashboard.css">
+    <link rel="stylesheet" href="/stats/css/nucleo-icons.css">
 </head>
 
 <body>
 
-<p>
-  Incoming connections: <span id="websocket_server_connections"></span>
-</p>
+<div class="main-panel">
+    <div class="content">
+        <div class="row">
+            <div class="col-md-4">
+                <div class="card card-chart">
+                    <div class="card-header"><h4 class="card-title">Gun server stats</h4></div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table tablesorter " id="">
+                                <tbody>
+                                  <tr>
+                                    <td>
+                                      Incoming connections
+                                    </td>
+                                    <td class="text-center" id="websocket_server_connections">
+                                        -
+                                    </td>
+                                  </tr>
+                                  <tr>
+                                    <td>
+                                      Outgoing connections
+                                    </td>
+                                    <td class="text-center" id="websocket_client_connections">
+                                        -
+                                    </td>
+                                  </tr>
+                                  <tr>
+                                    <td>
+                                      Graph nodes
+                                    </td>
+                                    <td class="text-center" id="graph_node_count">
+                                        -
+                                    </td>
+                                  </tr>
+                                  <tr>
+                                    <td>
+                                      RAM usage
+                                    </td>
+                                    <td class="text-center">
+                                        <span id="used_memory">-</span>
+                                        /
+                                        <span id="total_memory">-</span>
+                                    </td>
+                                  </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
 
-<p>
-  Outgoing connections: <span id="websocket_client_connections"></span>
-</p>
-
-<p>
-  Graph nodes: <span id="graph_node_count"></span>
-</p>
+    <footer class="footer">
+        <div class="container-fluid">
+          <ul class="nav">
+            <li class="nav-item">
+              <a href="https://github.com/mmalmi/gun-rs" class="nav-link">
+                GitHub
+              </a>
+            </li>
+          </ul>
+        </div>
+    </footer>
+</div>
 
 </body>
 
@@ -38,6 +94,16 @@ gun.get('node_stats').get('websocket_client_connections').on((data, key) => {
 gun.get('node_stats').get('graph_node_count').on((data, key) => {
   console.log(key, data);
   document.getElementById('graph_node_count').innerText = data;
+});
+
+gun.get('node_stats').get('total_memory').on((data, key) => {
+  console.log(key, data);
+  document.getElementById('total_memory').innerText = data;
+});
+
+gun.get('node_stats').get('used_memory').on((data, key) => {
+  console.log(key, data);
+  document.getElementById('used_memory').innerText = data;
 });
 </script>
 

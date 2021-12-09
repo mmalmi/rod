@@ -13,6 +13,7 @@ use crate::adapters::WebsocketClient;
 use crate::adapters::Multicast;
 use log::{debug};
 use tokio::time::{sleep, Duration};
+use sysinfo::{NetworkExt, NetworksExt, ProcessExt, System, SystemExt};
 
 static SEEN_MSGS_MAX_SIZE: usize = 10000;
 static COUNTER: AtomicUsize = AtomicUsize::new(1);
@@ -58,7 +59,7 @@ impl Node {
             seen_messages: Arc::new(RwLock::new(BoundedHashSet::new(SEEN_MSGS_MAX_SIZE))),
             peer_id: None
         };
-        let multicast = Multicast::new(node.clone());
+        let _multicast = Multicast::new(node.clone());
         let server = WebsocketServer::new(node.clone());
         let client = WebsocketClient::new(node.clone());
         //node.network_adapters.write().unwrap().insert("multicast".to_string(), Box::new(multicast));
@@ -70,9 +71,14 @@ impl Node {
     fn update_stats(&self) {
         let mut node = self.clone();
         tokio::task::spawn(async move {
+            let mut sys = System::new_all();
             loop {
+                sys.refresh_all();
                 let count = node.store.read().unwrap().len().to_string();
-                node.get("node_stats").get("graph_node_count").put(count.into());
+                let mut stats = node.get("node_stats");
+                stats.get("graph_node_count").put(count.into());
+                stats.get("total_memory").put(format!("{} KB", sys.total_memory()).into());
+                stats.get("used_memory").put(format!("{} KB", sys.used_memory()).into());
                 sleep(Duration::from_millis(1000)).await;
             }
         });
