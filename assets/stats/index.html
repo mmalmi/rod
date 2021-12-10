@@ -57,9 +57,13 @@
                                     <td>
                                       CPU usage
                                     </td>
-                                    <td class="text-center">
-                                        <span id="cpu_usage">-</span>
+                                    <td class="text-center" id="cpu_usage"></td>
+                                  </tr>
+                                  <tr>
+                                    <td>
+                                      Process uptime
                                     </td>
+                                    <td class="text-center" id="process_uptime"></td>
                                   </tr>
                                 </tbody>
                             </table>
@@ -118,6 +122,11 @@ stats.get('used_memory').on((data, key) => {
 stats.get('cpu_usage').on((data, key) => {
   console.log(key, data);
   document.getElementById('cpu_usage').innerText = data;
+});
+
+stats.get('process_uptime').on((data, key) => {
+  console.log(key, data);
+  document.getElementById('process_uptime').innerText = data;
 });
 </script>
 

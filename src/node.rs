@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, HashSet};
-use std::time::{SystemTime};
+use std::time::{SystemTime, Instant};
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
@@ -70,6 +70,7 @@ impl Node {
 
     fn update_stats(&self) {
         let mut node = self.clone();
+        let start_time = Instant::now();
         tokio::task::spawn(async move {
             let mut sys = System::new_all();
             loop {
@@ -79,7 +80,17 @@ impl Node {
                 stats.get("graph_node_count").put(count.into());
                 stats.get("total_memory").put(format!("{} KB", sys.total_memory()).into());
                 stats.get("used_memory").put(format!("{} KB", sys.used_memory()).into());
-                stats.get("cpu_usage").put(sys.global_processor_info().cpu_usage().into());
+                stats.get("cpu_usage").put(format!("{} %", sys.global_processor_info().cpu_usage() as u64).into());
+                let uptime_secs = start_time.elapsed().as_secs();
+                let uptime;
+                if uptime_secs <= 60 {
+                    uptime = format!("{} seconds", uptime_secs);
+                } else if uptime_secs <= 2 * 60 * 60 {
+                    uptime = format!("{} minutes", uptime_secs / 60);
+                } else {
+                    uptime = format!("{} hours", uptime_secs / 60 / 60);
+                }
+                stats.get("process_uptime").put(uptime.into());
                 sleep(Duration::from_millis(1000)).await;
             }
         });
