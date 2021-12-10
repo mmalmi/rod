@@ -78,8 +78,8 @@ impl Node {
                 let count = node.store.read().unwrap().len().to_string();
                 let mut stats = node.get("node_stats");
                 stats.get("graph_node_count").put(count.into());
-                stats.get("total_memory").put(format!("{} KB", sys.total_memory()).into());
-                stats.get("used_memory").put(format!("{} KB", sys.used_memory()).into());
+                stats.get("total_memory").put(format!("{} MB", sys.total_memory() / 1000).into());
+                stats.get("used_memory").put(format!("{} MB", sys.used_memory() / 1000).into());
                 stats.get("cpu_usage").put(format!("{} %", sys.global_processor_info().cpu_usage() as u64).into());
                 let uptime_secs = start_time.elapsed().as_secs();
                 let uptime;
