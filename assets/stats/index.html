@@ -94,40 +94,19 @@
 gun = window.gun = GUN(document.location.origin + '/gun');
 stats = gun.get('node_stats');
 
-stats.get('websocket_server_connections').on((data, key) => {
-  console.log(key, data);
-  document.getElementById('websocket_server_connections').innerText = data;
-});
+function getStat(key) {
+  stats.get(key).on(value => document.getElementById(key).innerText = value);
+}
 
-stats.get('websocket_client_connections').on((data, key) => {
-  console.log(key, data);
-  document.getElementById('websocket_client_connections').innerText = data;
-});
-
-stats.get('graph_node_count').on((data, key) => {
-  console.log(key, data);
-  document.getElementById('graph_node_count').innerText = data;
-});
-
-stats.get('total_memory').on((data, key) => {
-  console.log(key, data);
-  document.getElementById('total_memory').innerText = data;
-});
-
-stats.get('used_memory').on((data, key) => {
-  console.log(key, data);
-  document.getElementById('used_memory').innerText = data;
-});
-
-stats.get('cpu_usage').on((data, key) => {
-  console.log(key, data);
-  document.getElementById('cpu_usage').innerText = data;
-});
-
-stats.get('process_uptime').on((data, key) => {
-  console.log(key, data);
-  document.getElementById('process_uptime').innerText = data;
-});
+[
+  'websocket_server_connections',
+  'websocket_client_connections',
+  'graph_node_count',
+  'total_memory',
+  'used_memory',
+  'cpu_usage',
+  'process_uptime'
+].forEach(key => getStat(key));
 </script>
 
 </html>
