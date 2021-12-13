@@ -1,7 +1,7 @@
 extern crate clap;
 use clap::{Arg, App, SubCommand};
-use gun::Node;
-use gun::types::GunValue;
+use std::process::Command;
+use tokio::time::{sleep, Duration};
 
 #[tokio::main]
 async fn main() {
@@ -26,18 +26,20 @@ async fn main() {
     let config = matches.value_of("config").unwrap_or("default.conf");
     println!("Value for config: {}", config);
 
-    if let Some(matches) = matches.subcommand_matches("serve") {
-        if matches.is_present("debug") {
-            println!("Printing debug info...");
+    if let Some(_matches) = matches.subcommand_matches("serve") {
+        loop {
+            let path = std::env::current_exe().unwrap();
+            let path = format!("{:?}", path);
+            let path = &path[1..path.len() - 5];
+            println!("{}/server", path);
+
+            let mut child = Command::new(format!("{}/server", path))
+                .spawn()
+                .expect("failed to execute child");
+
+            let ecode = child.wait()
+                     .expect("failed to wait on child");
+            sleep(Duration::from_millis(100)).await;
         }
-        let mut node = Node::new();
-
-        node.get("asdf").get("fasd").on(Box::new(|value: GunValue, key: String| { // TODO how to do it without Box? https://stackoverflow.com/questions/41081240/idiomatic-callbacks-in-rust
-            if let GunValue::Text(str) = value {
-                println!("key {} value {}", &key, &str);
-            }
-        }));
-
-        node.start().await;
     }
 }
