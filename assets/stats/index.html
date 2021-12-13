@@ -94,6 +94,10 @@
 gun = window.gun = GUN(document.location.origin + '/gun');
 stats = gun.get('node_stats');
 
+function getStat(key) {
+  stats.get(key).on(value => document.getElementById(key).innerText = value);
+}
+
 [
   'websocket_server_connections',
   'websocket_client_connections',
@@ -102,11 +106,7 @@ stats = gun.get('node_stats');
   'used_memory',
   'cpu_usage',
   'process_uptime'
-].forEach(key =>
-  stats.get(key).on(value =>
-    document.getElementById(key).innerText = value
-  )
-);
+].forEach(key => getStat(key));
 </script>
 
 </html>
