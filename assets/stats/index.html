@@ -65,6 +65,12 @@
                                     </td>
                                     <td class="text-center" id="process_uptime"></td>
                                   </tr>
+                                  <tr>
+                                    <td>
+                                      Incoming messages per second
+                                    </td>
+                                    <td class="text-center" id="msgs_per_second"></td>
+                                  </tr>
                                 </tbody>
                             </table>
                         </div>
@@ -104,7 +110,8 @@ fetch("/peer_id", {method:"get"}).then(async res => {
           'total_memory',
           'used_memory',
           'cpu_usage',
-          'process_uptime'
+          'process_uptime',
+          'msgs_per_second'
         ].forEach(key =>
           stats.get(key).on(value => document.getElementById(key).innerText = value)
         );

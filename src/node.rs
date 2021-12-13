@@ -39,7 +39,9 @@ pub struct Node {
     store: SharedNodeStore,
     network_adapters: NetworkAdapters,
     seen_messages: Arc<RwLock<BoundedHashSet>>,
-    peer_id: Arc<RwLock<String>>
+    peer_id: Arc<RwLock<String>>,
+    msg_counter: Arc<AtomicUsize>
+
 }
 
 impl Node {
@@ -57,7 +59,8 @@ impl Node {
             store: SharedNodeStore::default(),
             network_adapters: NetworkAdapters::default(),
             seen_messages: Arc::new(RwLock::new(BoundedHashSet::new(SEEN_MSGS_MAX_SIZE))),
-            peer_id: Arc::new(RwLock::new(random_string(16)))
+            peer_id: Arc::new(RwLock::new(random_string(16))),
+            msg_counter: Arc::new(AtomicUsize::new(0))
         };
         let _multicast = Multicast::new(node.clone());
         let server = WebsocketServer::new(node.clone());
@@ -78,6 +81,8 @@ impl Node {
                 sys.refresh_all();
                 let count = node.store.read().unwrap().len().to_string();
                 let mut stats = node.get("node_stats").get(&peer_id);
+                stats.get("msgs_per_second").put(node.msg_counter.load(Ordering::Relaxed).into());
+                node.msg_counter.store(0, Ordering::Relaxed);
                 stats.get("graph_node_count").put(count.into());
                 stats.get("total_memory").put(format!("{} MB", sys.total_memory() / 1000).into());
                 stats.get("used_memory").put(format!("{} MB", sys.used_memory() / 1000).into());
@@ -130,7 +135,8 @@ impl Node {
             store: self.store.clone(),
             network_adapters: self.network_adapters.clone(),
             seen_messages: Arc::new(RwLock::new(BoundedHashSet::new(SEEN_MSGS_MAX_SIZE))),
-            peer_id: self.peer_id.clone()
+            peer_id: self.peer_id.clone(),
+            msg_counter: self.msg_counter.clone()
         };
         self.store.write().unwrap().insert(id, node);
         self.children.write().unwrap().insert(key, id);
@@ -297,6 +303,7 @@ impl Node {
     }
 
     pub fn incoming_message(&mut self, msg: String, from: &String) {
+        self.msg_counter.fetch_add(1, Ordering::Relaxed);
         let json: SerdeJsonValue = match serde_json::from_str(&msg) {
             Ok(json) => json,
             Err(_) => { return; }
