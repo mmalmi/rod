@@ -84,6 +84,10 @@ impl WebsocketServer {
         // Turn our "state" into a new Filter...
         let users = warp::any().map(move || users.clone());
 
+        let peer_id = node.get_peer_id();
+        //let peer_id_route = warp::path!("peer_id").map(|| peer_id);
+        let peer_id_route = warp::path!("peer_id").map(move || format!("{}", peer_id));
+
         // GET /gun -> websocket upgrade
         let chat = warp::path("gun")
             // The `ws()` filter will prepare Websocket handshake...
@@ -98,7 +102,7 @@ impl WebsocketServer {
         let iris = warp::fs::dir("assets/iris");
         let assets = warp::fs::dir("assets");
 
-        let routes = iris.or(assets).or(chat);
+        let routes = iris.or(assets).or(chat).or(peer_id_route);
 
         let port: u16 = match env::var("PORT") {
             Ok(p) => p.parse::<u16>().unwrap(),
@@ -160,7 +164,8 @@ impl WebsocketServer {
         let user = User::new(tx);
         users.write().await.insert(my_id.clone(), user);
 
-        node.get("node_stats").get("websocket_server_connections").put(users.read().await.len().to_string().into());
+        let peer_id = node.get_peer_id();
+        node.get("node_stats").get(&peer_id).get("websocket_server_connections").put(users.read().await.len().to_string().into());
 
         // Pass incoming messages to the Node
         while let Some(result) = user_ws_rx.next().await {
@@ -179,7 +184,7 @@ impl WebsocketServer {
         // user_ws_rx stream will keep processing as long as the user stays
         // connected. Once they disconnect, then...
         Self::user_disconnected(my_id, &users).await;
-        node.get("node_stats").get("websocket_server_connections").put(users.read().await.len().to_string().into());
+        node.get("node_stats").get(&peer_id).get("websocket_server_connections").put(users.read().await.len().to_string().into());
     }
 
     async fn user_disconnected(my_id: String, users: &Users) {

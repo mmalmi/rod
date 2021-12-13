@@ -39,7 +39,7 @@ pub struct Node {
     store: SharedNodeStore,
     network_adapters: NetworkAdapters,
     seen_messages: Arc<RwLock<BoundedHashSet>>,
-    peer_id: Option<String>
+    peer_id: Arc<RwLock<String>>
 }
 
 impl Node {
@@ -57,7 +57,7 @@ impl Node {
             store: SharedNodeStore::default(),
             network_adapters: NetworkAdapters::default(),
             seen_messages: Arc::new(RwLock::new(BoundedHashSet::new(SEEN_MSGS_MAX_SIZE))),
-            peer_id: None
+            peer_id: Arc::new(RwLock::new(random_string(16)))
         };
         let _multicast = Multicast::new(node.clone());
         let server = WebsocketServer::new(node.clone());
@@ -70,13 +70,14 @@ impl Node {
 
     fn update_stats(&self) {
         let mut node = self.clone();
+        let peer_id = node.peer_id.read().unwrap().to_string();
         let start_time = Instant::now();
         tokio::task::spawn(async move {
             let mut sys = System::new_all();
             loop {
                 sys.refresh_all();
                 let count = node.store.read().unwrap().len().to_string();
-                let mut stats = node.get("node_stats");
+                let mut stats = node.get("node_stats").get(&peer_id);
                 stats.get("graph_node_count").put(count.into());
                 stats.get("total_memory").put(format!("{} MB", sys.total_memory() / 1000).into());
                 stats.get("used_memory").put(format!("{} MB", sys.used_memory() / 1000).into());
@@ -97,7 +98,6 @@ impl Node {
     }
 
     pub async fn start(&mut self) {
-        self.peer_id = Some(random_string(16)); // this should be a public key at some point
         let adapters = self.network_adapters.read().unwrap();
         let mut futures = Vec::new();
         for adapter in adapters.values() {
@@ -130,7 +130,7 @@ impl Node {
             store: self.store.clone(),
             network_adapters: self.network_adapters.clone(),
             seen_messages: Arc::new(RwLock::new(BoundedHashSet::new(SEEN_MSGS_MAX_SIZE))),
-            peer_id: None
+            peer_id: self.peer_id.clone()
         };
         self.store.write().unwrap().insert(id, node);
         self.children.write().unwrap().insert(key, id);
@@ -142,8 +142,8 @@ impl Node {
         self.map_subscriptions.write().unwrap().remove(&subscription_id);
     }
 
-    fn get_peer_id(&self) -> String {
-        self.peer_id.as_ref().unwrap_or(&"".to_string()).to_string()
+    pub fn get_peer_id(&self) -> String {
+        self.peer_id.read().unwrap().to_string()
     }
 
     pub fn on(&mut self, callback: Callback) -> usize {

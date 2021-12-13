@@ -91,22 +91,25 @@
 
 <script src="/stats/gun.js"></script>
 <script>
-gun = window.gun = GUN(document.location.origin + '/gun');
-stats = gun.get('node_stats');
+const gun = window.gun = GUN(document.location.origin + '/gun');
 
-function getStat(key) {
-  stats.get(key).on(value => document.getElementById(key).innerText = value);
-}
-
-[
-  'websocket_server_connections',
-  'websocket_client_connections',
-  'graph_node_count',
-  'total_memory',
-  'used_memory',
-  'cpu_usage',
-  'process_uptime'
-].forEach(key => getStat(key));
+fetch("/peer_id", {method:"get"}).then(async res => {
+    if (res.ok) {
+        const peer_id = await res.text();
+        const stats = gun.get('node_stats').get(peer_id);
+        [
+          'websocket_server_connections',
+          'websocket_client_connections',
+          'graph_node_count',
+          'total_memory',
+          'used_memory',
+          'cpu_usage',
+          'process_uptime'
+        ].forEach(key =>
+          stats.get(key).on(value => document.getElementById(key).innerText = value)
+        );
+    }
+});
 </script>
 
 </html>

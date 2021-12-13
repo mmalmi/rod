@@ -108,7 +108,8 @@ async fn user_connected(mut node: Node, ws: WebSocketStream<tokio_tungstenite::M
     let user = User::new(tx);
     users.write().await.insert(my_id.clone(), user);
 
-    node.get("node_stats").get("websocket_client_connections").put(users.read().await.len().to_string().into());
+    let peer_id = node.get_peer_id();
+    node.get("node_stats").get(&peer_id).get("websocket_client_connections").put(users.read().await.len().to_string().into());
 
     // Return a `Future` that is basically a state machine managing
     // this specific user's connection.
@@ -130,6 +131,6 @@ async fn user_connected(mut node: Node, ws: WebSocketStream<tokio_tungstenite::M
     // user_ws_rx stream will keep processing as long as the user stays
     // connected. Once they disconnect, then...
     users.write().await.remove(&my_id);
-    node.get("node_stats").get("websocket_client_connections").put(users.read().await.len().to_string().into());
+    node.get("node_stats").get(&peer_id).get("websocket_client_connections").put(users.read().await.len().to_string().into());
 }
 
