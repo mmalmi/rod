@@ -5,6 +5,7 @@ use std::sync::{
     Arc,
     RwLock
 };
+use std::env;
 use serde_json::{json, Value as SerdeJsonValue};
 use crate::types::*;
 use crate::utils::random_string;
@@ -47,7 +48,11 @@ pub struct Node {
 
 impl Node {
     pub fn new() -> Self {
-        let (sender, _receiver) = broadcast::channel::<GunMessage>(16);
+        let channel_size: usize = match env::var("RUST_CHANNEL_SIZE") {
+            Ok(p) => p.parse::<usize>().unwrap(),
+            _ => 100
+        };
+        let (sender, _receiver) = broadcast::channel::<GunMessage>(channel_size);
         let node = Self {
             id: 0,
             updated_at: Arc::new(RwLock::new(0.0)),
