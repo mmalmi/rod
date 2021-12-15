@@ -83,7 +83,7 @@ impl WebsocketServer {
 
         let port: u16 = match env::var("PORT") {
             Ok(p) => p.parse::<u16>().unwrap(),
-            _ => 5000
+            _ => 4944
         };
 
         if let Ok(cert_path) = env::var("CERT_PATH") {
