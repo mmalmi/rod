@@ -5,8 +5,7 @@ use tokio_tungstenite::{
     tungstenite::{Message},
     WebSocketStream
 };
-use tokio::sync::{mpsc, RwLock};
-use tokio_stream::wrappers::ReceiverStream;
+use tokio::sync::RwLock;
 use url::Url;
 use std::collections::HashMap;
 
@@ -20,11 +19,11 @@ use tokio::time::{sleep, Duration};
 type Users = Arc<RwLock<HashMap<String, User>>>;
 
 struct User {
-    sender: mpsc::Sender<Message>
+
 }
 impl User {
-    fn new(sender: mpsc::Sender<Message>) -> User {
-        User { sender }
+    fn new() -> User {
+        User { }
     }
 }
 
@@ -62,21 +61,6 @@ impl NetworkAdapter for WebsocketClient {
     fn stop(&self) {
 
     }
-
-    fn send_str(&self, m: &String, from: &String) -> () {
-        let users = self.users.clone();
-        let m = m.clone();
-        let from = from.clone();
-        tokio::task::spawn(async move { // TODO instead, send a message to a sender task via bounded channel
-            for (id, user) in users.read().await.iter() {
-                if id == &from {
-                    continue;
-                }
-                //debug!("WS CLIENT SEND\n");
-                let _ = user.sender.try_send(Message::text(m.to_string()));
-            }
-        });
-    }
 }
 
 async fn user_connected(mut node: Node, ws: WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>, users: Users) { // TODO copied from server, need similar here.
@@ -87,25 +71,16 @@ async fn user_connected(mut node: Node, ws: WebSocketStream<tokio_tungstenite::M
     // Split the socket into a sender and receive of messages.
     let (mut user_ws_tx, mut user_ws_rx) = ws.split();
 
-    // Use a channel to handle buffering and flushing of messages
-    // to the websocket...
-
-    let channel_size: u16 = match env::var("RUST_CHANNEL_SIZE") {
-        Ok(p) => p.parse::<u16>().unwrap(),
-        _ => 10
-    };
-
-    let (tx, rx) = mpsc::channel(channel_size.into());
-    let mut rx = ReceiverStream::new(rx);
+    let mut rx = node.get_outgoing_msg_receiver();
 
     tokio::task::spawn(async move {
-        while let Some(message) = rx.next().await {
-            user_ws_tx.send(message).await;
+        while let Ok(message) = rx.recv().await {
+            user_ws_tx.send(Message::text(message.msg)).await;
         }
     });
 
     // Save the sender in our list of connected users.
-    let user = User::new(tx);
+    let user = User::new();
     users.write().await.insert(my_id.clone(), user);
 
     let peer_id = node.get_peer_id();

@@ -27,9 +27,10 @@ impl NetworkAdapter for Multicast {
         debug!("Syncing over multicast\n");
 
         let mut node = self.node.clone();
+        let mut rx = node.get_outgoing_msg_receiver();
         let socket = self.socket.clone();
         tokio::task::spawn(async move {
-            loop {
+            loop { // TODO or while let Ok()...?
                 if let Ok(message) = socket.read().await.receive() {
                     if let Ok(data) = std::str::from_utf8(&message.data) {
                         let uid = format!("multicast_{:?}", message.interface).to_string();
@@ -38,21 +39,20 @@ impl NetworkAdapter for Multicast {
                 };
             }
         });
+
+        let socket = self.socket.clone();
+        tokio::task::spawn(async move {
+            while let Ok(message) = rx.recv().await {
+                match socket.write().await.broadcast(message.msg.as_bytes()) {
+                    Ok(_) => {},
+                    Err(e) => error!("multicast send error {}", e)
+                }
+            }
+        });
     }
 
     fn stop(&self) {
 
-    }
-
-    fn send_str(&self, m: &String, _from: &String) -> () {
-        let m = m.clone();
-        let socket = self.socket.clone();
-        tokio::task::spawn(async move { // TODO instead, send a message to a sender task via bounded channel
-            match socket.write().await.broadcast(m.as_bytes()) {
-                Ok(_) => {},
-                Err(e) => error!("multicast send error {}", e)
-            }
-        });
     }
 }
 

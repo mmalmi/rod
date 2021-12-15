@@ -7,7 +7,7 @@ use std::sync::{
 use std::env;
 
 use futures_util::{SinkExt, StreamExt, TryFutureExt};
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::RwLock;
 use tokio_stream::wrappers::ReceiverStream;
 use warp::ws::{Message, WebSocket};
 use warp::Filter;
@@ -21,18 +21,14 @@ use log::{debug};
 static NEXT_USER_ID: AtomicUsize = AtomicUsize::new(1);
 
 struct User {
-    sender: mpsc::Sender<Message>
+
 }
 impl User {
-    fn new(sender: mpsc::Sender<Message>) -> User {
-        User { sender }
+    fn new() -> User {
+        User { }
     }
 }
 
-/// Our state of currently connected users.
-///
-/// - Key is their id
-/// - Value is a sender of `warp::ws::Message`
 type Users = Arc<RwLock<HashMap<String, User>>>;
 
 pub struct WebsocketServer {
@@ -58,28 +54,9 @@ impl NetworkAdapter for WebsocketServer {
     fn stop(&self) {
 
     }
-
-    fn send_str(&self, m: &String, from: &String) -> () {
-        let users = self.users.clone();
-        let m = m.clone();
-        let from = from.clone();
-        tokio::task::spawn(async move {
-            Self::send_str(users, &m, &from).await;
-        });
-    }
 }
 
 impl WebsocketServer {
-    async fn send_str(users: Users, m: &String, from: &str) {
-        for (id, user) in users.read().await.iter() {
-            if from == id {
-                continue;
-            }
-            //debug!("WS SERVER SEND\n");
-            let _ = user.sender.try_send(Message::text(m));
-        }
-    }
-
     async fn serve(node: Node, users: Users) {
         // Turn our "state" into a new Filter...
         let users = warp::any().map(move || users.clone());
@@ -132,36 +109,14 @@ impl WebsocketServer {
         // Split the socket into a sender and receive of messages.
         let (mut user_ws_tx, mut user_ws_rx) = ws.split();
 
-        // Use a channel to handle buffering and flushing of messages
-        // to the websocket...
-
-        let channel_size: u16 = match env::var("RUST_CHANNEL_SIZE") {
-            Ok(p) => p.parse::<u16>().unwrap(),
-            _ => 10
-        };
-
-        let (tx, rx) = mpsc::channel(channel_size.into());
-        let mut rx = ReceiverStream::new(rx);
-
+        let mut rx = node.get_outgoing_msg_receiver();
         tokio::task::spawn(async move {
-            while let Some(message) = rx.next().await {
-                let mut errored = false;
-                user_ws_tx
-                    .send(message)
-                    .unwrap_or_else(|e| {
-                        debug!("websocket send error: {}", e);
-                        errored = true;
-                    })
-                    .await;
-                if errored {
-                    let _ = user_ws_tx.close().await;
-                    break;
-                }
+            while let Ok(message) = rx.recv().await {
+                user_ws_tx.send(Message::text(message.msg)).await;
             }
         });
 
-        // Save the sender in our list of connected users.
-        let user = User::new(tx);
+        let user = User::new();
         users.write().await.insert(my_id.clone(), user);
 
         let peer_id = node.get_peer_id();
@@ -181,14 +136,12 @@ impl WebsocketServer {
             }
         }
 
-        // user_ws_rx stream will keep processing as long as the user stays
-        // connected. Once they disconnect, then...
         Self::user_disconnected(my_id, &users).await;
         node.get("node_stats").get(&peer_id).get("websocket_server_connections").put(users.read().await.len().to_string().into());
     }
 
     async fn user_disconnected(my_id: String, users: &Users) {
-        debug!("good bye user: {}", my_id); // TODO there are often many connections started per client but not closed
+        debug!("good bye user: {}", my_id);
 
         // Stream closed up, so remove from the user list
         users.write().await.remove(&my_id);

@@ -50,7 +50,12 @@ pub trait NetworkAdapter {
     fn new(node: Node) -> Self where Self: Sized;
     async fn start(&self);
     fn stop(&self);
-    fn send_str(&self, m: &String, from: &String);
+}
+
+#[derive(Clone)]
+pub struct GunMessage {
+    pub msg: String,
+    pub from: String
 }
 
 pub struct BoundedHashSet {

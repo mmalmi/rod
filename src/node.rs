@@ -13,6 +13,7 @@ use crate::adapters::WebsocketClient;
 use crate::adapters::Multicast;
 use log::{debug};
 use tokio::time::{sleep, Duration};
+use tokio::sync::broadcast;
 use sysinfo::{NetworkExt, NetworksExt, ProcessExt, ProcessorExt, System, SystemExt};
 
 static SEEN_MSGS_MAX_SIZE: usize = 10000;
@@ -40,12 +41,13 @@ pub struct Node {
     network_adapters: NetworkAdapters,
     seen_messages: Arc<RwLock<BoundedHashSet>>,
     peer_id: Arc<RwLock<String>>,
-    msg_counter: Arc<AtomicUsize>
-
+    msg_counter: Arc<AtomicUsize>,
+    outgoing_msg_sender: broadcast::Sender<GunMessage>,
 }
 
 impl Node {
     pub fn new() -> Self {
+        let (sender, _receiver) = broadcast::channel::<GunMessage>(16);
         let node = Self {
             id: 0,
             updated_at: Arc::new(RwLock::new(0.0)),
@@ -60,15 +62,20 @@ impl Node {
             network_adapters: NetworkAdapters::default(),
             seen_messages: Arc::new(RwLock::new(BoundedHashSet::new(SEEN_MSGS_MAX_SIZE))),
             peer_id: Arc::new(RwLock::new(random_string(16))),
-            msg_counter: Arc::new(AtomicUsize::new(0))
+            msg_counter: Arc::new(AtomicUsize::new(0)),
+            outgoing_msg_sender: sender,
         };
-        let _multicast = Multicast::new(node.clone());
+        //let _multicast = Multicast::new(node.clone());
         let server = WebsocketServer::new(node.clone());
         let client = WebsocketClient::new(node.clone());
         //node.network_adapters.write().unwrap().insert("multicast".to_string(), Box::new(multicast));
         node.network_adapters.write().unwrap().insert("ws_server".to_string(), Box::new(server));
         node.network_adapters.write().unwrap().insert("ws_client".to_string(), Box::new(client));
         node
+    }
+
+    pub fn get_outgoing_msg_receiver(&self) -> broadcast::Receiver<GunMessage> {
+        self.outgoing_msg_sender.subscribe()
     }
 
     fn update_stats(&self) {
@@ -136,7 +143,8 @@ impl Node {
             network_adapters: self.network_adapters.clone(),
             seen_messages: Arc::new(RwLock::new(BoundedHashSet::new(SEEN_MSGS_MAX_SIZE))),
             peer_id: self.peer_id.clone(),
-            msg_counter: self.msg_counter.clone()
+            msg_counter: self.msg_counter.clone(),
+            outgoing_msg_sender: self.outgoing_msg_sender.clone(),
         };
         self.store.write().unwrap().insert(id, node);
         self.children.write().unwrap().insert(key, id);
@@ -363,9 +371,7 @@ impl Node {
     fn send_to_adapters(&self, msg: &String, from: &String, msg_id: String) {
         debug!("sending msg {}", &msg_id);
         self.seen_messages.write().unwrap().insert(msg_id); // TODO: doesn't seem to work, at least on multicast
-        for adapter in self.network_adapters.read().unwrap().values() {
-            adapter.send_str(&msg, &from);
-        }
+        self.outgoing_msg_sender.send(GunMessage { msg: msg.clone(), from: from.clone() });
     }
 
     fn get_gun_value(&self) -> Option<GunValue> {
