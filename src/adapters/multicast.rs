@@ -30,7 +30,7 @@ impl NetworkAdapter for Multicast {
         let mut rx = node.get_outgoing_msg_receiver();
         let socket = self.socket.clone();
         tokio::task::spawn(async move {
-            loop { // TODO or while let Ok()...?
+            loop {
                 if let Ok(message) = socket.read().await.receive() {
                     if let Ok(data) = std::str::from_utf8(&message.data) {
                         let uid = format!("multicast_{:?}", message.interface).to_string();
@@ -42,10 +42,9 @@ impl NetworkAdapter for Multicast {
 
         let socket = self.socket.clone();
         tokio::task::spawn(async move {
-            while let Ok(message) = rx.recv().await {
-                match socket.write().await.broadcast(message.msg.as_bytes()) {
-                    Ok(_) => {},
-                    Err(e) => error!("multicast send error {}", e)
+            while let Ok(message) = rx.recv().await { // TODO loop and handle rx closed
+                if let Err(e) = socket.write().await.broadcast(message.msg.as_bytes()) {
+                    error!("multicast send error {}", e);
                 }
             }
         });

@@ -74,8 +74,12 @@ async fn user_connected(mut node: Node, ws: WebSocketStream<tokio_tungstenite::M
     let mut rx = node.get_outgoing_msg_receiver();
 
     tokio::task::spawn(async move {
-        while let Ok(message) = rx.recv().await {
-            user_ws_tx.send(Message::text(message.msg)).await;
+        loop {
+            if let Ok(message) = rx.recv().await {
+                if let Err(_) = user_ws_tx.send(Message::text(message.msg)).await {
+                    break;
+                }
+            }
         }
     });
 
