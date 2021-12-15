@@ -73,7 +73,8 @@ impl WebsocketServer {
             .map(move |ws: warp::ws::Ws, users| {
                 // This will call our function if the handshake succeeds.
                 let node_clone = node.clone();
-                ws.on_upgrade(move |socket| Self::user_connected(node_clone.clone(), socket, users))
+                ws.max_send_queue(1000 * 1000)
+                    .on_upgrade(move |socket| Self::user_connected(node_clone.clone(), socket, users))
             });
 
         let iris = warp::fs::dir("assets/iris");
@@ -136,7 +137,7 @@ impl WebsocketServer {
                 }
             };
             if let Ok(s) = msg.to_str() {
-                node.incoming_message(s.to_string(), &my_id);
+                node.incoming_message(s.to_string(), &my_id); // instead of this blocking call, send message over channel?
             }
         }
 
