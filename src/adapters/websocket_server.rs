@@ -114,10 +114,14 @@ impl WebsocketServer {
         // Split the socket into a sender and receive of messages.
         let (mut user_ws_tx, mut user_ws_rx) = ws.split();
 
+        let my_id_clone = my_id.clone();
         let mut rx = node.get_outgoing_msg_receiver();
         tokio::task::spawn(async move {
             loop {
                 if let Ok(message) = rx.recv().await {
+                    if message.from == my_id_clone {
+                        continue;
+                    }
                     if let Err(_) = user_ws_tx.send(Message::text(message.msg)).await {
                         break;
                     }

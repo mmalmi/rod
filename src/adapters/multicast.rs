@@ -32,6 +32,7 @@ impl NetworkAdapter for Multicast {
         tokio::task::spawn(async move {
             loop {
                 if let Ok(message) = socket.read().await.receive() {
+                    // TODO if message.from == multicast_[interface], don't resend to [interface]
                     if let Ok(data) = std::str::from_utf8(&message.data) {
                         let uid = format!("multicast_{:?}", message.interface).to_string();
                         node.incoming_message(data.to_string(), &uid);
