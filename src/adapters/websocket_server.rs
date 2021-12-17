@@ -1,54 +1,53 @@
-// #![deny(warnings)]
-use std::collections::HashMap;
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Arc,
-};
+use actix::{Actor, StreamHandler};
+use actix_web::{web, App, Error, HttpRequest, HttpResponse, HttpServer};
+use actix_web_actors::ws;
 use std::env;
-
-use futures_util::{SinkExt, StreamExt, TryFutureExt};
-use tokio::sync::RwLock;
-use tokio_stream::wrappers::ReceiverStream;
-use warp::ws::{Message, WebSocket};
-use warp::Filter;
 use async_trait::async_trait;
-
 use crate::types::NetworkAdapter;
 use crate::Node;
-use log::{debug};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// Our global unique user id counter.
 static NEXT_USER_ID: AtomicUsize = AtomicUsize::new(1);
 
-struct User {
-
+/// Define HTTP actor
+pub struct MyWs {
+    node: Node,
+    id: String
 }
-impl User {
-    fn new() -> User {
-        User { }
+
+impl Actor for MyWs {
+    type Context = ws::WebsocketContext<Self>;
+}
+
+/// Handler for ws::Message message
+impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for MyWs {
+    fn handle(
+        &mut self,
+        msg: Result<ws::Message, ws::ProtocolError>,
+        ctx: &mut Self::Context,
+    ) {
+        match msg {
+            Ok(ws::Message::Ping(msg)) => ctx.pong(&msg),
+            Ok(ws::Message::Text(text)) => self.node.incoming_message(text, &self.id),
+            _ => (),
+        }
     }
 }
 
-type Users = Arc<RwLock<HashMap<String, User>>>;
-
 pub struct WebsocketServer {
-    node: Node,
-    users: Users
+    node: Node
 }
 
 #[async_trait]
 impl NetworkAdapter for WebsocketServer {
     fn new(node: Node) -> Self {
         WebsocketServer {
-            node,
-            users: Users::default()
+            node
         }
     }
 
     async fn start(&self) {
-        let node = self.node.clone();
-        let users = self.users.clone();
-        Self::serve(node, users).await;
+        Self::actix_start(self.node.clone());
     }
 
     fn stop(&self) {
@@ -57,106 +56,50 @@ impl NetworkAdapter for WebsocketServer {
 }
 
 impl WebsocketServer {
-    async fn serve(node: Node, users: Users) {
-        // Turn our "state" into a new Filter...
-        let users = warp::any().map(move || users.clone());
-
-        let peer_id = node.get_peer_id();
-        //let peer_id_route = warp::path!("peer_id").map(|| peer_id);
-        let peer_id_route = warp::path!("peer_id").map(move || format!("{}", peer_id));
-
-        // GET /gun -> websocket upgrade
-        let chat = warp::path("gun")
-            // The `ws()` filter will prepare Websocket handshake...
-            .and(warp::ws())
-            .and(users)
-            .map(move |ws: warp::ws::Ws, users| {
-                // This will call our function if the handshake succeeds.
-                let node_clone = node.clone();
-                let max_size = 5 * 1000 * 1000;
-                ws
-                    .max_message_size(max_size)
-                    .max_frame_size(max_size)
-                    .max_send_queue(max_size)
-                    .on_upgrade(move |socket| Self::user_connected(node_clone.clone(), socket, users))
-            });
-
-        let iris = warp::fs::dir("assets/iris");
-        let assets = warp::fs::dir("assets");
-
-        let routes = iris.or(assets).or(chat).or(peer_id_route);
-
+    #[actix_web::main]
+    async fn actix_start(node: Node) -> std::io::Result<()> {
         let port: u16 = match env::var("PORT") {
             Ok(p) => p.parse::<u16>().unwrap(),
             _ => 4944
         };
 
-        if let Ok(cert_path) = env::var("CERT_PATH") {
-            if let Ok(key_path) = env::var("KEY_PATH") {
-                return warp::serve(routes)
-                    .tls()
-                    .cert_path(cert_path)
-                    .key_path(key_path)
-                    .run(([0, 0, 0, 0], port)).await;
-            }
-        }
-
-        warp::serve(routes).run(([0, 0, 0, 0], port)).await;
+        HttpServer::new(move || {
+            let node = node.clone();
+            App::new().route("/gun", web::get().to(
+                move |a, b| {
+                    Self::user_connected(a, b, node.clone())
+                }
+            ))
+        })
+            .bind(format!("0.0.0.0:{}", port)).unwrap()
+            .run()
+            .await
     }
 
-    async fn user_connected(mut node: Node, ws: WebSocket, users: Users) {
+    async fn user_connected(req: HttpRequest, stream: web::Payload, node: Node) -> Result<HttpResponse, Error> {
         // Use a counter to assign a new unique ID for this user.
-        let my_id = NEXT_USER_ID.fetch_add(1, Ordering::Relaxed);
-        let my_id = format!("ws_server_{}", my_id).to_string();
+        let id = NEXT_USER_ID.fetch_add(1, Ordering::Relaxed);
+        let id = format!("ws_server_{}", id).to_string();
 
-        debug!("new chat user: {}", my_id);
+        let ws = MyWs { node, id };
 
-        // Split the socket into a sender and receive of messages.
-        let (mut user_ws_tx, mut user_ws_rx) = ws.split();
-
-        let my_id_clone = my_id.clone();
+        /* this ain't working: use actor instead, or figure out how to use tokio without reactor
         let mut rx = node.get_outgoing_msg_receiver();
         tokio::task::spawn(async move {
             loop {
                 if let Ok(message) = rx.recv().await {
-                    if message.from == my_id_clone {
+                    if message.from == id {
                         continue;
                     }
-                    if let Err(_) = user_ws_tx.send(Message::text(message.msg)).await {
-                        break;
-                    }
+                    println!("ws server received message from {}", message.from);
+                    // TODO: send message.msg to ws, break on fail
                 }
             }
         });
+         */
 
-        let user = User::new();
-        users.write().await.insert(my_id.clone(), user);
-
-        let peer_id = node.get_peer_id();
-        node.get("node_stats").get(&peer_id).get("websocket_server_connections").put(users.read().await.len().to_string().into());
-
-        // Pass incoming messages to the Node
-        while let Some(result) = user_ws_rx.next().await {
-            let msg = match result {
-                Ok(msg) => msg,
-                Err(e) => {
-                    debug!("websocket error(uid={}): {}", my_id, e);
-                    break;
-                }
-            };
-            if let Ok(s) = msg.to_str() {
-                node.incoming_message(s.to_string(), &my_id); // instead of this blocking call, send message over channel?
-            }
-        }
-
-        Self::user_disconnected(my_id, &users).await;
-        node.get("node_stats").get(&peer_id).get("websocket_server_connections").put(users.read().await.len().to_string().into());
-    }
-
-    async fn user_disconnected(my_id: String, users: &Users) {
-        debug!("good bye user: {}", my_id);
-
-        // Stream closed up, so remove from the user list
-        users.write().await.remove(&my_id);
+        let resp = ws::start(ws, &req, stream);
+        println!("{:?}", resp);
+        resp
     }
 }

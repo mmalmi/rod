@@ -16,7 +16,6 @@ futures-channel = "0.3.17"
 futures-util = "0.3.17"
 tokio = { version = "1.13.0", default-features = false, features = ["io-std", "macros", "net", "rt-multi-thread", "time"] }
 tokio-stream = "0.1.8"
-warp = { version = "0.3.1", features = ["tls"] }
 async-trait = "0.1.51"
 env_logger = "0.9.0"
 log = "0.4.14"
@@ -24,3 +23,6 @@ tokio-tungstenite = { version = "0.16.0", features=["native-tls"]}
 url = "2.2.2"
 multicast-socket = "0.2.2"
 sysinfo = "0.21.2"
+actix = "0.10.0"
+actix-web = "3.3.2"
+actix-web-actors = "3.0.0"
