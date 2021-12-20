@@ -73,11 +73,11 @@ impl WebsocketServer {
             .map(move |ws: warp::ws::Ws, users| {
                 // This will call our function if the handshake succeeds.
                 let node_clone = node.clone();
-                let max_size = 5 * 1000 * 1000;
+                let max_size = 8 * 1000 * 1000;
                 ws
                     .max_message_size(max_size)
                     .max_frame_size(max_size)
-                    .max_send_queue(max_size)
+                    .max_send_queue(3)
                     .on_upgrade(move |socket| Self::user_connected(node_clone.clone(), socket, users))
             });
 
