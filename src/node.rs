@@ -50,7 +50,7 @@ impl Node {
     pub fn new() -> Self {
         let channel_size: usize = match env::var("RUST_CHANNEL_SIZE") {
             Ok(p) => p.parse::<usize>().unwrap(),
-            _ => 100
+            _ => 10
         };
         let (sender, _receiver) = broadcast::channel::<GunMessage>(channel_size);
         let node = Self {
