@@ -2,9 +2,9 @@
 
 Pure Rust implementation of [Gun](https://github.com/amark/gun). For a wasm version, check out [gun-rs-wasm](https://github.com/mmalmi/gun-rs-wasm).
 
-Deployed at https://gun-rs.herokuapp.com (serves [iris-messenger](https://github.com/irislib/iris-messenger) at the root)
+Deployed at https://gun-us.herokuapp.com (serves [iris-messenger](https://github.com/irislib/iris-messenger) at the root)
 
-Live stats: https://gun-rs.herokuapp.com/stats
+Live stats: https://gun-us.herokuapp.com/stats
 
 ## Status
 3/12/2021:
