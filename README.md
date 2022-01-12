@@ -14,12 +14,10 @@ Live stats: https://gun-rs.herokuapp.com/stats
 - [x] Outgoing websockets (env PEERS=wss://some-server-url.herokuapp.com/gun)
 - [x] Multicast (Iris messages seem not to propagate — size limit?)
 - [x] In-memory storage
-- [x] TLS support (env CERT_PATH and KEY_PATH)
+- [ ] TLS support (env CERT_PATH and KEY_PATH)
 - [ ] Disk storage
 - [ ] SEA
 - [ ] Advanced deduplication
-
-- currently leaks memory and crashes on Heroku after some time (probably an issue in [hyper](https://github.com/hyperium/hyper/issues/1790))
 
 ## Develop
 [Rust](https://doc.rust-lang.org/book/ch01-01-installation.html) is required.
