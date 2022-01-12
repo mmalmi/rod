@@ -1,9 +1,9 @@
-use actix::{Actor, StreamHandler};
+use actix::{Actor, StreamHandler, AsyncContext, Handler};
 use actix_web::{web, App, Error, HttpRequest, HttpResponse, HttpServer};
 use actix_web_actors::ws;
 use std::env;
 use async_trait::async_trait;
-use crate::types::NetworkAdapter;
+use crate::types::{NetworkAdapter, GunMessage};
 use crate::Node;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -15,8 +15,44 @@ pub struct MyWs {
     id: String
 }
 
+struct OutgoingMessage {
+    gun_message: GunMessage
+}
+
+impl actix::Message for OutgoingMessage {
+    type Result = ();
+}
+
 impl Actor for MyWs {
     type Context = ws::WebsocketContext<Self>;
+
+    fn started(&mut self, ctx: &mut ws::WebsocketContext<Self>) {
+        let mut rx = self.node.get_outgoing_msg_receiver();
+        let id = self.id.clone();
+        let addr = ctx.address();
+        tokio::task::spawn(async move {
+            loop {
+                if let Ok(message) = rx.recv().await {
+                    if message.from == id {
+                        continue;
+                    }
+                    let res = addr.try_send(OutgoingMessage { gun_message: message }); // TODO break on error
+                    if let Err(e) = res {
+                        break;
+                    }
+                }
+            }
+        });
+    }
+}
+
+impl Handler<OutgoingMessage> for MyWs {
+    type Result = ();
+
+    fn handle(&mut self, msg: OutgoingMessage, ctx: &mut Self::Context) {
+        let text = format!("{}", msg.gun_message.msg);
+        ctx.text(text);
+    }
 }
 
 /// Handler for ws::Message message
@@ -28,7 +64,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for MyWs {
     ) {
         match msg {
             Ok(ws::Message::Ping(msg)) => ctx.pong(&msg),
-            Ok(ws::Message::Text(text)) => self.node.incoming_message(text, &self.id),
+            Ok(ws::Message::Text(text)) => self.node.incoming_message(text.to_string(), &self.id),
             _ => (),
         }
     }
@@ -47,7 +83,10 @@ impl NetworkAdapter for WebsocketServer {
     }
 
     async fn start(&self) {
-        Self::actix_start(self.node.clone());
+        let node = self.node.clone();
+        tokio::task::spawn_blocking(move || { // spawn_blocking - problem for NetworkAdapter?
+            Self::actix_start(node);
+        });
     }
 
     fn stop(&self) {
@@ -82,24 +121,9 @@ impl WebsocketServer {
         let id = format!("ws_server_{}", id).to_string();
 
         let ws = MyWs { node, id };
-
-        /* this ain't working: use actor instead, or figure out how to use tokio without reactor
-        let mut rx = node.get_outgoing_msg_receiver();
-        tokio::task::spawn(async move {
-            loop {
-                if let Ok(message) = rx.recv().await {
-                    if message.from == id {
-                        continue;
-                    }
-                    println!("ws server received message from {}", message.from);
-                    // TODO: send message.msg to ws, break on fail
-                }
-            }
-        });
-         */
-
         let resp = ws::start(ws, &req, stream);
-        println!("{:?}", resp);
+
+        //println!("{:?}", resp);
         resp
     }
 }
