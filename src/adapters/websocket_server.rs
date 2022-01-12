@@ -89,7 +89,7 @@ impl NetworkAdapter for WebsocketServer {
 
     async fn start(&self) {
         let node = self.node.clone();
-        Self::actix_start(node).await.await;
+        Self::actix_start(node).await;
     }
 
     fn stop(&self) {
@@ -98,7 +98,7 @@ impl NetworkAdapter for WebsocketServer {
 }
 
 impl WebsocketServer {
-    async fn actix_start(node: Node) -> actix_web::dev::Server {
+    fn actix_start(node: Node) -> actix_web::dev::Server {
         let port: u16 = match env::var("PORT") {
             Ok(p) => p.parse::<u16>().unwrap(),
             _ => 4944
