@@ -1,6 +1,7 @@
-use actix::{Actor, StreamHandler, AsyncContext, Handler};
-use actix_web::{web, App, Error, HttpRequest, HttpResponse, HttpServer};
+use actix::{Actor, StreamHandler, AsyncContext, Handler}; // would rather use warp, but hyper has a memory leak
+use actix_web::{web, App, Error, Responder, HttpRequest, HttpResponse, HttpServer, middleware};
 use actix_web_actors::ws;
+use actix_files as fs;
 use std::env;
 use async_trait::async_trait;
 use crate::types::{NetworkAdapter, GunMessage};
@@ -70,6 +71,10 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for MyWs {
     }
 }
 
+struct AppState {
+    peer_id: String,
+}
+
 pub struct WebsocketServer {
     node: Node
 }
@@ -84,7 +89,7 @@ impl NetworkAdapter for WebsocketServer {
 
     async fn start(&self) {
         let node = self.node.clone();
-        tokio::task::spawn_blocking(move || { // spawn_blocking - problem for NetworkAdapter?
+        tokio::task::spawn_blocking(move || { // problem - this blocks other threads
             Self::actix_start(node);
         });
     }
@@ -104,15 +109,26 @@ impl WebsocketServer {
 
         HttpServer::new(move || {
             let node = node.clone();
-            App::new().route("/gun", web::get().to(
-                move |a, b| {
-                    Self::user_connected(a, b, node.clone())
-                }
-            ))
+            let peer_id = node.get_peer_id();
+            App::new()
+                .data(AppState { peer_id })
+                .wrap(middleware::Logger::default())
+                .route("/peer_id", web::get().to(Self::greet))
+                .service(fs::Files::new("/stats", "assets/stats").show_files_listing())
+                .route("/gun", web::get().to(
+                    move |a, b| {
+                        Self::user_connected(a, b, node.clone())
+                    }
+                )
+            )
         })
             .bind(format!("0.0.0.0:{}", port)).unwrap()
             .run()
             .await
+    }
+
+    async fn greet(data: web::Data<AppState>) -> String {
+        data.peer_id.clone()
     }
 
     async fn user_connected(req: HttpRequest, stream: web::Payload, node: Node) -> Result<HttpResponse, Error> {
