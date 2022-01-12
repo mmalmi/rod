@@ -1,4 +1,4 @@
-use actix::{Actor, StreamHandler, AsyncContext, Handler}; // would rather use warp, but hyper has a memory leak
+use actix::{Actor, StreamHandler, AsyncContext, Handler}; // would rather use warp, but its dependency "hyper" has a memory leak
 use actix_web::{web, App, Error, Responder, HttpRequest, HttpResponse, HttpServer, middleware};
 use actix_web_actors::ws;
 use actix_files as fs;
@@ -37,7 +37,7 @@ impl Actor for MyWs {
                     if message.from == id {
                         continue;
                     }
-                    let res = addr.try_send(OutgoingMessage { gun_message: message }); // TODO break on error
+                    let res = addr.try_send(OutgoingMessage { gun_message: message }); // TODO break on Closed error only
                     if let Err(e) = res {
                         break;
                     }
@@ -111,13 +111,13 @@ impl WebsocketServer {
                 .data(AppState { peer_id })
                 .wrap(middleware::Logger::default())
                 .route("/peer_id", web::get().to(Self::greet))
-                .service(fs::Files::new("/stats", "assets/stats").show_files_listing())
+                .service(fs::Files::new("/stats", "assets/stats").index_file("index.html"))
                 .route("/gun", web::get().to(
                     move |a, b| {
                         Self::user_connected(a, b, node.clone())
                     }
-                )
-            )
+                ))
+                .service(fs::Files::new("/", "assets/iris").index_file("index.html"))
         })
             .bind(format!("0.0.0.0:{}", port)).unwrap()
             .run()
