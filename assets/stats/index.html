@@ -21,6 +21,14 @@
                                 <tbody>
                                   <tr>
                                     <td>
+                                      Peer ID
+                                    </td>
+                                    <td class="text-center" id="peer_id">
+                                        -
+                                    </td>
+                                  </tr>
+                                  <tr>
+                                    <td>
                                       Incoming connections
                                     </td>
                                     <td class="text-center" id="websocket_server_connections">
@@ -102,6 +110,7 @@ const gun = window.gun = GUN(document.location.origin + '/gun');
 fetch("/peer_id", {method:"get"}).then(async res => {
     if (res.ok) {
         const peer_id = await res.text();
+        document.getElementById('peer_id').innerText = peer_id;
         const stats = gun.get('node_stats').get(peer_id);
         [
           'websocket_server_connections',
