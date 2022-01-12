@@ -89,9 +89,7 @@ impl NetworkAdapter for WebsocketServer {
 
     async fn start(&self) {
         let node = self.node.clone();
-        tokio::task::spawn_blocking(move || { // problem - this blocks other threads
-            Self::actix_start(node);
-        });
+        Self::actix_start(node).await.await;
     }
 
     fn stop(&self) {
@@ -100,8 +98,7 @@ impl NetworkAdapter for WebsocketServer {
 }
 
 impl WebsocketServer {
-    #[actix_web::main]
-    async fn actix_start(node: Node) -> std::io::Result<()> {
+    async fn actix_start(node: Node) -> actix_web::dev::Server {
         let port: u16 = match env::var("PORT") {
             Ok(p) => p.parse::<u16>().unwrap(),
             _ => 4944
@@ -124,7 +121,6 @@ impl WebsocketServer {
         })
             .bind(format!("0.0.0.0:{}", port)).unwrap()
             .run()
-            .await
     }
 
     async fn greet(data: web::Data<AppState>) -> String {
