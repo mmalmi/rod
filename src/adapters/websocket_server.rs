@@ -9,6 +9,7 @@ use crate::types::{NetworkAdapter, GunMessage};
 use crate::Node;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
+use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
 
 static NEXT_USER_ID: AtomicUsize = AtomicUsize::new(1);
 
@@ -53,7 +54,7 @@ impl Actor for MyWs {
         self.update_stats();
     }
 
-    fn stopped(&mut self, ctx: &mut ws::WebsocketContext<Self>) {
+    fn stopped(&mut self, _ctx: &mut ws::WebsocketContext<Self>) {
         self.users.write().unwrap().remove(&self.id);
         self.update_stats();
     }
@@ -125,8 +126,9 @@ impl WebsocketServer {
             Ok(p) => p.parse::<u16>().unwrap(),
             _ => 4944
         };
+        let url = format!("0.0.0.0:{}", port);
 
-        HttpServer::new(move || {
+        let server = HttpServer::new(move || {
             let node = node.clone();
             let users = users.clone();
             let peer_id = node.get_peer_id();
@@ -141,9 +143,20 @@ impl WebsocketServer {
                     }
                 ))
                 .service(fs::Files::new("/", "assets/iris").index_file("index.html"))
-        })
-            .bind(format!("0.0.0.0:{}", port)).unwrap()
-            .run()
+        });
+
+        if let Ok(cert_path) = env::var("CERT_PATH") {
+            if let Ok(key_path) = env::var("KEY_PATH") {
+                let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls()).unwrap();
+                    builder
+                        .set_private_key_file(key_path, SslFiletype::PEM)
+                        .unwrap();
+                    builder.set_certificate_chain_file(cert_path).unwrap();
+                return server.bind_openssl(url, builder).unwrap().run()
+            }
+        }
+
+        server.bind(url).unwrap().run()
     }
 
     async fn peer_id(data: web::Data<AppState>) -> String {

@@ -14,7 +14,7 @@ Live stats: https://gun-us.herokuapp.com/stats
 - [x] Outgoing websockets (env PEERS=wss://some-server-url.herokuapp.com/gun)
 - [x] Multicast (Iris messages seem not to propagate — size limit?)
 - [x] In-memory storage
-- [ ] TLS support (env CERT_PATH and KEY_PATH)
+- [x] TLS support (env CERT_PATH and KEY_PATH)
 - [ ] Disk storage
 - [ ] SEA
 - [ ] Advanced deduplication
