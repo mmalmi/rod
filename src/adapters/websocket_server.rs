@@ -2,18 +2,21 @@ use actix::{Actor, StreamHandler, AsyncContext, Handler}; // would rather use wa
 use actix_web::{web, App, Error, Responder, HttpRequest, HttpResponse, HttpServer, middleware};
 use actix_web_actors::ws;
 use actix_files as fs;
+use std::collections::HashSet;
 use std::env;
 use async_trait::async_trait;
 use crate::types::{NetworkAdapter, GunMessage};
 use crate::Node;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, RwLock};
 
 static NEXT_USER_ID: AtomicUsize = AtomicUsize::new(1);
 
 /// Define HTTP actor
 pub struct MyWs {
     node: Node,
-    id: String
+    id: String,
+    users: Users
 }
 
 struct OutgoingMessage {
@@ -30,6 +33,7 @@ impl Actor for MyWs {
     fn started(&mut self, ctx: &mut ws::WebsocketContext<Self>) {
         let mut rx = self.node.get_outgoing_msg_receiver();
         let id = self.id.clone();
+        self.users.write().unwrap().insert(id.clone());
         let addr = ctx.address();
         tokio::task::spawn(async move {
             loop {
@@ -46,6 +50,19 @@ impl Actor for MyWs {
                 }
             }
         });
+        self.update_stats();
+    }
+
+    fn stopped(&mut self, ctx: &mut ws::WebsocketContext<Self>) {
+        self.users.write().unwrap().remove(&self.id);
+        self.update_stats();
+    }
+}
+
+impl MyWs {
+    fn update_stats(&mut self) {
+        let peer_id = self.node.get_peer_id();
+        self.node.get("node_stats").get(&peer_id).get("websocket_server_connections").put(self.users.read().unwrap().len().to_string().into());
     }
 }
 
@@ -77,21 +94,24 @@ struct AppState {
     peer_id: String,
 }
 
+type Users = Arc<RwLock<HashSet<String>>>;
+
 pub struct WebsocketServer {
-    node: Node
+    node: Node,
+    users: Users
 }
 
 #[async_trait]
 impl NetworkAdapter for WebsocketServer {
     fn new(node: Node) -> Self {
         WebsocketServer {
-            node
+            node,
+            users: Users::default()
         }
     }
 
     async fn start(&self) {
-        let node = self.node.clone();
-        Self::actix_start(node).await;
+        Self::actix_start(self.node.clone(), self.users.clone()).await;
     }
 
     fn stop(&self) {
@@ -100,7 +120,7 @@ impl NetworkAdapter for WebsocketServer {
 }
 
 impl WebsocketServer {
-    fn actix_start(node: Node) -> actix_web::dev::Server {
+    fn actix_start(node: Node, users: Users) -> actix_web::dev::Server {
         let port: u16 = match env::var("PORT") {
             Ok(p) => p.parse::<u16>().unwrap(),
             _ => 4944
@@ -108,15 +128,16 @@ impl WebsocketServer {
 
         HttpServer::new(move || {
             let node = node.clone();
+            let users = users.clone();
             let peer_id = node.get_peer_id();
             App::new()
                 .data(AppState { peer_id })
                 .wrap(middleware::Logger::default())
-                .route("/peer_id", web::get().to(Self::greet))
+                .route("/peer_id", web::get().to(Self::peer_id))
                 .service(fs::Files::new("/stats", "assets/stats").index_file("index.html"))
                 .route("/gun", web::get().to(
                     move |a, b| {
-                        Self::user_connected(a, b, node.clone())
+                        Self::user_connected(a, b, node.clone(), users.clone())
                     }
                 ))
                 .service(fs::Files::new("/", "assets/iris").index_file("index.html"))
@@ -125,16 +146,16 @@ impl WebsocketServer {
             .run()
     }
 
-    async fn greet(data: web::Data<AppState>) -> String {
+    async fn peer_id(data: web::Data<AppState>) -> String {
         data.peer_id.clone()
     }
 
-    async fn user_connected(req: HttpRequest, stream: web::Payload, node: Node) -> Result<HttpResponse, Error> {
+    async fn user_connected(req: HttpRequest, stream: web::Payload, node: Node, users: Users) -> Result<HttpResponse, Error> {
         // Use a counter to assign a new unique ID for this user.
         let id = NEXT_USER_ID.fetch_add(1, Ordering::Relaxed);
         let id = format!("ws_server_{}", id).to_string();
 
-        let ws = MyWs { node, id };
+        let ws = MyWs { node, id, users };
         let resp = ws::start(ws, &req, stream);
 
         //println!("{:?}", resp);
