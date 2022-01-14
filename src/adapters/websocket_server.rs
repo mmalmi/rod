@@ -1,7 +1,14 @@
-use actix::{Actor, StreamHandler, AsyncContext, Handler}; // would rather use warp, but its dependency "hyper" has a memory leak
+use actix::{Actor, StreamHandler, AsyncContext, Handler}; // would much rather use warp, but its dependency "hyper" has a memory leak https://github.com/hyperium/hyper/issues/1790
 use actix_web::{web, App, Error, Responder, HttpRequest, HttpResponse, HttpServer, middleware};
 use actix_web_actors::ws;
 use actix_files as fs;
+
+use actix_web::error::PayloadError;
+use ws::{handshake, WebsocketContext};
+use actix_http::ws::{Codec, Message, ProtocolError};
+use bytes::Bytes;
+use futures::Stream;
+
 use std::collections::HashSet;
 use std::env;
 use async_trait::async_trait;
@@ -12,6 +19,17 @@ use std::sync::{Arc, RwLock};
 use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
 
 static NEXT_USER_ID: AtomicUsize = AtomicUsize::new(1);
+
+// this is needed to set a higher websocket frame size in a custom Codec
+fn start_with_codec<A, S>(actor: A, req: &HttpRequest, stream: S, codec: Codec) -> Result<HttpResponse, Error>
+where
+    A: Actor<Context = WebsocketContext<A>>
+        + StreamHandler<Result<Message, ProtocolError>>,
+    S: Stream<Item = Result<Bytes, PayloadError>> + 'static,
+{
+    let mut res = handshake(req)?;
+    Ok(res.streaming(WebsocketContext::with_codec(actor, stream, codec)))
+}
 
 /// Define HTTP actor
 pub struct MyWs {
@@ -169,7 +187,9 @@ impl WebsocketServer {
         let id = format!("ws_server_{}", id).to_string();
 
         let ws = MyWs { node, id, users };
-        let resp = ws::start(ws, &req, stream);
+
+        let MAX_SIZE = 8 * 1000 * 1000;
+        let resp = start_with_codec(ws, &req, stream, Codec::new().max_size(MAX_SIZE));
 
         //println!("{:?}", resp);
         resp
