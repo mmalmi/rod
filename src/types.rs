@@ -15,6 +15,15 @@ pub enum GunValue {
     Children(BTreeMap<String, GunValue>)
 }
 
+impl GunValue {
+    pub fn size(&self) -> usize {
+        match self {
+            GunValue::Text(s) => s.len(),
+            _ => std::mem::size_of_val(self)
+        }
+    }
+}
+
 impl From<usize> for GunValue {
     fn from(n: usize) -> GunValue {
         GunValue::Number(n as f64)

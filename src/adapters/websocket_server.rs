@@ -32,7 +32,7 @@ where
 }
 
 /// Define HTTP actor
-pub struct MyWs {
+struct MyWs {
     node: Node,
     id: String,
     users: Users
@@ -188,7 +188,7 @@ impl WebsocketServer {
 
         let ws = MyWs { node, id, users };
 
-        let MAX_SIZE = 8 * 1000 * 1000;
+        let MAX_SIZE = 8 * 1000 * 1000; // is this causing a memory leak issue? should messages be split into smaller frames instead?
         let resp = start_with_codec(ws, &req, stream, Codec::new().max_size(MAX_SIZE));
 
         //println!("{:?}", resp);

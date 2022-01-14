@@ -30,6 +30,7 @@ fn get_id() -> usize { COUNTER.fetch_add(1, Ordering::Relaxed) }
 #[derive(Clone)]
 pub struct Node {
     id: usize,
+    graph_size_bytes: Arc<RwLock<usize>>,
     updated_at: Arc<RwLock<f64>>, // TODO: Option<f64>?
     key: String,
     path: Vec<String>,
@@ -55,6 +56,7 @@ impl Node {
         let (sender, _receiver) = broadcast::channel::<GunMessage>(channel_size);
         let node = Self {
             id: 0,
+            graph_size_bytes: Arc::new(RwLock::new(0)),
             updated_at: Arc::new(RwLock::new(0.0)),
             key: "".to_string(),
             path: Vec::new(),
@@ -92,10 +94,13 @@ impl Node {
             loop {
                 sys.refresh_all();
                 let count = node.store.read().unwrap().len().to_string();
+                let graph_size_bytes = *node.graph_size_bytes.read().unwrap();
+                let graph_size_bytes = format!("{}B", size_format::SizeFormatterBinary::new(graph_size_bytes as u64).to_string());
                 let mut stats = node.get("node_stats").get(&peer_id);
                 stats.get("msgs_per_second").put(node.msg_counter.load(Ordering::Relaxed).into());
                 node.msg_counter.store(0, Ordering::Relaxed);
                 stats.get("graph_node_count").put(count.into());
+                stats.get("graph_size_bytes").put(graph_size_bytes.into());
                 stats.get("total_memory").put(format!("{} MB", sys.total_memory() / 1000).into());
                 stats.get("used_memory").put(format!("{} MB", sys.used_memory() / 1000).into());
                 stats.get("cpu_usage").put(format!("{} %", sys.global_processor_info().cpu_usage() as u64).into());
@@ -136,6 +141,7 @@ impl Node {
         let id = get_id();
         let node = Self {
             id,
+            graph_size_bytes: self.graph_size_bytes.clone(),
             updated_at: Arc::new(RwLock::new(0.0)),
             key: key.clone(),
             path,
@@ -459,7 +465,15 @@ impl Node {
         // TODO handle javascript Object values
         // TODO: if "children" is replaced with "value", remove backreference from linked objects
         *self.updated_at.write().unwrap() = time;
-        *self.value.write().unwrap() = Some(value.clone());
+        let mut self_value = self.value.write().unwrap();
+        let mut old_size: usize = 0;
+        if let Some(v) = &*self_value {
+            old_size = v.size();
+        }
+        let mut self_graph_size_bytes = self.graph_size_bytes.write().unwrap(); // TODO update when value is replaced
+        *self_graph_size_bytes += value.size();
+        *self_graph_size_bytes -= old_size;
+        *self_value = Some(value.clone());
         *self.children.write().unwrap() = BTreeMap::new();
         for callback in self.on_subscriptions.read().unwrap().values() { // rayon?
             callback(value.clone(), self.key.clone());
@@ -473,7 +487,7 @@ impl Node {
                 for callback in parent.on_subscriptions.read().unwrap().values() {
                     parent_clone.once_local(&callback, key);
                 }
-                *parent.value.write().unwrap() = None;
+                *parent.value.write().unwrap() = None; // TODO update graph size (use helper method to change value?)
             }
         }
     }

@@ -53,6 +53,14 @@
                                   </tr>
                                   <tr>
                                     <td>
+                                      Graph size
+                                    </td>
+                                    <td class="text-center" id="graph_size_bytes">
+                                        -
+                                    </td>
+                                  </tr>
+                                  <tr>
+                                    <td>
                                       RAM usage
                                     </td>
                                     <td class="text-center">
@@ -116,6 +124,7 @@ fetch("/peer_id", {method:"get"}).then(async res => {
           'websocket_server_connections',
           'websocket_client_connections',
           'graph_node_count',
+          'graph_size_bytes',
           'total_memory',
           'used_memory',
           'cpu_usage',
