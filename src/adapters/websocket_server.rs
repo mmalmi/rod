@@ -42,9 +42,9 @@ impl Actor for MyWs {
                     if message.from == id {
                         continue;
                     }
-                    let res = addr.try_send(OutgoingMessage { gun_message: message }); // TODO break on Closed error only
+                    let res = addr.send(OutgoingMessage { gun_message: message }).await; // TODO break on Closed error only
                     if let Err(e) = res {
-                        if let actix::prelude::SendError::Closed(_e) = e {
+                        if let actix::prelude::MailboxError::Closed = e {
                             break;
                         }
                     }
