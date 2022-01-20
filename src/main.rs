@@ -1,15 +1,16 @@
 extern crate clap;
 use clap::{Arg, App, SubCommand};
-use gun::Node;
+use gun::{Node, NodeConfig};
 use gun::types::GunValue;
+use std::env; // TODO use clap
 
 #[tokio::main]
 async fn main() {
     env_logger::init();
-    let matches = App::new("My Super Program")
+    let matches = App::new("Gun")
                           .version("1.0")
                           .author("Martti Malmi")
-                          .about("Gun runner")
+                          .about("Gun node runner")
                           .arg(Arg::with_name("config")
                                .short("c")
                                .long("config")
@@ -30,7 +31,28 @@ async fn main() {
         if matches.is_present("debug") {
             println!("Printing debug info...");
         }
-        let mut node = Node::new();
+
+        let mut outgoing_websocket_peers = Vec::new();
+        if let Ok(peers) = env::var("PEERS") {
+            outgoing_websocket_peers.push(peers);
+        }
+
+        let rust_channel_size: usize = match env::var("RUST_CHANNEL_SIZE") {
+            Ok(p) => p.parse::<usize>().unwrap(),
+            _ => 10
+        };
+
+        let websocket_server_port: u16 = match env::var("PORT") {
+            Ok(p) => p.parse::<u16>().unwrap(),
+            _ => 4944
+        };
+
+        let mut node = Node::new_with_config(NodeConfig {
+            outgoing_websocket_peers,
+            rust_channel_size,
+            websocket_server_port,
+            ..NodeConfig::default()
+        });
 
         node.get("asdf").get("fasd").on(Box::new(|value: GunValue, key: String| { // TODO how to do it without Box? https://stackoverflow.com/questions/41081240/idiomatic-callbacks-in-rust
             if let GunValue::Text(str) = value {

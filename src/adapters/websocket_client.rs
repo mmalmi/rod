@@ -41,8 +41,9 @@ impl NetworkAdapter for WebsocketClient {
         }
     }
 
-    async fn start(&self) { // "wss://gun-us.herokuapp.com/gun"
-        if let Ok(peers) = env::var("PEERS") {
+    async fn start(&self) {
+        let config = self.node.config.read().unwrap().clone();
+        if let Some(peers) = config.outgoing_websocket_peers.get(0) {
             debug!("WebsocketClient connecting to {}\n", peers);
             loop {
                 let result = connect_async(

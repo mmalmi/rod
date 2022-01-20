@@ -5,7 +5,6 @@ use std::sync::{
     Arc,
     RwLock
 };
-use std::env;
 use serde_json::{json, Value as SerdeJsonValue};
 use crate::types::*;
 use crate::utils::random_string;
@@ -28,8 +27,32 @@ fn get_id() -> usize { COUNTER.fetch_add(1, Ordering::Relaxed) }
 // TODO connections don't seem to be closed / timeouted properly when client has disconnected
 
 #[derive(Clone)]
+pub struct NodeConfig {
+    pub rust_channel_size: usize,
+    pub multicast: bool, // should we have (adapters: Vector<String>) instead, so you can be sure there's no unwanted sync happening?
+    pub outgoing_websocket_peers: Vec<String>,
+    pub websocket_server: bool,
+    pub websocket_server_port: u16,
+    pub websocket_frame_max_size: usize
+}
+
+impl Default for NodeConfig {
+    fn default() -> Self {
+        NodeConfig {
+            rust_channel_size: 10,
+            multicast: true,
+            outgoing_websocket_peers: Vec::new(),
+            websocket_server: true,
+            websocket_server_port: 4944,
+            websocket_frame_max_size: 8 * 1000 * 1000
+        }
+    }
+}
+
+#[derive(Clone)]
 pub struct Node {
     id: usize,
+    pub config: Arc<RwLock<NodeConfig>>,
     graph_size_bytes: Arc<RwLock<usize>>,
     updated_at: Arc<RwLock<f64>>, // TODO: Option<f64>?
     key: String,
@@ -49,13 +72,14 @@ pub struct Node {
 
 impl Node {
     pub fn new() -> Self {
-        let channel_size: usize = match env::var("RUST_CHANNEL_SIZE") {
-            Ok(p) => p.parse::<usize>().unwrap(),
-            _ => 10
-        };
-        let (sender, _receiver) = broadcast::channel::<GunMessage>(channel_size);
+        Self::new_with_config(NodeConfig::default())
+    }
+
+    pub fn new_with_config(config: NodeConfig) -> Self {
+        let (sender, _receiver) = broadcast::channel::<GunMessage>(config.rust_channel_size);
         let node = Self {
             id: 0,
+            config: Arc::new(RwLock::new(config.clone())),
             graph_size_bytes: Arc::new(RwLock::new(0)),
             updated_at: Arc::new(RwLock::new(0.0)),
             key: "".to_string(),
@@ -72,11 +96,15 @@ impl Node {
             msg_counter: Arc::new(AtomicUsize::new(0)),
             outgoing_msg_sender: sender,
         };
-        //let _multicast = Multicast::new(node.clone());
-        let server = WebsocketServer::new(node.clone());
+        if config.multicast {
+            let multicast = Multicast::new(node.clone());
+            node.network_adapters.write().unwrap().insert("multicast".to_string(), Box::new(multicast));
+        }
+        if config.websocket_server {
+            let server = WebsocketServer::new(node.clone());
+            node.network_adapters.write().unwrap().insert("ws_server".to_string(), Box::new(server));
+        }
         let client = WebsocketClient::new(node.clone());
-        //node.network_adapters.write().unwrap().insert("multicast".to_string(), Box::new(multicast));
-        node.network_adapters.write().unwrap().insert("ws_server".to_string(), Box::new(server));
         node.network_adapters.write().unwrap().insert("ws_client".to_string(), Box::new(client));
         node
     }
@@ -119,7 +147,7 @@ impl Node {
         });
     }
 
-    pub async fn start(&mut self) {
+    pub async fn start(&mut self) { // should we start in a new thread on ::new()?
         let adapters = self.network_adapters.read().unwrap();
         let mut futures = Vec::new();
         for adapter in adapters.values() {
@@ -141,6 +169,7 @@ impl Node {
         let id = get_id();
         let node = Self {
             id,
+            config: self.config.clone(),
             graph_size_bytes: self.graph_size_bytes.clone(),
             updated_at: Arc::new(RwLock::new(0.0)),
             key: key.clone(),
@@ -171,7 +200,7 @@ impl Node {
         self.peer_id.read().unwrap().to_string()
     }
 
-    pub fn on(&mut self, callback: Callback) -> usize {
+    pub fn on(&mut self, callback: Callback) -> usize { // TODO: use channels instead of Callback
         self.once_local(&callback, &self.key.clone());
         let subscription_id = get_id();
         self.on_subscriptions.write().unwrap().insert(subscription_id, callback);
@@ -332,8 +361,8 @@ impl Node {
 
     fn incoming_put(&mut self, put: &serde_json::Map<String, SerdeJsonValue>) {
         for (updated_key, update_data) in put.iter() {
-            let mut node = self.get(updated_key);
-            for node_name in updated_key.split("/").nth(1) {
+            let mut node = self.clone();// = self.get(updated_key);
+            for node_name in updated_key.split("/") {
                 node = node.get(node_name);
             }
             if let Some(updated_at_times) = update_data["_"][">"].as_object() {
@@ -380,7 +409,7 @@ impl Node {
     }
 
     fn send_to_adapters(&self, msg: &String, from: &String, msg_id: String) {
-        debug!("sending msg {}", &msg_id);
+        debug!("sending msg {} {}", &msg_id, msg);
         self.seen_messages.write().unwrap().insert(msg_id); // TODO: doesn't seem to work, at least on multicast
         self.outgoing_msg_sender.send(GunMessage { msg: msg.clone(), from: from.clone() });
     }
@@ -418,6 +447,7 @@ impl Node {
                 },
                 "#": msg_id,
             }).to_string();
+            debug!("have! sending response {}", msg_id);
             self.send_to_adapters(&json, &self.get_peer_id(), msg_id);
         }
     }
@@ -460,10 +490,20 @@ impl Node {
     }
 
     fn put_local(&mut self, value: GunValue, time: f64) {
-        //debug!("put_local\n {}\n {:?}\n", self.path.join("/"), value);
+        debug!("put_local\npath: {}\nkey: {}\nvalue: {:?}\n", self.path.join("/"), self.key, value);
         // root.get(soul).get(key).put(jsvalue)
         // TODO handle javascript Object values
         // TODO: if "children" is replaced with "value", remove backreference from linked objects
+        /* TODO: this fails for user-space puts:
+
+        [2022-01-18T13:41:36Z DEBUG gun::node] in ID 0iv38ttemfzo:
+    {"put":{"~dHaU4idIv7wpnP_NjOvA7EV75eYUZf64FvTetITqo3k.zCQ7b4Xhry5DZdry0arNm8xu6I0gUcpnYQB1wyIAOD4/profile":{"_":{"#":"~dHaU4idIv7wpnP_NjOvA7EV75eYUZf64FvTetITqo3k.zCQ7b4Xhry5DZdry0arNm8xu6I0gUcpnYQB1wyIAOD4/profile",">":{"name":1642513296695}},"name":"{\":\":\"MacGyver!!!!!\",\"~\":\"6sCGKSjDeUygA+Q
+
+[2022-01-18T13:41:36Z DEBUG gun::node] put_local
+     ~dHaU4idIv7wpnP_NjOvA7EV75eYUZf64FvTetITqo3k.zCQ7b4Xhry5DZdry0arNm8xu6I0gUcpnYQB1wyIAOD4/profile/profile
+     Text("{\":\":\"MacGyver!!!!!\",\"~\":\"6sCGKSjDeUygA+QisLCjGEKCfTjF5phrNVwlU1k95QWeazyjFnZ0Alm4Kvod070aDFz/5pt7i9CHci4ReRF4Ug==\"}")
+
+         */
         *self.updated_at.write().unwrap() = time;
         let mut self_value = self.value.write().unwrap();
         let mut old_size: usize = 0;
@@ -495,10 +535,12 @@ impl Node {
 
 #[cfg(test)]
 mod tests {
-    use crate::Node;
+    use crate::{Node, NodeConfig};
     use crate::types::GunValue;
     use std::cell::RefCell;
-    use std::time::{Duration, Instant};
+    use std::time::{Instant};
+    use tokio::time::{sleep, Duration};
+    use log::debug;
 
     // TODO proper test
     // TODO benchmark
@@ -522,7 +564,45 @@ mod tests {
         }));
     }
 
-    //var i = 28000, j = i, s = +new Date; while(--i){ gun.get('a'+i).get('lol').put(i+'yo') } console.log(j / ((+new Date - s) / 1000), 'ops/sec');
+    #[tokio::test]
+    async fn connect_and_sync_over_websocket() {
+        let mut node1 = Node::new();
+        let mut node2 = Node::new_with_config(NodeConfig {
+            websocket_server: false,
+            multicast: false,
+            outgoing_websocket_peers: vec!["ws://localhost:4944/gun".to_string()],
+            ..NodeConfig::default()
+        });
+        println!("asdf1");
+        async fn tst(mut node1: Node, mut node2: Node) {
+            sleep(Duration::from_millis(1000)).await;
+            node1.get("test1").on(Box::new(|value: GunValue, key: String| {
+                println!("test1");
+                assert!(matches!(value, GunValue::Text(_)));
+                if let GunValue::Text(str) = value {
+                    assert_eq!(&str, "Fingolfin");
+                }
+            }));
+            node2.get("test2").on(Box::new(|value: GunValue, key: String| {
+                println!("test2");
+                assert!(matches!(value, GunValue::Text(_)));
+                if let GunValue::Text(str) = value {
+                    assert_eq!(&str, "Fingolfin");
+                }
+            }));
+            println!("asdf2");
+            node1.get("test2").put("Fingolfin".into());
+            node2.get("test1").put("Fingolfin".into());
+        }
+        let node1_clone = node1.clone();
+        let node2_clone = node2.clone();
+        tokio::join!(node1.start(), node2.start(), tst(node1_clone, node2_clone));
+    }
+
+    #[test]
+    fn save_and_retrieve_user_space_data() {
+        let mut node = Node::new();
+    }
 
     #[test]
     fn write_benchmark() { // to see the result with optimized binary, run: cargo test --release -- --nocapture
@@ -534,6 +614,7 @@ mod tests {
         }
         let duration = start.elapsed();
         let per_second = (n as f64) / (duration.as_nanos() as f64) * 1000000000.0;
-        debug!("Wrote {} entries in {:?} ({} / second)", n, duration, per_second);
+        println!("Wrote {} entries in {:?} ({} / second)", n, duration, per_second);
+        // compare with gun.js: var i = 100000, j = i, s = +new Date; while(--i){ gun.get('a'+i).get('lol').put(i+'yo') } console.log(j / ((+new Date - s) / 1000), 'ops/sec');
     }
 }

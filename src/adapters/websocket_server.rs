@@ -140,11 +140,7 @@ impl NetworkAdapter for WebsocketServer {
 
 impl WebsocketServer {
     fn actix_start(node: Node, users: Users) -> actix_web::dev::Server {
-        let port: u16 = match env::var("PORT") {
-            Ok(p) => p.parse::<u16>().unwrap(),
-            _ => 4944
-        };
-        let url = format!("0.0.0.0:{}", port);
+        let url = format!("0.0.0.0:{}", node.config.read().unwrap().websocket_server_port);
 
         let server = HttpServer::new(move || {
             let node = node.clone();
@@ -186,10 +182,10 @@ impl WebsocketServer {
         let id = NEXT_USER_ID.fetch_add(1, Ordering::Relaxed);
         let id = format!("ws_server_{}", id).to_string();
 
-        let ws = MyWs { node, id, users };
+        let ws = MyWs { node: node.clone(), id, users };
 
-        let MAX_SIZE = 8 * 1000 * 1000; // is this causing a memory leak issue? should messages be split into smaller frames instead?
-        let resp = start_with_codec(ws, &req, stream, Codec::new().max_size(MAX_SIZE));
+        let config = node.config.read().unwrap();
+        let resp = start_with_codec(ws, &req, stream, Codec::new().max_size(config.websocket_frame_max_size));
 
         //println!("{:?}", resp);
         resp
