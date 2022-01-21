@@ -1,7 +1,6 @@
 extern crate clap;
 use clap::{Arg, App, SubCommand};
 use gundb::{Node, NodeConfig};
-use gundb::types::GunValue;
 use std::env; // TODO use clap
 
 #[tokio::main]
@@ -53,16 +52,6 @@ async fn main() {
             websocket_server_port,
             ..NodeConfig::default()
         });
-
-        let mut fasd = node.get("asdf").get("fasd");
-        fasd.put("test".into());
-        let mut sub = fasd.on();
-
-        if let Ok(value) = sub.recv().await {
-            if let GunValue::Text(str) = value {
-                println!("fasd value {}", &str);
-            }
-        }
 
         node.start_adapters().await;
     }

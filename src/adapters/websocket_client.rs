@@ -1,5 +1,4 @@
 use futures_util::{SinkExt, StreamExt};
-use std::env;
 use tokio_tungstenite::{
     connect_async,
     tungstenite::{Message},
@@ -12,7 +11,7 @@ use std::collections::HashMap;
 use crate::types::NetworkAdapter;
 use crate::Node;
 use async_trait::async_trait;
-use log::{debug};
+use log::{debug, error};
 use std::sync::Arc;
 use tokio::time::{sleep, Duration};
 
@@ -104,11 +103,16 @@ async fn user_connected(mut node: Node, ws: WebSocketStream<tokio_tungstenite::M
         let msg = match result {
             Ok(msg) => msg,
             Err(e) => {
+                error!("websocket receive error: {}", e);
                 break;
             }
         };
-        if let Ok(s) = msg.to_text() {
-            node.incoming_message(s.to_string(), &my_id);
+        match msg.to_text() {
+            Ok(s) => node.incoming_message(s.to_string(), &my_id),
+            Err(e) => {
+                error!("websocket incoming msg .to_text() failed: {}", e);
+                break;
+            }
         }
     }
 

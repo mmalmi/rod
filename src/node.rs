@@ -14,7 +14,7 @@ use crate::adapters::Multicast;
 use log::{debug};
 use tokio::time::{sleep, Duration};
 use tokio::sync::broadcast;
-use sysinfo::{NetworkExt, NetworksExt, ProcessExt, ProcessorExt, System, SystemExt};
+use sysinfo::{ProcessorExt, System, SystemExt};
 
 static SEEN_MSGS_MAX_SIZE: usize = 10000;
 static COUNTER: AtomicUsize = AtomicUsize::new(1);
@@ -94,19 +94,18 @@ impl Node {
     ///
     /// ```
     /// use gundb::{Node, NodeConfig};
+    /// use gundb::types::GunValue;
     /// let mut db = Node::new_with_config(NodeConfig {
     ///     outgoing_websocket_peers: vec!["wss://some-server-to-sync.with/gun".to_string()],
     ///     ..NodeConfig::default()
     /// });
-    /// db.get("greeting").on(Box::new(|value: Option<GunValue>, key: String| {
-    ///     assert!(matches!(value, Some(GunValue::Text(_))));
-    ///     if let Some(value) = value {
-    ///         if let GunValue::Text(str) = value {
-    ///             assert_eq!(&str, "Hello World!");
-    ///         }
-    ///     }
-    /// }));
+    /// let sub = db.get("greeting").on();
     /// db.get("greeting").put("Hello World!".into());
+    /// if let Ok(value) = sub.recv().await {
+    ///     if let GunValue::Text(str) = value {
+    ///         assert_eq!(&str, "Hello World!");
+    ///     }
+    /// }
     /// ```
     pub fn new_with_config(config: NodeConfig) -> Self {
         let node = Self {
@@ -232,7 +231,7 @@ impl Node {
         self.peer_id.read().unwrap().to_string()
     }
 
-    /// Subscribe to the Node's value or set of children.
+    /// Subscribe to the Node's value.
     pub fn on(&mut self) -> broadcast::Receiver<GunValue> {
         if self.network_adapters.read().unwrap().len() > 0 {
             let (m, id) = self.create_get_msg();
@@ -240,7 +239,7 @@ impl Node {
         }
         let sub = self.on_sender.subscribe();
         if let Some(val) = self.get_local_value_once() {
-            self.on_sender.send(val);
+            self.on_sender.send(val).ok();
         }
         sub
     }
@@ -262,7 +261,7 @@ impl Node {
         for (key, child_id) in self.children.read().unwrap().iter() { // TODO can be faster with rayon multithreading?
             if let Some(child) = self.store.read().unwrap().get(&child_id) {
                 if let Some(child_val) = child.clone().get_local_value_once() {
-                    self.map_sender.send((key.to_string(), child_val)); // TODO first return Receiver and then do this in another thread?
+                    self.map_sender.send((key.to_string(), child_val)).ok(); // TODO first return Receiver and then do this in another thread?
                 }
             }
         }
@@ -443,13 +442,12 @@ impl Node {
     fn outgoing_message(&self, msg: &String, from: &String, msg_id: String) {
         debug!("sending msg {} {}", &msg_id, msg);
         self.seen_messages.write().unwrap().insert(msg_id); // TODO: doesn't seem to work, at least on multicast
-        self.outgoing_msg_sender.send(GunMessage { msg: msg.clone(), from: from.clone() });
+        self.outgoing_msg_sender.send(GunMessage { msg: msg.clone(), from: from.clone() }).ok();
     }
 
     pub fn get_local_value_once(&self) -> Option<GunValue> {
-        let value = self.value.read().unwrap();
-        if value.is_some() {
-            value.clone()
+        if let Some(value) = &*self.value.read().unwrap() {
+            Some(value.clone())
         } else {
             let children = self.children.read().unwrap();
             if !children.is_empty() {
@@ -538,22 +536,24 @@ impl Node {
 
          */
         *self.updated_at.write().unwrap() = time;
-        let mut self_value = self.value.write().unwrap();
-        let mut old_size: usize = 0;
-        if let Some(v) = &*self_value {
-            old_size = v.size();
+        {
+            let mut old_size: usize = 0;
+            let mut self_value = self.value.write().unwrap(); // scoped so this lock gets dropped
+            if let Some(v) = &*self_value {
+                old_size = v.size();
+            }
+            let mut self_graph_size_bytes = self.graph_size_bytes.write().unwrap(); // TODO update when value is replaced
+            *self_graph_size_bytes += value.size();
+            *self_graph_size_bytes -= old_size;
+            *self_value = Some(value.clone());
         }
-        let mut self_graph_size_bytes = self.graph_size_bytes.write().unwrap(); // TODO update when value is replaced
-        *self_graph_size_bytes += value.size();
-        *self_graph_size_bytes -= old_size;
-        *self_value = Some(value.clone());
         *self.children.write().unwrap() = BTreeMap::new();
-        self.on_sender.send(value.clone());
+        self.on_sender.send(value.clone()).ok();
         for (parent_id, key) in self.parents.read().unwrap().iter() { // rayon?
             if let Some(parent) = self.store.read().unwrap().get(parent_id) {
-                parent.map_sender.send((key.clone(), value.clone()));
+                parent.map_sender.send((key.clone(), value.clone())).ok();
                 if let Some(parent_val) = parent.get_local_value_once() {
-                    parent.on_sender.send(parent_val);
+                    parent.on_sender.send(parent_val).ok();
                 }
                 *parent.value.write().unwrap() = None; // TODO update graph size (use helper method to change value?)
             }
