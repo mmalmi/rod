@@ -49,8 +49,11 @@ async fn main() {
             ..NodeConfig::default()
         });
 
-        println!("Starting server at http://localhost:{}", websocket_server_port);
-        println!("Gun endpoint is at http://localhost:{}/gun", websocket_server_port);
+        let url = format!("http://localhost:{}", websocket_server_port);
+        println!("Gun server starting...");
+        println!("Iris UI:      {}", url);
+        println!("Stats:        {}/stats", url);
+        println!("Gun endpoint: {}/gun", url);
         node.start_adapters().await;
     }
 }
