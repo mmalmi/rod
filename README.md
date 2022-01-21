@@ -10,6 +10,7 @@ Live stats: https://gun-us.herokuapp.com/stats
 3/12/2021:
 
 - [x] Gun basic API
+- [x] CLI for running the server
 - [x] Incoming websockets
 - [x] Outgoing websockets (env PEERS=wss://some-server-url.herokuapp.com/gun)
 - [x] Multicast (Iris messages seem not to propagate — size limit?)
