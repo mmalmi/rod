@@ -72,8 +72,8 @@ pub struct Node {
     value: Value,
     children: Children,
     parents: Parents,
-    on_subscriptions: Subscriptions,
-    map_subscriptions: Subscriptions,
+    on_sender: broadcast::Sender<GunValue>,
+    map_sender: broadcast::Sender<(String, GunValue)>,
     store: SharedNodeStore,
     network_adapters: NetworkAdapters,
     seen_messages: Arc<RwLock<BoundedHashSet>>,
@@ -109,7 +109,6 @@ impl Node {
     /// db.get("greeting").put("Hello World!".into());
     /// ```
     pub fn new_with_config(config: NodeConfig) -> Self {
-        let (sender, _receiver) = broadcast::channel::<GunMessage>(config.rust_channel_size);
         let node = Self {
             id: 0,
             config: Arc::new(RwLock::new(config.clone())),
@@ -120,14 +119,14 @@ impl Node {
             value: Value::default(),
             children: Children::default(),
             parents: Parents::default(),
-            on_subscriptions: Subscriptions::default(),
-            map_subscriptions: Subscriptions::default(),
+            on_sender: broadcast::channel::<GunValue>(config.rust_channel_size).0,
+            map_sender: broadcast::channel::<(String, GunValue)>(config.rust_channel_size).0,
             store: SharedNodeStore::default(),
             network_adapters: NetworkAdapters::default(),
             seen_messages: Arc::new(RwLock::new(BoundedHashSet::new(SEEN_MSGS_MAX_SIZE))),
             peer_id: Arc::new(RwLock::new(random_string(16))),
             msg_counter: Arc::new(AtomicUsize::new(0)),
-            outgoing_msg_sender: sender,
+            outgoing_msg_sender: broadcast::channel::<GunMessage>(config.rust_channel_size).0,
         };
         if config.multicast {
             let multicast = Multicast::new(node.clone());
@@ -202,6 +201,7 @@ impl Node {
         if self.key.len() > 0 {
             path.push(self.key.clone());
         }
+        let config = self.config.read().unwrap();
         let id = get_id();
         let node = Self {
             id,
@@ -213,8 +213,8 @@ impl Node {
             value: Value::default(),
             children: Children::default(),
             parents: Arc::new(RwLock::new(parents)),
-            on_subscriptions: Subscriptions::default(),
-            map_subscriptions: Subscriptions::default(),
+            on_sender: broadcast::channel::<GunValue>(config.rust_channel_size).0,
+            map_sender: broadcast::channel::<(String, GunValue)>(config.rust_channel_size).0,
             store: self.store.clone(),
             network_adapters: self.network_adapters.clone(),
             seen_messages: Arc::new(RwLock::new(BoundedHashSet::new(SEEN_MSGS_MAX_SIZE))),
@@ -227,27 +227,22 @@ impl Node {
         id
     }
 
-    /// Turns off a map() or on() subscription with the subscription_id.
-    pub fn off(&mut self, subscription_id: usize) {
-        self.on_subscriptions.write().unwrap().remove(&subscription_id);
-        self.map_subscriptions.write().unwrap().remove(&subscription_id);
-    }
-
     /// Get the network peer id of this Node
     pub fn get_peer_id(&self) -> String {
         self.peer_id.read().unwrap().to_string()
     }
 
     /// Subscribe to the Node's value or set of children.
-    pub fn on(&mut self, callback: Callback) -> usize { // TODO: use channels instead of Callback
-        self.once_local(&callback, &self.key.clone());
-        let subscription_id = get_id();
-        self.on_subscriptions.write().unwrap().insert(subscription_id, callback);
+    pub fn on(&mut self) -> broadcast::Receiver<GunValue> {
         if self.network_adapters.read().unwrap().len() > 0 {
             let (m, id) = self.create_get_msg();
-            self.send_to_adapters(&m.to_string(), &self.get_peer_id(), id);
+            self.outgoing_message(&m.to_string(), &self.get_peer_id(), id);
         }
-        subscription_id
+        let sub = self.on_sender.subscribe();
+        if let Some(val) = self.get_local_value_once() {
+            self.on_sender.send(val);
+        }
+        sub
     }
 
     // TODO: optionally specify which adapters to ask
@@ -263,16 +258,16 @@ impl Node {
     }
 
     /// Subscribe to all children of this Node.
-    pub fn map(&self, callback: Callback) -> usize {
+    pub fn map(&self) -> broadcast::Receiver<(String, GunValue)> {
         for (key, child_id) in self.children.read().unwrap().iter() { // TODO can be faster with rayon multithreading?
             if let Some(child) = self.store.read().unwrap().get(&child_id) {
-                child.clone().once_local(&callback, key);
+                if let Some(child_val) = child.clone().get_local_value_once() {
+                    self.map_sender.send((key.to_string(), child_val)); // TODO first return Receiver and then do this in another thread?
+                }
             }
         }
-        let subscription_id = get_id();
-        self.map_subscriptions.write().unwrap().insert(subscription_id, callback);
-        // TODO: send get messages to adapters
-        subscription_id
+        self.map_sender.subscribe()
+        // TODO: send get messages to adapters!!
     }
 
     fn get_child_id(&mut self, key: String) -> usize {
@@ -376,13 +371,13 @@ impl Node {
                     if let Some(put) = obj.get("put") {
                         if let Some(obj) = put.as_object() {
                             self.incoming_put(obj);
-                            self.send_to_adapters(&msg_str, from, msg_id.clone());
+                            self.outgoing_message(&msg_str, from, msg_id.clone());
                         }
                     }
                     if let Some(get) = obj.get("get") {
                         if let Some(obj) = get.as_object() {
                             self.incoming_get(obj);
-                            self.send_to_adapters(&msg_str, from, msg_id);
+                            self.outgoing_message(&msg_str, from, msg_id);
                         }
                     }
                 }
@@ -392,7 +387,7 @@ impl Node {
         }
     }
 
-    /// NetworkAdapters should call this for received messages
+    /// NetworkAdapters should call this for received messages.
     pub fn incoming_message(&mut self, msg: String, from: &String) {
         self.msg_counter.fetch_add(1, Ordering::Relaxed);
         let json: SerdeJsonValue = match serde_json::from_str(&msg) {
@@ -445,18 +440,13 @@ impl Node {
         GunValue::Children(map)
     }
 
-    /// Get the node's locally stored value once.
-    pub fn once_local(&mut self, callback: &Callback, key: &String) {
-        callback(self.get_gun_value(), key.clone());
-    }
-
-    fn send_to_adapters(&self, msg: &String, from: &String, msg_id: String) {
+    fn outgoing_message(&self, msg: &String, from: &String, msg_id: String) {
         debug!("sending msg {} {}", &msg_id, msg);
         self.seen_messages.write().unwrap().insert(msg_id); // TODO: doesn't seem to work, at least on multicast
         self.outgoing_msg_sender.send(GunMessage { msg: msg.clone(), from: from.clone() });
     }
 
-    fn get_gun_value(&self) -> Option<GunValue> {
+    pub fn get_local_value_once(&self) -> Option<GunValue> {
         let value = self.value.read().unwrap();
         if value.is_some() {
             value.clone()
@@ -471,7 +461,7 @@ impl Node {
     }
 
     fn send_get_response_if_have(&self) {
-        if let Some(value) = self.get_gun_value() {
+        if let Some(value) = self.get_local_value_once() {
             let msg_id = random_string(8);
             let full_path = &self.path.join("/");
             let key = &self.key.clone();
@@ -490,7 +480,7 @@ impl Node {
                 "#": msg_id,
             }).to_string();
             debug!("have! sending response {}", msg_id);
-            self.send_to_adapters(&json, &self.get_peer_id(), msg_id);
+            self.outgoing_message(&json, &self.get_peer_id(), msg_id);
         }
     }
 
@@ -528,7 +518,7 @@ impl Node {
         self.put_local(value.clone(), time);
         if self.network_adapters.read().unwrap().len() > 0 {
             let (m, id) = self.create_put_msg(&value, time);
-            self.send_to_adapters(&m, &self.get_peer_id(), id);
+            self.outgoing_message(&m, &self.get_peer_id(), id);
         }
     }
 
@@ -558,17 +548,12 @@ impl Node {
         *self_graph_size_bytes -= old_size;
         *self_value = Some(value.clone());
         *self.children.write().unwrap() = BTreeMap::new();
-        for callback in self.on_subscriptions.read().unwrap().values() { // rayon?
-            callback(Some(value.clone()), self.key.clone());
-        }
+        self.on_sender.send(value.clone());
         for (parent_id, key) in self.parents.read().unwrap().iter() { // rayon?
             if let Some(parent) = self.store.read().unwrap().get(parent_id) {
-                let mut parent_clone = parent.clone();
-                for callback in parent.clone().map_subscriptions.read().unwrap().values() {
-                    callback(Some(value.clone()), key.clone());
-                }
-                for callback in parent.on_subscriptions.read().unwrap().values() {
-                    parent_clone.once_local(&callback, key);
+                parent.map_sender.send((key.clone(), value.clone()));
+                if let Some(parent_val) = parent.get_local_value_once() {
+                    parent.on_sender.send(parent_val);
                 }
                 *parent.value.write().unwrap() = None; // TODO update graph size (use helper method to change value?)
             }
@@ -586,6 +571,7 @@ mod tests {
     use log::debug;
 
     // TODO proper test
+    // TODO test .map()
     // TODO benchmark
     #[test]
     fn it_doesnt_error() {

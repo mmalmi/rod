@@ -54,13 +54,15 @@ async fn main() {
             ..NodeConfig::default()
         });
 
-        node.get("asdf").get("fasd").on(Box::new(|value: Option<GunValue>, key: String| { // TODO how to do it without Box? https://stackoverflow.com/questions/41081240/idiomatic-callbacks-in-rust
-            if let Some(value) = value {
-                if let GunValue::Text(str) = value {
-                    println!("key {} value {}", &key, &str);
-                }
+        let mut fasd = node.get("asdf").get("fasd");
+        fasd.put("test".into());
+        let mut sub = fasd.on();
+
+        if let Ok(value) = sub.recv().await {
+            if let GunValue::Text(str) = value {
+                println!("fasd value {}", &str);
             }
-        }));
+        }
 
         node.start_adapters().await;
     }
