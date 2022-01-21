@@ -25,6 +25,7 @@ fn get_id() -> usize { COUNTER.fetch_add(1, Ordering::Relaxed) }
 // TODO persist data by saving root node to indexedDB as serialized by serde?
 // Node { node: Arc<RwLock<NodeInner>> } instead of Arc<RwLock> for each member? compare performance
 // TODO connections don't seem to be closed / timeouted properly when client has disconnected
+// TODO should use async RwLock everywhere?
 
 // TODO: separate configs for each adapter?
 /// [Node] configuration object.

@@ -58,7 +58,10 @@ impl From<String> for GunValue {
 // This could actually be renamed to "Plugin" or "SyncAdapter"?
 // After all, there's nothing networking-specific in this trait.
 // Could be used for disk storage as well.
+// -
 // Adapters should probably use channels for communicating with the node, rather than calling Node::incoming_message?
+// Faster if all incoming messages are handled by one task, instead of many tasks interrupting each other with RwLocks?
+// -
 // Can we get rid of async_trait?
 /// Syncs the gun Node with other Nodes over various transports like websocket or multicast.
 ///

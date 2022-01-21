@@ -147,7 +147,7 @@ impl WebsocketServer {
             let users = users.clone();
             let peer_id = node.get_peer_id();
             App::new()
-                .app_data(AppState { peer_id })
+                .data(AppState { peer_id })
                 .wrap(middleware::Logger::default())
                 .route("/peer_id", web::get().to(Self::peer_id))
                 .service(fs::Files::new("/stats", "assets/stats").index_file("index.html"))
