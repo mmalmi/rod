@@ -1,7 +1,7 @@
 extern crate clap;
 use clap::{Arg, App, SubCommand};
-use gun::{Node, NodeConfig};
-use gun::types::GunValue;
+use gundb::{Node, NodeConfig};
+use gundb::types::GunValue;
 use std::env; // TODO use clap
 
 #[tokio::main]
@@ -54,12 +54,14 @@ async fn main() {
             ..NodeConfig::default()
         });
 
-        node.get("asdf").get("fasd").on(Box::new(|value: GunValue, key: String| { // TODO how to do it without Box? https://stackoverflow.com/questions/41081240/idiomatic-callbacks-in-rust
-            if let GunValue::Text(str) = value {
-                println!("key {} value {}", &key, &str);
+        node.get("asdf").get("fasd").on(Box::new(|value: Option<GunValue>, key: String| { // TODO how to do it without Box? https://stackoverflow.com/questions/41081240/idiomatic-callbacks-in-rust
+            if let Some(value) = value {
+                if let GunValue::Text(str) = value {
+                    println!("key {} value {}", &key, &str);
+                }
             }
         }));
 
-        node.start().await;
+        node.start_adapters().await;
     }
 }

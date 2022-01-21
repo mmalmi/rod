@@ -4,6 +4,7 @@ use std::sync::{Arc, RwLock};
 use crate::Node;
 use async_trait::async_trait;
 
+/// Value types supported by gun.
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(untagged)]
 pub enum GunValue {
@@ -12,7 +13,7 @@ pub enum GunValue {
     Number(f64),
     Text(String),
     Link(usize),
-    Children(BTreeMap<String, GunValue>)
+    Children(BTreeMap<String, GunValue>),
 }
 
 impl GunValue {
@@ -54,31 +55,40 @@ impl From<String> for GunValue {
     }
 }
 
+// This could actually be renamed to "Plugin" or "SyncAdapter"?
+// After all, there's nothing networking-specific in this trait.
+// Could be used for disk storage as well.
+/// Syncs the gun Node with other Nodes over various transports like websocket or multicast.
 #[async_trait]
 pub trait NetworkAdapter {
     fn new(node: Node) -> Self where Self: Sized;
+    /// This is called on node.start_adapters()
     async fn start(&self);
     fn stop(&self);
 }
 
+/// Used internally to represent Gun network messages.
 #[derive(Clone)]
 pub struct GunMessage {
     pub msg: String,
     pub from: String
 }
 
+/// When full, every insert pushes out the oldest entry in the set.
+///
+/// Used to record last seen message IDs.
 pub struct BoundedHashSet {
     set: HashSet<String>,
     queue: VecDeque<String>,
-    max_size: usize
+    max_entries: usize
 }
 
 impl BoundedHashSet {
-    pub fn new(max_size: usize) -> Self {
+    pub fn new(max_entries: usize) -> Self {
         BoundedHashSet {
             set: HashSet::new(),
             queue: VecDeque::new(),
-            max_size
+            max_entries
         }
     }
 
@@ -86,7 +96,7 @@ impl BoundedHashSet {
         if self.set.contains(&s) {
             return;
         }
-        if self.queue.len() >= self.max_size {
+        if self.queue.len() >= self.max_entries {
             if let Some(removed) = self.queue.pop_back() {
                 self.set.remove(&removed);
             }
@@ -104,7 +114,7 @@ impl BoundedHashSet {
 // But can we somehow wrap Node itself into Arc<RwLock<>> instead of wrapping all its properties?
 // Arc<RwLock<NodeInner>> pattern?
 // The code is not pretty with all these Arc-RwLock read/write().unwraps().
-pub type Callback = Box<dyn (Fn(GunValue, String) -> ()) + Send + Sync>;
+pub type Callback = Box<dyn (Fn(Option<GunValue>, String) -> ()) + Send + Sync>;
 pub type Value = Arc<RwLock<Option<GunValue>>>;
 pub type Children = Arc<RwLock<BTreeMap<String, usize>>>;
 pub type Parents = Arc<RwLock<HashSet<(usize, String)>>>;

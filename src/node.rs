@@ -26,20 +26,28 @@ fn get_id() -> usize { COUNTER.fetch_add(1, Ordering::Relaxed) }
 // Node { node: Arc<RwLock<NodeInner>> } instead of Arc<RwLock> for each member? compare performance
 // TODO connections don't seem to be closed / timeouted properly when client has disconnected
 
+// TODO: separate configs for each adapter?
+/// [Node] configuration object.
 #[derive(Clone)]
 pub struct NodeConfig {
+    /// [tokio::sync::broadcast] channel size for outgoing network messages. Smaller value may slightly reduce memory usage, but lose outgoing messages when an adapter is lagging. Default: 10.
     pub rust_channel_size: usize,
+    /// Enable multicast? Default: true
     pub multicast: bool, // should we have (adapters: Vector<String>) instead, so you can be sure there's no unwanted sync happening?
+    /// Outgoing websocket peers. Urls must use wss: prefix, not https:. Default: empty list.
     pub outgoing_websocket_peers: Vec<String>,
+    /// Run the websocket server? Default: `true`
     pub websocket_server: bool,
+    /// Default: `4944`
     pub websocket_server_port: u16,
+    /// Default: `8 * 1000 * 1000`
     pub websocket_frame_max_size: usize
 }
 
 impl Default for NodeConfig {
     fn default() -> Self {
         NodeConfig {
-            rust_channel_size: 10,
+            rust_channel_size: 1000,
             multicast: true,
             outgoing_websocket_peers: Vec::new(),
             websocket_server: true,
@@ -49,6 +57,10 @@ impl Default for NodeConfig {
     }
 }
 
+/// A Graph Node that provides an API for graph traversal and publish-subscribe.
+///
+/// Supports graph synchronization over [NetworkAdapter]s (currently websocket and multicast).
+/// Disk storage adapter to be done.
 #[derive(Clone)]
 pub struct Node {
     id: usize,
@@ -71,10 +83,31 @@ pub struct Node {
 }
 
 impl Node {
+    /// Create a new root-level Node using default configuration.
     pub fn new() -> Self {
         Self::new_with_config(NodeConfig::default())
     }
 
+    /// Create a new root-level Node using custom configuration.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use gundb::{Node, NodeConfig};
+    /// let mut db = Node::new_with_config(NodeConfig {
+    ///     outgoing_websocket_peers: vec!["wss://some-server-to-sync.with/gun".to_string()],
+    ///     ..NodeConfig::default()
+    /// });
+    /// db.get("greeting").on(Box::new(|value: Option<GunValue>, key: String| {
+    ///     assert!(matches!(value, Some(GunValue::Text(_))));
+    ///     if let Some(value) = value {
+    ///         if let GunValue::Text(str) = value {
+    ///             assert_eq!(&str, "Hello World!");
+    ///         }
+    ///     }
+    /// }));
+    /// db.get("greeting").put("Hello World!".into());
+    /// ```
     pub fn new_with_config(config: NodeConfig) -> Self {
         let (sender, _receiver) = broadcast::channel::<GunMessage>(config.rust_channel_size);
         let node = Self {
@@ -109,6 +142,7 @@ impl Node {
         node
     }
 
+    /// NetworkAdapters should use this to receive outbound messages.
     pub fn get_outgoing_msg_receiver(&self) -> broadcast::Receiver<GunMessage> {
         self.outgoing_msg_sender.subscribe()
     }
@@ -147,7 +181,9 @@ impl Node {
         });
     }
 
-    pub async fn start(&mut self) { // should we start in a new thread on ::new()?
+    // should we start adapters on ::new()? in a new thread
+    /// Starts [NetworkAdapter]s that are enabled for this Node.
+    pub async fn start_adapters(&mut self) {
         let adapters = self.network_adapters.read().unwrap();
         let mut futures = Vec::new();
         for adapter in adapters.values() {
@@ -191,15 +227,18 @@ impl Node {
         id
     }
 
+    /// Turns off a map() or on() subscription with the subscription_id.
     pub fn off(&mut self, subscription_id: usize) {
         self.on_subscriptions.write().unwrap().remove(&subscription_id);
         self.map_subscriptions.write().unwrap().remove(&subscription_id);
     }
 
+    /// Get the network peer id of this Node
     pub fn get_peer_id(&self) -> String {
         self.peer_id.read().unwrap().to_string()
     }
 
+    /// Subscribe to the Node's value or set of children.
     pub fn on(&mut self, callback: Callback) -> usize { // TODO: use channels instead of Callback
         self.once_local(&callback, &self.key.clone());
         let subscription_id = get_id();
@@ -211,6 +250,8 @@ impl Node {
         subscription_id
     }
 
+    // TODO: optionally specify which adapters to ask
+    /// Return a child Node corresponding to the given Key.
     pub fn get(&mut self, key: &str) -> Node {
         if key == "" {
             return self.clone();
@@ -221,6 +262,7 @@ impl Node {
         node
     }
 
+    /// Subscribe to all children of this Node.
     pub fn map(&self, callback: Callback) -> usize {
         for (key, child_id) in self.children.read().unwrap().iter() { // TODO can be faster with rayon multithreading?
             if let Some(child) = self.store.read().unwrap().get(&child_id) {
@@ -350,6 +392,7 @@ impl Node {
         }
     }
 
+    /// NetworkAdapters should call this for received messages
     pub fn incoming_message(&mut self, msg: String, from: &String) {
         self.msg_counter.fetch_add(1, Ordering::Relaxed);
         let json: SerdeJsonValue = match serde_json::from_str(&msg) {
@@ -402,10 +445,9 @@ impl Node {
         GunValue::Children(map)
     }
 
+    /// Get the node's locally stored value once.
     pub fn once_local(&mut self, callback: &Callback, key: &String) {
-        if let Some(value) = self.get_gun_value() {
-            callback(value, key.clone());
-        }
+        callback(self.get_gun_value(), key.clone());
     }
 
     fn send_to_adapters(&self, msg: &String, from: &String, msg_id: String) {
@@ -480,6 +522,7 @@ impl Node {
         }
     }
 
+    /// Set a GunValue for the Node.
     pub fn put(&mut self, value: GunValue) {
         let time: f64 = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis() as f64;
         self.put_local(value.clone(), time);
@@ -516,13 +559,13 @@ impl Node {
         *self_value = Some(value.clone());
         *self.children.write().unwrap() = BTreeMap::new();
         for callback in self.on_subscriptions.read().unwrap().values() { // rayon?
-            callback(value.clone(), self.key.clone());
+            callback(Some(value.clone()), self.key.clone());
         }
         for (parent_id, key) in self.parents.read().unwrap().iter() { // rayon?
             if let Some(parent) = self.store.read().unwrap().get(parent_id) {
                 let mut parent_clone = parent.clone();
                 for callback in parent.clone().map_subscriptions.read().unwrap().values() {
-                    callback(value.clone(), key.clone());
+                    callback(Some(value.clone()), key.clone());
                 }
                 for callback in parent.on_subscriptions.read().unwrap().values() {
                     parent_clone.once_local(&callback, key);
@@ -556,10 +599,12 @@ mod tests {
         let mut gun = Node::new();
         let mut node = gun.get("Finglas");
         node.put("Fingolfin".into());
-        node.on(Box::new(|value: GunValue, key: String| { // TODO how to do it without Box? https://stackoverflow.com/questions/41081240/idiomatic-callbacks-in-rust
-            assert!(matches!(value, GunValue::Text(_)));
-            if let GunValue::Text(str) = value {
-                assert_eq!(&str, "Fingolfin");
+        node.on(Box::new(|value: Option<GunValue>, key: String| { // TODO how to do it without Box? https://stackoverflow.com/questions/41081240/idiomatic-callbacks-in-rust
+            assert!(matches!(value, Some(GunValue::Text(_))));
+            if let Some(value) = value {
+                if let GunValue::Text(str) = value {
+                    assert_eq!(&str, "Fingolfin");
+                }
             }
         }));
     }
@@ -576,18 +621,22 @@ mod tests {
         println!("asdf1");
         async fn tst(mut node1: Node, mut node2: Node) {
             sleep(Duration::from_millis(1000)).await;
-            node1.get("test1").on(Box::new(|value: GunValue, key: String| {
+            node1.get("test1").on(Box::new(|value: Option<GunValue>, key: String| {
                 println!("test1");
-                assert!(matches!(value, GunValue::Text(_)));
-                if let GunValue::Text(str) = value {
-                    assert_eq!(&str, "Fingolfin");
+                assert!(matches!(value, Some(GunValue::Text(_))));
+                if let Some(value) = value {
+                    if let GunValue::Text(str) = value {
+                        assert_eq!(&str, "Fingolfin");
+                    }
                 }
             }));
-            node2.get("test2").on(Box::new(|value: GunValue, key: String| {
+            node2.get("test2").on(Box::new(|value: Option<GunValue>, key: String| {
                 println!("test2");
-                assert!(matches!(value, GunValue::Text(_)));
-                if let GunValue::Text(str) = value {
-                    assert_eq!(&str, "Fingolfin");
+                assert!(matches!(value, Some(GunValue::Text(_))));
+                if let Some(value) = value {
+                    if let GunValue::Text(str) = value {
+                        assert_eq!(&str, "Fingolfin");
+                    }
                 }
             }));
             println!("asdf2");
@@ -596,7 +645,7 @@ mod tests {
         }
         let node1_clone = node1.clone();
         let node2_clone = node2.clone();
-        tokio::join!(node1.start(), node2.start(), tst(node1_clone, node2_clone));
+        tokio::join!(node1.start_adapters(), node2.start_adapters(), tst(node1_clone, node2_clone));
     }
 
     #[test]

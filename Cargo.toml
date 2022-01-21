@@ -1,7 +1,8 @@
 [package]
-name = "gun"
+name = "gundb"
 version = "0.1.0"
 edition = "2018"
+repository = "https://github.com/mmalmi/gun-rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
