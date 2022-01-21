@@ -16,21 +16,17 @@ async fn main() {
                                .value_name("FILE")
                                .help("Sets a custom config file")
                                .takes_value(true))
-                          .subcommand(SubCommand::with_name("serve")
+                          .subcommand(SubCommand::with_name("start")
                                       .about("runs the gun server")
                                       .arg(Arg::with_name("debug")
                                           .short("d")
                                           .help("print debug information verbosely")))
                           .get_matches();
 
-    let config = matches.value_of("config").unwrap_or("default.conf");
-    println!("Value for config: {}", config);
+    //let config = matches.value_of("config").unwrap_or("default.conf");
+    //println!("Value for config: {}", config);
 
-    if let Some(matches) = matches.subcommand_matches("serve") {
-        if matches.is_present("debug") {
-            println!("Printing debug info...");
-        }
-
+    if let Some(_matches) = matches.subcommand_matches("start") {
         let mut outgoing_websocket_peers = Vec::new();
         if let Ok(peers) = env::var("PEERS") {
             outgoing_websocket_peers.push(peers);
@@ -53,6 +49,8 @@ async fn main() {
             ..NodeConfig::default()
         });
 
+        println!("Starting server at http://localhost:{}", websocket_server_port);
+        println!("Gun endpoint is at http://localhost:{}/gun", websocket_server_port);
         node.start_adapters().await;
     }
 }

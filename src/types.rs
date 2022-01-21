@@ -58,7 +58,12 @@ impl From<String> for GunValue {
 // This could actually be renamed to "Plugin" or "SyncAdapter"?
 // After all, there's nothing networking-specific in this trait.
 // Could be used for disk storage as well.
+// Adapters should probably use channels for communicating with the node, rather than calling Node::incoming_message?
+// Can we get rid of async_trait?
 /// Syncs the gun Node with other Nodes over various transports like websocket or multicast.
+///
+/// NetworkAdapters should communicate with the Node using [Node::get_outgoing_msg_receiver] and
+/// [Node::incoming_message].
 #[async_trait]
 pub trait NetworkAdapter {
     fn new(node: Node) -> Self where Self: Sized;

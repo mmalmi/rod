@@ -12,7 +12,7 @@ Install [Rust](https://doc.rust-lang.org/book/ch01-01-installation.html) first.
 ### Gun server
 ```
 cargo install gundb
-gundb serve
+gundb start
 ```
 
 ### Gun library
@@ -49,7 +49,7 @@ if let Ok(value) = sub.recv().await {
 ## Develop
 ```
 cargo install cargo-watch
-RUST_LOG=debug cargo watch -x 'run -- serve'
+RUST_LOG=debug cargo watch -x 'run -- start'
 ```
 
 ## Run on Heroku

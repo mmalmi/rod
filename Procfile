@@ -1,1 +1,1 @@
-web: ./target/release/gun serve
+web: ./target/release/gundb start
