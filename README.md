@@ -23,12 +23,10 @@ let mut db = Node::new_with_config(NodeConfig {
     outgoing_websocket_peers: vec!["wss://some-server-to-sync.with/gun".to_string()],
     ..NodeConfig::default()
 });
-let sub = db.get("greeting").on();
+let mut sub = db.get("greeting").on();
 db.get("greeting").put("Hello World!".into());
-if let Ok(value) = sub.recv().await {
-    if let GunValue::Text(str) = value {
-        assert_eq!(&str, "Hello World!");
-    }
+if let GunValue::Text(str) = sub.recv().await.unwrap() {
+    assert_eq!(&str, "Hello World!");
 }
 ```
 

@@ -100,12 +100,10 @@ impl Node {
     ///     outgoing_websocket_peers: vec!["wss://some-server-to-sync.with/gun".to_string()],
     ///     ..NodeConfig::default()
     /// });
-    /// let sub = db.get("greeting").on();
+    /// let mut sub = db.get("greeting").on();
     /// db.get("greeting").put("Hello World!".into());
-    /// if let Ok(value) = sub.recv().await {
-    ///     if let GunValue::Text(str) = value {
-    ///         assert_eq!(&str, "Hello World!");
-    ///     }
+    /// if let GunValue::Text(str) = sub.recv().await.unwrap() {
+    ///     assert_eq!(&str, "Hello World!");
     /// }
     /// ```
     pub fn new_with_config(config: NodeConfig) -> Self {
@@ -566,10 +564,8 @@ impl Node {
 mod tests {
     use crate::{Node, NodeConfig};
     use crate::types::GunValue;
-    use std::cell::RefCell;
     use std::time::{Instant};
     use tokio::time::{sleep, Duration};
-    use log::debug;
 
     // TODO proper test
     // TODO test .map()
@@ -581,19 +577,15 @@ mod tests {
         assert_eq!(gun.id, 0);
     }
 
-    #[test]
-    fn put_and_get() {
+    #[tokio::test]
+    async fn put_and_get() {
         let mut gun = Node::new();
         let mut node = gun.get("Finglas");
         node.put("Fingolfin".into());
-        node.on(Box::new(|value: Option<GunValue>, key: String| { // TODO how to do it without Box? https://stackoverflow.com/questions/41081240/idiomatic-callbacks-in-rust
-            assert!(matches!(value, Some(GunValue::Text(_))));
-            if let Some(value) = value {
-                if let GunValue::Text(str) = value {
-                    assert_eq!(&str, "Fingolfin");
-                }
-            }
-        }));
+        let mut sub = node.on();
+        if let GunValue::Text(str) = sub.recv().await.unwrap() {
+            assert_eq!(&str, "Fingolfin");
+        }
     }
 
     #[tokio::test]
@@ -608,27 +600,25 @@ mod tests {
         println!("asdf1");
         async fn tst(mut node1: Node, mut node2: Node) {
             sleep(Duration::from_millis(1000)).await;
-            node1.get("test1").on(Box::new(|value: Option<GunValue>, key: String| {
-                println!("test1");
-                assert!(matches!(value, Some(GunValue::Text(_))));
-                if let Some(value) = value {
-                    if let GunValue::Text(str) = value {
-                        assert_eq!(&str, "Fingolfin");
-                    }
-                }
-            }));
-            node2.get("test2").on(Box::new(|value: Option<GunValue>, key: String| {
-                println!("test2");
-                assert!(matches!(value, Some(GunValue::Text(_))));
-                if let Some(value) = value {
-                    if let GunValue::Text(str) = value {
-                        assert_eq!(&str, "Fingolfin");
-                    }
-                }
-            }));
+            let mut sub1 = node1.get("test1").on();
+            match sub1.recv().await.unwrap() {
+                GunValue::Text(str) => {
+                    println!("test1");
+                    assert_eq!(&str, "Beregond");
+                },
+                _ => panic!("Expected GunValue::Text")
+            }
+            let mut sub2 = node2.get("test2").on();
+            match sub2.recv().await.unwrap() {
+                GunValue::Text(str) => {
+                    println!("test2");
+                    assert_eq!(&str, "Amandil");
+                },
+                _ => panic!("Expected GunValue::Text")
+            }
             println!("asdf2");
-            node1.get("test2").put("Fingolfin".into());
-            node2.get("test1").put("Fingolfin".into());
+            node1.get("test2").put("Amandil".into());
+            node2.get("test1").put("Beregond".into());
         }
         let node1_clone = node1.clone();
         let node2_clone = node2.clone();
