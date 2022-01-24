@@ -121,8 +121,8 @@ impl BoundedHashSet {
 // But can we somehow wrap Node itself into Arc<RwLock<>> instead of wrapping all its properties?
 // Arc<RwLock<NodeInner>> pattern?
 // The code is not pretty with all these Arc-RwLock read/write().unwraps().
-pub type Value = Arc<RwLock<Option<GunValue>>>;
-pub type Children = Arc<RwLock<BTreeMap<String, usize>>>;
-pub type Parents = Arc<RwLock<HashSet<(usize, String)>>>;
-pub type SharedNodeStore = Arc<RwLock<HashMap<usize, Node>>>;
-pub type NetworkAdapters = Arc<RwLock<HashMap<String, Box<dyn NetworkAdapter + Send + Sync>>>>;
+pub(crate) type Value = Arc<RwLock<Option<GunValue>>>;
+pub(crate) type Children = Arc<RwLock<BTreeMap<String, usize>>>;
+pub(crate) type Parents = Arc<RwLock<HashSet<(usize, String)>>>;
+pub(crate) type SharedNodeStore = Arc<RwLock<HashMap<usize, Node>>>;
+pub(crate) type NetworkAdapters = Arc<RwLock<HashMap<String, Box<dyn NetworkAdapter + Send + Sync>>>>;

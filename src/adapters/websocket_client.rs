@@ -42,19 +42,25 @@ impl NetworkAdapter for WebsocketClient {
 
     async fn start(&self) {
         let config = self.node.config.read().unwrap().clone();
-        if let Some(peers) = config.outgoing_websocket_peers.get(0) {
-            debug!("WebsocketClient connecting to {}\n", peers);
-            loop {
-                let result = connect_async(
-                    Url::parse(&peers).expect("Can't connect to URL"),
-                ).await;
-                if let Ok(tuple) = result {
-                    let (socket, _) = tuple;
-                    debug!("connected");
-                    user_connected(self.node.clone(), socket, self.users.clone()).await;
+        for peer in config.outgoing_websocket_peers {
+            let node = self.node.clone();
+            let users = self.users.clone();
+            tokio::task::spawn(async move {
+                debug!("WebsocketClient connecting to {}\n", peer);
+                loop {
+                    let node = node.clone();
+                    let users = users.clone();
+                    let result = connect_async(
+                        Url::parse(&peer).expect("Can't connect to URL"),
+                    ).await;
+                    if let Ok(tuple) = result {
+                        let (socket, _) = tuple;
+                        debug!("connected");
+                        user_connected(node, socket, users).await;
+                    }
+                    sleep(Duration::from_millis(1000)).await;
                 }
-                sleep(Duration::from_millis(1000)).await;
-            }
+            });
         }
     }
 }

@@ -47,7 +47,14 @@ async fn main() {
             .long("peers")
             .env("PEERS")
             .value_name("URLS")
-            .help("Comma-separated outgoing websocket peers")
+            .help("Comma-separated outgoing websocket peers (wss://...)")
+            .takes_value(true))
+        .arg(Arg::with_name("multicast")
+            .long("multicast")
+            .env("MULTICAST")
+            .value_name("BOOL")
+            .help("Enable multicast sync?")
+            .default_value("true")
             .takes_value(true))
     )
     .get_matches();
@@ -58,7 +65,7 @@ async fn main() {
     if let Some(matches) = matches.subcommand_matches("start") { // TODO: write fn to convert matches into NodeConfig
         let mut outgoing_websocket_peers = Vec::new();
         if let Some(peers) = matches.value_of("peers") {
-            outgoing_websocket_peers.push(peers.to_string());
+            outgoing_websocket_peers = peers.split(",").map(|s| s.to_string()).collect();
         }
 
         if matches.is_present("debug") {
@@ -79,6 +86,7 @@ async fn main() {
             outgoing_websocket_peers,
             rust_channel_size,
             websocket_server_port,
+            multicast: matches.value_of("multicast").unwrap() == "true",
             cert_path: matches.value_of("cert-path").map(|s| s.to_string()),
             key_path: matches.value_of("key-path").map(|s| s.to_string()),
             ..NodeConfig::default()

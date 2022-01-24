@@ -100,18 +100,21 @@ impl Node {
     /// # Examples
     ///
     /// ```
-    /// use gundb::{Node, NodeConfig};
-    /// use gundb::types::GunValue;
-    /// let mut db = Node::new_with_config(NodeConfig {
-    ///     outgoing_websocket_peers: vec!["wss://some-server-to-sync.with/gun".to_string()],
-    ///     ..NodeConfig::default()
-    /// });
-    /// let mut sub = db.get("greeting").on();
-    /// db.get("greeting").put("Hello World!".into());
     /// tokio_test::block_on(async {
+    ///
+    ///     use gundb::{Node, NodeConfig};
+    ///     use gundb::types::GunValue;
+    ///
+    ///     let mut db = Node::new_with_config(NodeConfig {
+    ///         outgoing_websocket_peers: vec!["wss://some-server-to-sync.with/gun".to_string()],
+    ///         ..NodeConfig::default()
+    ///     });
+    ///     let mut sub = db.get("greeting").on();
+    ///     db.get("greeting").put("Hello World!".into());
     ///     if let GunValue::Text(str) = sub.recv().await.unwrap() {
     ///         assert_eq!(&str, "Hello World!");
     ///     }
+    ///
     /// })
     /// ```
     pub fn new_with_config(config: NodeConfig) -> Self {
