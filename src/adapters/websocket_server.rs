@@ -10,7 +10,6 @@ use bytes::Bytes;
 use futures::Stream;
 
 use std::collections::HashSet;
-use std::env;
 use async_trait::async_trait;
 use crate::types::{NetworkAdapter, GunMessage};
 use crate::Node;
@@ -136,10 +135,12 @@ impl NetworkAdapter for WebsocketServer {
 
 impl WebsocketServer {
     fn actix_start(node: Node, users: Users) -> actix_web::dev::Server {
-        let url = format!("0.0.0.0:{}", node.config.read().unwrap().websocket_server_port);
+        let config = node.config.read().unwrap();
+        let url = format!("0.0.0.0:{}", config.websocket_server_port);
 
+        let node_clone = node.clone();
         let server = HttpServer::new(move || {
-            let node = node.clone();
+            let node = node_clone.clone();
             let users = users.clone();
             let peer_id = node.get_peer_id();
             App::new()
@@ -155,8 +156,8 @@ impl WebsocketServer {
                 .service(fs::Files::new("/", "assets/iris").index_file("index.html"))
         });
 
-        if let Ok(cert_path) = env::var("CERT_PATH") {
-            if let Ok(key_path) = env::var("KEY_PATH") {
+        if let Some(cert_path) = &config.cert_path {
+            if let Some(key_path) = &config.key_path {
                 let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls()).unwrap();
                     builder
                         .set_private_key_file(key_path, SslFiletype::PEM)

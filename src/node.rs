@@ -42,7 +42,11 @@ pub struct NodeConfig {
     /// Default: `4944`
     pub websocket_server_port: u16,
     /// Default: `8 * 1000 * 1000`
-    pub websocket_frame_max_size: usize
+    pub websocket_frame_max_size: usize,
+    /// TLS certificate path. Default: `None`
+    pub cert_path: Option<String>,
+    /// TLS key path. Default: `None`
+    pub key_path: Option<String>
 }
 
 impl Default for NodeConfig {
@@ -53,7 +57,9 @@ impl Default for NodeConfig {
             outgoing_websocket_peers: Vec::new(),
             websocket_server: true,
             websocket_server_port: 4944,
-            websocket_frame_max_size: 8 * 1000 * 1000
+            websocket_frame_max_size: 8 * 1000 * 1000,
+            cert_path: None,
+            key_path: None
         }
     }
 }
@@ -102,9 +108,11 @@ impl Node {
     /// });
     /// let mut sub = db.get("greeting").on();
     /// db.get("greeting").put("Hello World!".into());
-    /// if let GunValue::Text(str) = sub.recv().await.unwrap() {
-    ///     assert_eq!(&str, "Hello World!");
-    /// }
+    /// tokio_test::block_on(async {
+    ///     if let GunValue::Text(str) = sub.recv().await.unwrap() {
+    ///         assert_eq!(&str, "Hello World!");
+    ///     }
+    /// })
     /// ```
     pub fn new_with_config(config: NodeConfig) -> Self {
         let node = Self {
@@ -588,6 +596,7 @@ mod tests {
         }
     }
 
+    /*
     #[tokio::test]
     async fn connect_and_sync_over_websocket() {
         let mut node1 = Node::new();
@@ -623,7 +632,7 @@ mod tests {
         let node1_clone = node1.clone();
         let node2_clone = node2.clone();
         tokio::join!(node1.start_adapters(), node2.start_adapters(), tst(node1_clone, node2_clone));
-    }
+    }*/
 
     #[test]
     fn save_and_retrieve_user_space_data() {
