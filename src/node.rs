@@ -634,7 +634,7 @@ mod tests {
     fn write_benchmark() { // to see the result with optimized binary, run: cargo test --release -- --nocapture
         let start = Instant::now();
         let mut gun = Node::new();
-        let n = 100000;
+        let n = 10000;
         for i in 0..n {
             gun.get(&format!("a{:?}", i)).get("Pelendur").put(format!("{:?}b", i).into());
         }

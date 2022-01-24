@@ -50,10 +50,6 @@ impl NetworkAdapter for Multicast {
             }
         });
     }
-
-    fn stop(&self) {
-
-    }
 }
 
 

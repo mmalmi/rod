@@ -132,10 +132,6 @@ impl NetworkAdapter for WebsocketServer {
     async fn start(&self) {
         Self::actix_start(self.node.clone(), self.users.clone()).await.unwrap(); // keep trying instead of panic?
     }
-
-    fn stop(&self) {
-
-    }
 }
 
 impl WebsocketServer {

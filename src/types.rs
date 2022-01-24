@@ -72,7 +72,6 @@ pub trait NetworkAdapter {
     fn new(node: Node) -> Self where Self: Sized;
     /// This is called on node.start_adapters()
     async fn start(&self);
-    fn stop(&self);
 }
 
 /// Used internally to represent Gun network messages.

@@ -57,10 +57,6 @@ impl NetworkAdapter for WebsocketClient {
             }
         }
     }
-
-    fn stop(&self) {
-
-    }
 }
 
 async fn user_connected(mut node: Node, ws: WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>, users: Users) { // TODO copied from server, need similar here.
