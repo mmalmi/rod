@@ -2,6 +2,7 @@ extern crate clap;
 use clap::{Arg, App, SubCommand};
 use gundb::{Node, NodeConfig};
 use std::env; // TODO use clap
+use ctrlc;
 
 #[tokio::main]
 async fn main() {
@@ -54,6 +55,9 @@ async fn main() {
         println!("Iris UI:      {}", url);
         println!("Stats:        {}/stats", url);
         println!("Gun endpoint: {}/gun", url);
+
+        ctrlc::set_handler(|| std::process::exit(0)).expect("Error setting Ctrl-C handler");
+
         node.start_adapters().await;
     }
 }

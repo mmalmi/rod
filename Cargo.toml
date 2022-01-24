@@ -34,3 +34,4 @@ actix-http = "3.0.0-beta.18"
 bytes = "1.1.0"
 openssl = { version = "0.10", features = ["v110"] }
 size_format = "1.0.2"
+ctrlc = "3.2.1"
