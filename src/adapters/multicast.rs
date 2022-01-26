@@ -1,7 +1,7 @@
 use multicast_socket::MulticastSocket;
 use std::net::{SocketAddrV4};
 
-use crate::types::NetworkAdapter;
+use crate::types::{NetworkAdapter, GunMessage};
 use crate::Node;
 use async_trait::async_trait;
 use log::{debug, error};
@@ -26,16 +26,19 @@ impl NetworkAdapter for Multicast {
     async fn start(&self) { // "wss://gun-us.herokuapp.com/gun"
         debug!("Syncing over multicast\n");
 
-        let mut node = self.node.clone();
-        let mut rx = node.get_outgoing_msg_receiver();
+        let mut rx = self.node.get_outgoing_msg_receiver();
         let socket = self.socket.clone();
+        let incoming_message_sender = self.node.get_incoming_msg_sender();
         tokio::task::spawn(async move {
             loop {
                 if let Ok(message) = socket.read().await.receive() {
                     // TODO if message.from == multicast_[interface], don't resend to [interface]
                     if let Ok(data) = std::str::from_utf8(&message.data) {
-                        let uid = format!("multicast_{:?}", message.interface).to_string();
-                        node.incoming_message(data.to_string(), &uid);
+                        debug!("in: {}", data);
+                        let from = format!("multicast_{:?}", message.interface).to_string();
+                        if let Err(e) = incoming_message_sender.try_send(GunMessage { msg: data.to_string(), from }) {
+                            error!("failed to send message to node: {}", e);
+                        }
                     }
                 };
             }
@@ -43,9 +46,12 @@ impl NetworkAdapter for Multicast {
 
         let socket = self.socket.clone();
         tokio::task::spawn(async move {
-            while let Ok(message) = rx.recv().await { // TODO loop and handle rx closed
-                if let Err(e) = socket.write().await.broadcast(message.msg.as_bytes()) {
-                    error!("multicast send error {}", e);
+            loop {
+                if let Ok(message) = rx.recv().await { // TODO loop and handle rx closed
+                    debug!("out {}", message.msg);
+                    if let Err(e) = socket.write().await.broadcast(message.msg.as_bytes()) {
+                        error!("multicast send error {}", e);
+                    }
                 }
             }
         });

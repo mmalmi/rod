@@ -56,6 +56,13 @@ async fn main() {
             .help("Enable multicast sync?")
             .default_value("true")
             .takes_value(true))
+        .arg(Arg::with_name("stats")
+            .long("stats")
+            .env("STATS")
+            .value_name("BOOL")
+            .help("Show stats at /stats?")
+            .default_value("true")
+            .takes_value(true))
     )
     .get_matches();
 
@@ -89,6 +96,7 @@ async fn main() {
             multicast: matches.value_of("multicast").unwrap() == "true",
             cert_path: matches.value_of("cert-path").map(|s| s.to_string()),
             key_path: matches.value_of("key-path").map(|s| s.to_string()),
+            stats: matches.value_of("stats").unwrap() == "true",
             ..NodeConfig::default()
         });
 

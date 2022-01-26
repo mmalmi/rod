@@ -17,6 +17,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
 
+use log::{debug, error};
+
 static NEXT_USER_ID: AtomicUsize = AtomicUsize::new(1);
 
 // this is needed to set a higher websocket frame size in a custom Codec
@@ -34,7 +36,8 @@ where
 struct MyWs {
     node: Node,
     id: String,
-    users: Users
+    users: Users,
+    incoming_msg_sender: tokio::sync::mpsc::Sender<GunMessage>
 }
 
 struct OutgoingMessage {
@@ -89,6 +92,7 @@ impl Handler<OutgoingMessage> for MyWs {
 
     fn handle(&mut self, msg: OutgoingMessage, ctx: &mut Self::Context) {
         let text = format!("{}", msg.gun_message.msg);
+        debug!("out {}", text);
         ctx.text(text);
     }
 }
@@ -102,8 +106,13 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for MyWs {
     ) {
         match msg {
             Ok(ws::Message::Ping(msg)) => ctx.pong(&msg),
-            Ok(ws::Message::Text(text)) => self.node.incoming_message(text.to_string(), &self.id),
-            _ => (),
+            Ok(ws::Message::Text(text)) => {
+                debug!("in: {}", text);
+                if let Err(e) = self.incoming_msg_sender.try_send(GunMessage { msg: text.to_string(), from: self.id.clone() }) {
+                    error!("error sending incoming message to node: {}", e);
+                }
+            },
+            _ => debug!("received non-text msg"),
         }
     }
 }
@@ -129,7 +138,9 @@ impl NetworkAdapter for WebsocketServer {
     }
 
     async fn start(&self) {
-        Self::actix_start(self.node.clone(), self.users.clone()).await.unwrap(); // keep trying instead of panic?
+        let node = self.node.clone();
+        let users = self.users.clone();
+        Self::actix_start(node, users).await.unwrap();
     }
 }
 
@@ -179,7 +190,7 @@ impl WebsocketServer {
         let id = NEXT_USER_ID.fetch_add(1, Ordering::Relaxed);
         let id = format!("ws_server_{}", id).to_string();
 
-        let ws = MyWs { node: node.clone(), id, users };
+        let ws = MyWs { node: node.clone(), id, users, incoming_msg_sender: node.get_incoming_msg_sender() };
 
         let config = node.config.read().unwrap();
         let resp = start_with_codec(ws, &req, stream, Codec::new().max_size(config.websocket_frame_max_size));

@@ -75,7 +75,7 @@ pub trait NetworkAdapter {
 }
 
 /// Used internally to represent Gun network messages.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct GunMessage {
     pub msg: String,
     pub from: String

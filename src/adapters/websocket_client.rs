@@ -8,7 +8,7 @@ use tokio::sync::RwLock;
 use url::Url;
 use std::collections::HashMap;
 
-use crate::types::NetworkAdapter;
+use crate::types::{NetworkAdapter, GunMessage};
 use crate::Node;
 use async_trait::async_trait;
 use log::{debug, error};
@@ -101,6 +101,7 @@ async fn user_connected(mut node: Node, ws: WebSocketStream<tokio_tungstenite::M
 
     // Every time the user sends a message, broadcast it to
     // all other users...
+    let incoming_message_sender = node.get_incoming_msg_sender();
     while let Some(result) = user_ws_rx.next().await {
         let msg = match result {
             Ok(msg) => msg,
@@ -110,12 +111,16 @@ async fn user_connected(mut node: Node, ws: WebSocketStream<tokio_tungstenite::M
             }
         };
         match msg.to_text() {
-            Ok(s) => node.incoming_message(s.to_string(), &my_id),
+            Ok(s) => {
+                if let Err(e) = incoming_message_sender.try_send(GunMessage { msg: s.to_string(), from: my_id.clone() }) {
+                    error!("failed to send incoming message to node: {}", e);
+                }
+            },
             Err(e) => {
                 error!("websocket incoming msg .to_text() failed: {}", e);
                 break;
             }
-        }
+        };
     }
 
     // user_ws_rx stream will keep processing as long as the user stays

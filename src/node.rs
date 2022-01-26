@@ -11,9 +11,9 @@ use crate::utils::random_string;
 use crate::adapters::WebsocketServer;
 use crate::adapters::WebsocketClient;
 use crate::adapters::Multicast;
-use log::{debug};
+use log::{debug, error};
 use tokio::time::{sleep, Duration};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc};
 use sysinfo::{ProcessorExt, System, SystemExt};
 
 static SEEN_MSGS_MAX_SIZE: usize = 10000;
@@ -46,7 +46,9 @@ pub struct NodeConfig {
     /// TLS certificate path. Default: `None`
     pub cert_path: Option<String>,
     /// TLS key path. Default: `None`
-    pub key_path: Option<String>
+    pub key_path: Option<String>,
+    /// Show node stats at /stats?
+    pub stats: bool,
 }
 
 impl Default for NodeConfig {
@@ -59,7 +61,8 @@ impl Default for NodeConfig {
             websocket_server_port: 4944,
             websocket_frame_max_size: 8 * 1000 * 1000,
             cert_path: None,
-            key_path: None
+            key_path: None,
+            stats: true,
         }
     }
 }
@@ -87,6 +90,8 @@ pub struct Node {
     peer_id: Arc<RwLock<String>>,
     msg_counter: Arc<AtomicUsize>,
     outgoing_msg_sender: broadcast::Sender<GunMessage>,
+    outgoing_msg_receiver: Arc<broadcast::Receiver<GunMessage>>, // need to store 1 receiver instance so the channel doesn't get closed
+    incoming_msg_sender: Arc<RwLock<Option<mpsc::Sender<GunMessage>>>>
 }
 
 impl Node {
@@ -118,6 +123,7 @@ impl Node {
     /// })
     /// ```
     pub fn new_with_config(config: NodeConfig) -> Self {
+        let outgoing_channel = broadcast::channel::<GunMessage>(config.rust_channel_size);
         let node = Self {
             id: 0,
             config: Arc::new(RwLock::new(config.clone())),
@@ -135,7 +141,9 @@ impl Node {
             seen_messages: Arc::new(RwLock::new(BoundedHashSet::new(SEEN_MSGS_MAX_SIZE))),
             peer_id: Arc::new(RwLock::new(random_string(16))),
             msg_counter: Arc::new(AtomicUsize::new(0)),
-            outgoing_msg_sender: broadcast::channel::<GunMessage>(config.rust_channel_size).0,
+            outgoing_msg_sender: outgoing_channel.0,
+            outgoing_msg_receiver: Arc::new(outgoing_channel.1),
+            incoming_msg_sender: Arc::new(RwLock::new(None))
         };
         if config.multicast {
             let multicast = Multicast::new(node.clone());
@@ -153,6 +161,11 @@ impl Node {
     /// NetworkAdapters should use this to receive outbound messages.
     pub fn get_outgoing_msg_receiver(&self) -> broadcast::Receiver<GunMessage> {
         self.outgoing_msg_sender.subscribe()
+    }
+
+    /// NetworkAdapters should use this to receive outbound messages.
+    pub fn get_incoming_msg_sender(&self) -> mpsc::Sender<GunMessage> {
+        self.incoming_msg_sender.read().unwrap().as_ref().unwrap().clone()
     }
 
     fn update_stats(&self) {
@@ -192,12 +205,26 @@ impl Node {
     // should we start adapters on ::new()? in a new thread
     /// Starts [NetworkAdapter]s that are enabled for this Node.
     pub async fn start_adapters(&mut self) {
+        let (incoming_tx, mut incoming_rx) = mpsc::channel::<GunMessage>(self.config.read().unwrap().rust_channel_size);
+        *self.incoming_msg_sender.write().unwrap() = Some(incoming_tx);
+        let mut node = self.clone();
+        tokio::task::spawn(async move {
+            loop {
+                if let Some(gun_message) = incoming_rx.recv().await {
+                    debug!("incoming message");
+                    node.incoming_message(gun_message.msg, &gun_message.from);
+                }
+            }
+        });
+
         let adapters = self.network_adapters.read().unwrap();
         let mut futures = Vec::new();
         for adapter in adapters.values() {
             futures.push(adapter.start()); // adapters must be non-blocking: use async functions or spawn_blocking
         }
-        self.update_stats();
+        if self.config.read().unwrap().stats {
+            self.update_stats();
+        }
         futures::future::join_all(futures).await;
     }
 
@@ -230,6 +257,8 @@ impl Node {
             peer_id: self.peer_id.clone(),
             msg_counter: self.msg_counter.clone(),
             outgoing_msg_sender: self.outgoing_msg_sender.clone(),
+            outgoing_msg_receiver: self.outgoing_msg_receiver.clone(),
+            incoming_msg_sender: self.incoming_msg_sender.clone()
         };
         self.store.write().unwrap().insert(id, node);
         self.children.write().unwrap().insert(key, id);
@@ -355,7 +384,10 @@ impl Node {
 
     fn incoming_message_json(&mut self, msg: &SerdeJsonValue, is_from_array: bool, msg_str: Option<String>, from: &String) {
         if let Some(array) = msg.as_array() {
-            if is_from_array { return; } // don't allow array inside array
+            if is_from_array {
+                error!("received nested array {}", msg);
+                return;
+            } // don't allow array inside array
             for msg in array.iter() {
                 self.incoming_message_json(msg, true, None, from);
             }
@@ -397,7 +429,8 @@ impl Node {
     }
 
     /// NetworkAdapters should call this for received messages.
-    pub fn incoming_message(&mut self, msg: String, from: &String) {
+    fn incoming_message(&mut self, msg: String, from: &String) {
+        debug!("msg in {}", msg);
         self.msg_counter.fetch_add(1, Ordering::Relaxed);
         let json: SerdeJsonValue = match serde_json::from_str(&msg) {
             Ok(json) => json,
@@ -452,7 +485,9 @@ impl Node {
     fn outgoing_message(&self, msg: &String, from: &String, msg_id: String) {
         debug!("sending msg {} {}", &msg_id, msg);
         self.seen_messages.write().unwrap().insert(msg_id); // TODO: doesn't seem to work, at least on multicast
-        self.outgoing_msg_sender.send(GunMessage { msg: msg.clone(), from: from.clone() }).ok();
+        if let Err(e) = self.outgoing_msg_sender.send(GunMessage { msg: msg.clone(), from: from.clone() }) {
+            error!("failed to send outgoing message from node: {}", e);
+        };
     }
 
     pub fn get_local_value_once(&self) -> Option<GunValue> {
@@ -545,18 +580,6 @@ impl Node {
      Text("{\":\":\"MacGyver!!!!!\",\"~\":\"6sCGKSjDeUygA+QisLCjGEKCfTjF5phrNVwlU1k95QWeazyjFnZ0Alm4Kvod070aDFz/5pt7i9CHci4ReRF4Ug==\"}")
 
          */
-        *self.updated_at.write().unwrap() = time;
-        {
-            let mut old_size: usize = 0;
-            let mut self_value = self.value.write().unwrap(); // scoped so this lock gets dropped
-            if let Some(v) = &*self_value {
-                old_size = v.size();
-            }
-            let mut self_graph_size_bytes = self.graph_size_bytes.write().unwrap(); // TODO update when value is replaced
-            *self_graph_size_bytes += value.size();
-            *self_graph_size_bytes -= old_size;
-            *self_value = Some(value.clone());
-        }
         *self.children.write().unwrap() = BTreeMap::new();
         self.on_sender.send(value.clone()).ok();
         for (parent_id, key) in self.parents.read().unwrap().iter() { // rayon?
@@ -636,6 +659,41 @@ mod tests {
         let node2_clone = node2.clone();
         tokio::join!(node1.start_adapters(), node2.start_adapters(), tst(node1_clone, node2_clone));
     }*/
+
+    #[tokio::test]
+    async fn multicast_sync() {
+        let mut node1 = Node::new();
+        let mut node2 = Node::new_with_config(NodeConfig {
+            websocket_server: false,
+            ..NodeConfig::default()
+        });
+        println!("asdf1");
+        async fn tst(mut node1: Node, mut node2: Node) {
+            sleep(Duration::from_millis(1000)).await;
+            let mut sub1 = node1.get("test1").on();
+            match sub1.recv().await.unwrap() {
+                GunValue::Text(str) => {
+                    println!("test1");
+                    assert_eq!(&str, "Beregond");
+                },
+                _ => panic!("Expected GunValue::Text")
+            }
+            let mut sub2 = node2.get("test2").on();
+            match sub2.recv().await.unwrap() {
+                GunValue::Text(str) => {
+                    println!("test2");
+                    assert_eq!(&str, "Amandil");
+                },
+                _ => panic!("Expected GunValue::Text")
+            }
+            println!("asdf2");
+            node1.get("test2").put("Amandil".into());
+            node2.get("test1").put("Beregond".into());
+        }
+        let node1_clone = node1.clone();
+        let node2_clone = node2.clone();
+        tokio::join!(node1.start_adapters(), node2.start_adapters(), tst(node1_clone, node2_clone));
+    }
 
     #[test]
     fn save_and_retrieve_user_space_data() {
