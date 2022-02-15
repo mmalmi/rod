@@ -44,6 +44,10 @@ if let GunValue::Text(str) = sub.recv().await.unwrap() {
 - [ ] SEA
 - [ ] Advanced deduplication
 
+### Issues
+- When multiple adapters are enabled, it sometimes gets stuck
+- User-space nodes (js: `gun.user().get('something')`) are relayed, but not properly retrieved and sent from memory (wrong format somehow)
+
 ## Develop
 ```
 cargo install cargo-watch
