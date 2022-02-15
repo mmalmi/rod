@@ -47,6 +47,7 @@ if let GunValue::Text(str) = sub.recv().await.unwrap() {
 ### Issues
 - When multiple adapters are enabled, it sometimes gets stuck
 - User-space nodes (js: `gun.user().get('something')`) are relayed, but not properly retrieved and sent from memory (wrong format somehow)
+- Multicast doesn't relay large messages like Iris posts
 
 ## Develop
 ```
