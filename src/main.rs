@@ -23,6 +23,13 @@ async fn main() {
             .long("debug")
             .short("d")
             .help("print debug information verbosely"))
+        .arg(Arg::with_name("ws-server")
+            .long("ws-server")
+            .env("WS_SERVER")
+            .value_name("BOOL")
+            .help("Run websocket server?")
+            .default_value("true")
+            .takes_value(true))
         .arg(Arg::with_name("port")
             .short("p")
             .long("port")
@@ -89,9 +96,12 @@ async fn main() {
             _ => 10
         };
 
+        let websocket_server = matches.value_of("ws-server").unwrap() == "true";
+
         let mut node = Node::new_with_config(NodeConfig {
             outgoing_websocket_peers,
             rust_channel_size,
+            websocket_server,
             websocket_server_port,
             multicast: matches.value_of("multicast").unwrap() == "true",
             cert_path: matches.value_of("cert-path").map(|s| s.to_string()),
@@ -100,11 +110,13 @@ async fn main() {
             ..NodeConfig::default()
         });
 
-        let url = format!("http://localhost:{}", websocket_server_port);
-        println!("Gun server starting...");
-        println!("Iris UI:      {}", url);
-        println!("Stats:        {}/stats", url);
-        println!("Gun endpoint: {}/gun", url);
+        if websocket_server {
+            let url = format!("http://localhost:{}", websocket_server_port);
+            println!("Gun server starting...");
+            println!("Iris UI:      {}", url);
+            println!("Stats:        {}/stats", url);
+            println!("Gun endpoint: {}/gun", url);
+        }
 
         ctrlc::set_handler(|| std::process::exit(0)).expect("Error setting Ctrl-C handler");
 
