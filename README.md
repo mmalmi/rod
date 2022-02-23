@@ -1,10 +1,14 @@
 # Gun-rs
 
-Pure Rust implementation of [Gun](https://github.com/amark/gun). For a wasm version, check out [gun-rs-wasm](https://github.com/mmalmi/gun-rs-wasm).
+Pure Rust implementation of [Gun.js](https://github.com/amark/gun). For a wasm version, check out [gun-rs-wasm](https://github.com/mmalmi/gun-rs-wasm).
 
 Deployed at https://gun-rs.iris.to (serves [iris-messenger](https://github.com/irislib/iris-messenger) at the root)
 
 Live stats: https://gun-rs.iris.to/stats
+
+## Why?
+- Rust can be compiled into high-performing native binaries on many platforms, including embedded systems.
+- Maintaining and contributing to the codebase is easier than in [Gun.js](https://github.com/amark/gun). Gun.js doesn't have compilation or minification steps, and the code is kind of manually minified 😄
 
 ## Use
 Install [Rust](https://doc.rust-lang.org/book/ch01-01-installation.html) first.
