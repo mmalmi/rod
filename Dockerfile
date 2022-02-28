@@ -5,4 +5,4 @@ COPY . .
 
 RUN cargo install --path .
 
-CMD ["gundb start"]
+CMD ["/usr/local/cargo/bin/gundb"]
