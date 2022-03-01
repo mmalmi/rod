@@ -13,13 +13,16 @@ services:
   - key: PEERS
     scope: RUN_AND_BUILD_TIME
     value: wss://gun-us.herokuapp.com/gun
+  - key: RUST_CHANNEL_SIZE
+    scope: RUN_AND_BUILD_TIME
+    value: "100"
   github:
     branch: master
     deploy_on_push: true
     repo: cosmicrocks/gun-rs
   http_port: 4944
   instance_count: 1
-  instance_size_slug: basic-xs
+  instance_size_slug: basic-s
   name: gun-rs
   routes:
   - path: /
