@@ -581,6 +581,7 @@ impl Node {
 
          */
         *self.children.write().unwrap() = BTreeMap::new();
+        *self.value.write().unwrap() = Some(value.clone());
         self.on_sender.send(value.clone()).ok();
         for (parent_id, key) in self.parents.read().unwrap().iter() { // rayon?
             if let Some(parent) = self.store.read().unwrap().get(parent_id) {
@@ -600,6 +601,15 @@ mod tests {
     use crate::types::GunValue;
     use std::time::{Instant};
     use tokio::time::{sleep, Duration};
+    use std::sync::Once;
+
+    static INIT: Once = Once::new();
+
+    fn setup() {
+        INIT.call_once(|| {
+            env_logger::init();
+        });
+    }
 
     // TODO proper test
     // TODO test .map()
@@ -612,7 +622,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn put_and_get() {
+    async fn first_get_then_put() {
+        setup();
+        let mut gun = Node::new();
+        let mut node = gun.get("Anborn");
+        let mut sub = node.on();
+        node.put("Ancalagon".into());
+        if let GunValue::Text(str) = sub.recv().await.unwrap() {
+            assert_eq!(&str, "Ancalagon");
+        }
+    }
+
+    #[tokio::test]
+    async fn first_put_then_get() {
+        setup();
         let mut gun = Node::new();
         let mut node = gun.get("Finglas");
         node.put("Fingolfin".into());
@@ -660,6 +683,7 @@ mod tests {
         tokio::join!(node1.start_adapters(), node2.start_adapters(), tst(node1_clone, node2_clone));
     }*/
 
+    /*
     #[tokio::test]
     async fn multicast_sync() {
         let mut node1 = Node::new();
@@ -697,14 +721,16 @@ mod tests {
 
     #[test]
     fn save_and_retrieve_user_space_data() {
+        setup();
         let mut node = Node::new();
     }
 
-    #[test]
+    #[test] // use #[bench] when it's stable
     fn write_benchmark() { // to see the result with optimized binary, run: cargo test --release -- --nocapture
+        setup();
         let start = Instant::now();
         let mut gun = Node::new();
-        let n = 10000;
+        let n = 1000;
         for i in 0..n {
             gun.get(&format!("a{:?}", i)).get("Pelendur").put(format!("{:?}b", i).into());
         }
@@ -713,4 +739,5 @@ mod tests {
         println!("Wrote {} entries in {:?} ({} / second)", n, duration, per_second);
         // compare with gun.js: var i = 100000, j = i, s = +new Date; while(--i){ gun.get('a'+i).get('lol').put(i+'yo') } console.log(j / ((+new Date - s) / 1000), 'ops/sec');
     }
+     */
 }
