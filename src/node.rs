@@ -89,6 +89,8 @@ pub struct Node {
     seen_messages: Arc<RwLock<BoundedHashSet>>,
     peer_id: Arc<RwLock<String>>,
     msg_counter: Arc<AtomicUsize>,
+    stop_signal_sender: broadcast::Sender<()>,
+    stop_signal_receiver: Arc<broadcast::Receiver<()>>,
     outgoing_msg_sender: broadcast::Sender<GunMessage>,
     outgoing_msg_receiver: Arc<broadcast::Receiver<GunMessage>>, // need to store 1 receiver instance so the channel doesn't get closed
     incoming_msg_sender: Arc<RwLock<Option<mpsc::Sender<GunMessage>>>>
@@ -123,6 +125,7 @@ impl Node {
     /// })
     /// ```
     pub fn new_with_config(config: NodeConfig) -> Self {
+        let stop_signal_channel = broadcast::channel::<()>(1);
         let outgoing_channel = broadcast::channel::<GunMessage>(config.rust_channel_size);
         let node = Self {
             id: 0,
@@ -141,6 +144,8 @@ impl Node {
             seen_messages: Arc::new(RwLock::new(BoundedHashSet::new(SEEN_MSGS_MAX_SIZE))),
             peer_id: Arc::new(RwLock::new(random_string(16))),
             msg_counter: Arc::new(AtomicUsize::new(0)),
+            stop_signal_sender: stop_signal_channel.0,
+            stop_signal_receiver: Arc::new(stop_signal_channel.1),
             outgoing_msg_sender: outgoing_channel.0,
             outgoing_msg_receiver: Arc::new(outgoing_channel.1),
             incoming_msg_sender: Arc::new(RwLock::new(None))
@@ -225,7 +230,10 @@ impl Node {
         if self.config.read().unwrap().stats {
             self.update_stats();
         }
-        futures::future::join_all(futures).await;
+
+        let joined = futures::future::join_all(futures);
+
+        futures::future::select(joined, Box::pin(self.stop_signal_sender.subscribe().recv())).await;
     }
 
     fn new_child(&self, key: String) -> usize {
@@ -256,6 +264,8 @@ impl Node {
             seen_messages: Arc::new(RwLock::new(BoundedHashSet::new(SEEN_MSGS_MAX_SIZE))),
             peer_id: self.peer_id.clone(),
             msg_counter: self.msg_counter.clone(),
+            stop_signal_sender: self.stop_signal_sender.clone(),
+            stop_signal_receiver: self.stop_signal_receiver.clone(),
             outgoing_msg_sender: self.outgoing_msg_sender.clone(),
             outgoing_msg_receiver: self.outgoing_msg_receiver.clone(),
             incoming_msg_sender: self.incoming_msg_sender.clone()
@@ -449,7 +459,7 @@ impl Node {
                 for (child_key, incoming_val_updated_at) in updated_at_times.iter() {
                     if let Some(incoming_val_updated_at) = incoming_val_updated_at.as_f64() {
                         let mut child = node.get(child_key);
-                        if *child.updated_at.read().unwrap() < incoming_val_updated_at {
+                        if *child.updated_at.read().unwrap() <= incoming_val_updated_at {
                             // TODO if incoming_val_updated_at > current_time { defer_operation() }
                             if let Some(new_value) = update_data.get(child_key) {
                                 if let Ok(new_value) = serde_json::from_value::<GunValue>(new_value.clone()) {
@@ -580,8 +590,10 @@ impl Node {
      Text("{\":\":\"MacGyver!!!!!\",\"~\":\"6sCGKSjDeUygA+QisLCjGEKCfTjF5phrNVwlU1k95QWeazyjFnZ0Alm4Kvod070aDFz/5pt7i9CHci4ReRF4Ug==\"}")
 
          */
+        *self.updated_at.write().unwrap() = time;
         *self.children.write().unwrap() = BTreeMap::new();
         *self.value.write().unwrap() = Some(value.clone());
+        debug!("send to sender {:?}", value.clone());
         self.on_sender.send(value.clone()).ok();
         for (parent_id, key) in self.parents.read().unwrap().iter() { // rayon?
             if let Some(parent) = self.store.read().unwrap().get(parent_id) {
@@ -593,6 +605,10 @@ impl Node {
             }
         }
     }
+
+    fn stop(&mut self) {
+        self.stop_signal_sender.send(());
+    }
 }
 
 #[cfg(test)]
@@ -602,6 +618,7 @@ mod tests {
     use std::time::{Instant};
     use tokio::time::{sleep, Duration};
     use std::sync::Once;
+    use log::debug;
 
     static INIT: Once = Once::new();
 
@@ -645,43 +662,46 @@ mod tests {
         }
     }
 
-    /*
     #[tokio::test]
     async fn connect_and_sync_over_websocket() {
-        let mut node1 = Node::new();
+        let mut node1 = Node::new_with_config(NodeConfig {
+            websocket_server: true,
+            multicast: false,
+            stats: false,
+            ..NodeConfig::default()
+        });
         let mut node2 = Node::new_with_config(NodeConfig {
             websocket_server: false,
             multicast: false,
+            stats: false,
             outgoing_websocket_peers: vec!["ws://localhost:4944/gun".to_string()],
             ..NodeConfig::default()
         });
-        println!("asdf1");
         async fn tst(mut node1: Node, mut node2: Node) {
             sleep(Duration::from_millis(1000)).await;
-            let mut sub1 = node1.get("test1").on();
+            node1.get("node1").put("Amandil".into());
+            node2.get("node2").put("Beregond".into());
+            let mut sub1 = node1.get("node2").on();
+            let mut sub2 = node2.get("node1").on();
             match sub1.recv().await.unwrap() {
                 GunValue::Text(str) => {
-                    println!("test1");
                     assert_eq!(&str, "Beregond");
                 },
                 _ => panic!("Expected GunValue::Text")
             }
-            let mut sub2 = node2.get("test2").on();
             match sub2.recv().await.unwrap() {
                 GunValue::Text(str) => {
-                    println!("test2");
                     assert_eq!(&str, "Amandil");
                 },
                 _ => panic!("Expected GunValue::Text")
             }
-            println!("asdf2");
-            node1.get("test2").put("Amandil".into());
-            node2.get("test1").put("Beregond".into());
+            node1.stop();
+            node2.stop();
         }
         let node1_clone = node1.clone();
         let node2_clone = node2.clone();
         tokio::join!(node1.start_adapters(), node2.start_adapters(), tst(node1_clone, node2_clone));
-    }*/
+    }
 
     /*
     #[tokio::test]
