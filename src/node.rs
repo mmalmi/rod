@@ -574,12 +574,13 @@ impl Node {
         if let Some(path) = get.get("#") {
             if let Some(path) = path.as_str() {
                 {
-                    debug!("{} subscribed to {}", from, path);
+                    let topic = path.split("/").next().unwrap_or("");
+                    debug!("{} subscribed to {}", from, topic);
                     let mut subscribers_by_topic = self.subscribers_by_topic.write().unwrap();
-                    if !subscribers_by_topic.contains_key(path) {
-                        subscribers_by_topic.insert(path.to_string(), HashSet::new());
+                    if !subscribers_by_topic.contains_key(topic) {
+                        subscribers_by_topic.insert(topic.to_string(), HashSet::new());
                     }
-                    subscribers_by_topic.get_mut(path.clone()).unwrap().insert(from.clone());
+                    subscribers_by_topic.get_mut(topic.clone()).unwrap().insert(from.clone());
                 }
                 if let Some(key) = get.get(".") {
                     // debug!("yes . {} {}", path, key);
