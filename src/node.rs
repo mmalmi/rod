@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashSet, HashMap};
 use std::time::{SystemTime, Instant};
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
@@ -93,6 +93,7 @@ pub struct Node {
     network_adapters: NetworkAdapters,
     seen_messages: Arc<RwLock<BoundedHashSet>>,
     seen_get_messages: Arc<RwLock<BoundedHashMap<String, SeenGetMessage>>>,
+    subscribers_by_topic: Arc<RwLock<HashMap<String, HashSet<String>>>>,
     peer_id: Arc<RwLock<String>>,
     msg_counter: Arc<AtomicUsize>,
     stop_signal_sender: broadcast::Sender<()>,
@@ -149,6 +150,7 @@ impl Node {
             network_adapters: NetworkAdapters::default(),
             seen_messages: Arc::new(RwLock::new(BoundedHashSet::new(SEEN_MSGS_MAX_SIZE))),
             seen_get_messages: Arc::new(RwLock::new(BoundedHashMap::new(SEEN_MSGS_MAX_SIZE))),
+            subscribers_by_topic: Arc::new(RwLock::new(HashMap::new())),
             peer_id: Arc::new(RwLock::new(random_string(16))),
             msg_counter: Arc::new(AtomicUsize::new(0)),
             stop_signal_sender: stop_signal_channel.0,
@@ -270,6 +272,7 @@ impl Node {
             network_adapters: self.network_adapters.clone(),
             seen_messages: self.seen_messages.clone(),
             seen_get_messages: self.seen_get_messages.clone(),
+            subscribers_by_topic: self.subscribers_by_topic.clone(),
             peer_id: self.peer_id.clone(),
             msg_counter: self.msg_counter.clone(),
             stop_signal_sender: self.stop_signal_sender.clone(),
@@ -292,7 +295,7 @@ impl Node {
     pub fn on(&mut self) -> broadcast::Receiver<GunValue> {
         if self.network_adapters.read().unwrap().len() > 0 {
             let (m, id) = self.create_get_msg();
-            self.outgoing_message(&m.to_string(), &self.get_peer_id(), id);
+            self.outgoing_message(&m.to_string(), &self.get_peer_id(), id, None);
         }
         let sub = self.on_sender.subscribe();
         if let Some(val) = self.get_local_value_once() {
@@ -432,13 +435,12 @@ impl Node {
                             // TODO: if msg[@] and msg[##] !== meta.last_seen_hash, send it to meta.from
                             self.incoming_put(&msg_str, &msg_id, &from, msg_obj, put_obj);
                             // TODO: if no msg[@], send to random selection of peers
-                            //self.outgoing_message(&msg_str, from, msg_id.clone());
                         }
                     }
                     if let Some(get) = msg_obj.get("get") {
                         if let Some(get_obj) = get.as_object() {
-                            self.incoming_get(get_obj);
-                            self.outgoing_message(&msg_str, from, msg_id); // TODO: randomly sample recipients
+                            self.incoming_get(get_obj, from);
+                            self.outgoing_message(&msg_str, from, msg_id, None); // TODO: randomly sample recipients
                         }
                     }
                 }
@@ -460,6 +462,7 @@ impl Node {
     }
 
     fn incoming_put(&mut self, msg_str: &String, msg_id: &String, from: &String, msg_obj: &serde_json::Map<String, SerdeJsonValue>, put_obj: &serde_json::Map<String, SerdeJsonValue>) {
+        let mut recipients = HashSet::new();
         if let Some(in_response_to) = msg_obj.get("@") {
             if let Some(content_hash) = msg_obj.get("##") {
                 let content_hash = content_hash.to_string();
@@ -469,11 +472,17 @@ impl Node {
                     } else {
                         seen_get_message.last_reply_hash = content_hash;
                     }
+                    recipients.insert(from.clone());
                     // TODO: only reply to seen_get_message.from
                 }
             }
         }
         for (updated_key, update_data) in put_obj.iter() {
+            let topic = updated_key.split("/").next().unwrap_or("");
+            debug!("getting subscribers for topic {}", topic);
+            if let Some(subscribers) = self.subscribers_by_topic.read().unwrap().get(topic) {
+                recipients.extend(subscribers.clone());
+            }
             let mut node = self.clone();// = self.get(updated_key);
             for node_name in updated_key.split("/") {
                 node = node.get(node_name);
@@ -494,6 +503,7 @@ impl Node {
                 }
             }
         }
+        self.outgoing_message(&msg_str, from, msg_id.clone(), Some(recipients));
     }
 
     fn _children_to_gun_value(&self, children: &BTreeMap<String, usize>) -> GunValue {
@@ -515,10 +525,10 @@ impl Node {
         GunValue::Children(map)
     }
 
-    fn outgoing_message(&self, msg: &String, from: &String, msg_id: String) {
-        debug!("sending msg {} {}", &msg_id, msg);
+    fn outgoing_message(&self, msg: &String, from: &String, msg_id: String, to: Option<HashSet<String>>) {
+        //debug!("sending msg {} {}", &msg_id, msg);
         self.seen_messages.write().unwrap().insert(msg_id); // TODO: doesn't seem to work, at least on multicast
-        if let Err(e) = self.outgoing_msg_sender.send(GunMessage { msg: msg.clone(), from: from.clone() }) {
+        if let Err(e) = self.outgoing_msg_sender.send(GunMessage { msg: msg.clone(), from: from.clone(), to }) {
             error!("failed to send outgoing message from node: {}", e);
         };
     }
@@ -556,13 +566,21 @@ impl Node {
                 "#": msg_id,
             }).to_string();
             debug!("have! sending response {}", msg_id);
-            self.outgoing_message(&json, &self.get_peer_id(), msg_id);
+            self.outgoing_message(&json, &self.get_peer_id(), msg_id, None); // TODO: send only to the requester
         }
     }
 
-    fn incoming_get(&mut self, get: &serde_json::Map<String, SerdeJsonValue>) {
+    fn incoming_get(&mut self, get: &serde_json::Map<String, SerdeJsonValue>, from: &String) {
         if let Some(path) = get.get("#") {
             if let Some(path) = path.as_str() {
+                {
+                    debug!("{} subscribed to {}", from, path);
+                    let mut subscribers_by_topic = self.subscribers_by_topic.write().unwrap();
+                    if !subscribers_by_topic.contains_key(path) {
+                        subscribers_by_topic.insert(path.to_string(), HashSet::new());
+                    }
+                    subscribers_by_topic.get_mut(path.clone()).unwrap().insert(from.clone());
+                }
                 if let Some(key) = get.get(".") {
                     // debug!("yes . {} {}", path, key);
                     if let Some(key) = key.as_str() {
@@ -594,7 +612,18 @@ impl Node {
         self.put_local(value.clone(), time);
         if self.network_adapters.read().unwrap().len() > 0 {
             let (m, id) = self.create_put_msg(&value, time);
-            self.outgoing_message(&m, &self.get_peer_id(), id);
+            let recipients;
+            let mut topic = "";
+            if let Some(path) = self.path.get(0) {
+                topic = path;
+            }
+            debug!("getting subscribers for topic {}", topic);
+            if let Some(subscribers) = self.subscribers_by_topic.read().unwrap().get(topic) {
+                recipients = subscribers.clone();
+            } else {
+                recipients = HashSet::new();
+            }
+            self.outgoing_message(&m, &self.get_peer_id(), id, Some(recipients));
         }
     }
 

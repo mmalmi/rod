@@ -36,7 +36,7 @@ impl NetworkAdapter for Multicast {
                     if let Ok(data) = std::str::from_utf8(&message.data) {
                         debug!("in: {}", data);
                         let from = format!("multicast_{:?}", message.interface).to_string();
-                        if let Err(e) = incoming_message_sender.try_send(GunMessage { msg: data.to_string(), from }) {
+                        if let Err(e) = incoming_message_sender.try_send(GunMessage { msg: data.to_string(), from, to: None }) {
                             error!("failed to send message to node: {}", e);
                         }
                     }

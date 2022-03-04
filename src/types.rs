@@ -78,7 +78,8 @@ pub trait NetworkAdapter {
 #[derive(Clone, Debug)]
 pub struct GunMessage {
     pub msg: String,
-    pub from: String
+    pub from: String,
+    pub to: Option<HashSet<String>>
 }
 
 /// When full, every insert pushes out the oldest entry in the set.

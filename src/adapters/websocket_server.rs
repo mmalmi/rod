@@ -62,6 +62,11 @@ impl Actor for MyWs {
                     if message.from == id {
                         continue;
                     }
+                    if let Some(to) = message.to.clone() {
+                        if !to.contains(&id) {
+                            continue;
+                        }
+                    }
                     let res = addr.send(OutgoingMessage { gun_message: message }).await; // TODO break on Closed error only
                     if let Err(e) = res {
                         if let actix::prelude::MailboxError::Closed = e {
@@ -108,7 +113,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for MyWs {
             Ok(ws::Message::Ping(msg)) => ctx.pong(&msg),
             Ok(ws::Message::Text(text)) => {
                 debug!("in: {}", text);
-                if let Err(e) = self.incoming_msg_sender.try_send(GunMessage { msg: text.to_string(), from: self.id.clone() }) {
+                if let Err(e) = self.incoming_msg_sender.try_send(GunMessage { msg: text.to_string(), from: self.id.clone(), to: None }) {
                     error!("error sending incoming message to node: {}", e);
                 }
             },
