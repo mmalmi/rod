@@ -51,6 +51,11 @@ pub struct NodeConfig {
     pub stats: bool,
 }
 
+struct SeenGetMessage {
+    from: String,
+    last_reply_hash: String,
+}
+
 impl Default for NodeConfig {
     fn default() -> Self {
         NodeConfig {
@@ -87,6 +92,7 @@ pub struct Node {
     store: SharedNodeStore,
     network_adapters: NetworkAdapters,
     seen_messages: Arc<RwLock<BoundedHashSet>>,
+    seen_get_messages: Arc<RwLock<BoundedHashMap<String, SeenGetMessage>>>,
     peer_id: Arc<RwLock<String>>,
     msg_counter: Arc<AtomicUsize>,
     stop_signal_sender: broadcast::Sender<()>,
@@ -142,6 +148,7 @@ impl Node {
             store: SharedNodeStore::default(),
             network_adapters: NetworkAdapters::default(),
             seen_messages: Arc::new(RwLock::new(BoundedHashSet::new(SEEN_MSGS_MAX_SIZE))),
+            seen_get_messages: Arc::new(RwLock::new(BoundedHashMap::new(SEEN_MSGS_MAX_SIZE))),
             peer_id: Arc::new(RwLock::new(random_string(16))),
             msg_counter: Arc::new(AtomicUsize::new(0)),
             stop_signal_sender: stop_signal_channel.0,
@@ -261,7 +268,8 @@ impl Node {
             map_sender: broadcast::channel::<(String, GunValue)>(config.rust_channel_size).0,
             store: self.store.clone(),
             network_adapters: self.network_adapters.clone(),
-            seen_messages: Arc::new(RwLock::new(BoundedHashSet::new(SEEN_MSGS_MAX_SIZE))),
+            seen_messages: self.seen_messages.clone(),
+            seen_get_messages: self.seen_get_messages.clone(),
             peer_id: self.peer_id.clone(),
             msg_counter: self.msg_counter.clone(),
             stop_signal_sender: self.stop_signal_sender.clone(),
@@ -403,8 +411,8 @@ impl Node {
             }
             return;
         }
-        if let Some(obj) = msg.as_object() {
-            if let Some(msg_id) = obj.get("#") {
+        if let Some(msg_obj) = msg.as_object() {
+            if let Some(msg_id) = msg_obj.get("#") {
                 if let Some(msg_id) = msg_id.as_str() {
                     let msg_id = msg_id.to_string();
                     if self.seen_messages.read().unwrap().contains(&msg_id) {
@@ -419,15 +427,17 @@ impl Node {
                     let s: String = msg_str.chars().take(300).collect();
                     debug!("in ID {}:\n{}\n", msg_id, s);
 
-                    if let Some(put) = obj.get("put") {
-                        if let Some(obj) = put.as_object() {
-                            self.incoming_put(obj);
-                            self.outgoing_message(&msg_str, from, msg_id.clone());
+                    if let Some(put) = msg_obj.get("put") {
+                        if let Some(put_obj) = put.as_object() {
+                            // TODO: if msg[@] and msg[##] !== meta.last_seen_hash, send it to meta.from
+                            self.incoming_put(&msg_str, &msg_id, &from, msg_obj, put_obj);
+                            // TODO: if no msg[@], send to random selection of peers
+                            //self.outgoing_message(&msg_str, from, msg_id.clone());
                         }
                     }
-                    if let Some(get) = obj.get("get") {
-                        if let Some(obj) = get.as_object() {
-                            self.incoming_get(obj);
+                    if let Some(get) = msg_obj.get("get") {
+                        if let Some(get_obj) = get.as_object() {
+                            self.incoming_get(get_obj);
                             self.outgoing_message(&msg_str, from, msg_id); // TODO: randomly sample recipients
                         }
                     }
@@ -449,8 +459,21 @@ impl Node {
         self.incoming_message_json(&json, false, Some(msg), from);
     }
 
-    fn incoming_put(&mut self, put: &serde_json::Map<String, SerdeJsonValue>) {
-        for (updated_key, update_data) in put.iter() {
+    fn incoming_put(&mut self, msg_str: &String, msg_id: &String, from: &String, msg_obj: &serde_json::Map<String, SerdeJsonValue>, put_obj: &serde_json::Map<String, SerdeJsonValue>) {
+        if let Some(in_response_to) = msg_obj.get("@") {
+            if let Some(content_hash) = msg_obj.get("##") {
+                let content_hash = content_hash.to_string();
+                if let Some(seen_get_message) = self.seen_get_messages.write().unwrap().get_mut(in_response_to.to_string()) {
+                    if content_hash == seen_get_message.last_reply_hash {
+                        return;
+                    } else {
+                        seen_get_message.last_reply_hash = content_hash;
+                    }
+                    // TODO: only reply to seen_get_message.from
+                }
+            }
+        }
+        for (updated_key, update_data) in put_obj.iter() {
             let mut node = self.clone();// = self.get(updated_key);
             for node_name in updated_key.split("/") {
                 node = node.get(node_name);
