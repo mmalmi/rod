@@ -33,7 +33,7 @@ fn get_id() -> usize { COUNTER.fetch_add(1, Ordering::Relaxed) }
 pub struct NodeConfig {
     /// [tokio::sync::broadcast] channel size for outgoing network messages. Smaller value may slightly reduce memory usage, but lose outgoing messages when an adapter is lagging. Default: 10.
     pub rust_channel_size: usize,
-    /// Enable multicast? Default: true
+    /// Enable multicast? Default: false
     pub multicast: bool, // should we have (adapters: Vector<String>) instead, so you can be sure there's no unwanted sync happening?
     /// Outgoing websocket peers. Urls must use wss: prefix, not https:. Default: empty list.
     pub outgoing_websocket_peers: Vec<String>,
@@ -55,7 +55,7 @@ impl Default for NodeConfig {
     fn default() -> Self {
         NodeConfig {
             rust_channel_size: 1000,
-            multicast: true,
+            multicast: false,
             outgoing_websocket_peers: Vec::new(),
             websocket_server: true,
             websocket_server_port: 4944,
@@ -428,7 +428,7 @@ impl Node {
                     if let Some(get) = obj.get("get") {
                         if let Some(obj) = get.as_object() {
                             self.incoming_get(obj);
-                            self.outgoing_message(&msg_str, from, msg_id);
+                            self.outgoing_message(&msg_str, from, msg_id); // TODO: randomly sample recipients
                         }
                     }
                 }
@@ -606,8 +606,9 @@ impl Node {
         }
     }
 
-    fn stop(&mut self) {
-        self.stop_signal_sender.send(());
+    /// Stop any running adapters
+    pub fn stop(&mut self) {
+        let _ = self.stop_signal_sender.send(());
     }
 }
 
@@ -705,39 +706,46 @@ mod tests {
 
     /*
     #[tokio::test]
-    async fn multicast_sync() {
-        let mut node1 = Node::new();
-        let mut node2 = Node::new_with_config(NodeConfig {
+    async fn sync_over_multicast() {
+        let mut node1 = Node::new_with_config(NodeConfig {
             websocket_server: false,
+            multicast: true,
+            stats: false,
             ..NodeConfig::default()
         });
-        println!("asdf1");
+        let mut node2 = Node::new_with_config(NodeConfig {
+            websocket_server: false,
+            multicast: true,
+            stats: false,
+            ..NodeConfig::default()
+        });
         async fn tst(mut node1: Node, mut node2: Node) {
             sleep(Duration::from_millis(1000)).await;
-            let mut sub1 = node1.get("test1").on();
+            node1.get("node1a").put("Gorlim".into());
+            node2.get("node2a").put("Smaug".into());
+            let mut sub1 = node1.get("node2a").on();
+            let mut sub2 = node2.get("node1a").on();
             match sub1.recv().await.unwrap() {
                 GunValue::Text(str) => {
-                    println!("test1");
-                    assert_eq!(&str, "Beregond");
+                    assert_eq!(&str, "Smaug");
                 },
                 _ => panic!("Expected GunValue::Text")
             }
-            let mut sub2 = node2.get("test2").on();
             match sub2.recv().await.unwrap() {
                 GunValue::Text(str) => {
-                    println!("test2");
-                    assert_eq!(&str, "Amandil");
+                    assert_eq!(&str, "Gorlim");
                 },
                 _ => panic!("Expected GunValue::Text")
             }
-            println!("asdf2");
-            node1.get("test2").put("Amandil".into());
-            node2.get("test1").put("Beregond".into());
+            node1.stop();
+            node2.stop();
         }
         let node1_clone = node1.clone();
         let node2_clone = node2.clone();
         tokio::join!(node1.start_adapters(), node2.start_adapters(), tst(node1_clone, node2_clone));
-    }
+    }*/
+
+    /*
 
     #[test]
     fn save_and_retrieve_user_space_data() {
