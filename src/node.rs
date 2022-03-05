@@ -89,7 +89,7 @@ pub struct Node {
     parents: Parents,
     on_sender: broadcast::Sender<GunValue>,
     map_sender: broadcast::Sender<(String, GunValue)>,
-    store: SharedNodeStore,
+    store: SharedNodeStore, // experimental: replace this with redis?
     network_adapters: NetworkAdapters,
     seen_messages: Arc<RwLock<BoundedHashSet>>,
     seen_get_messages: Arc<RwLock<BoundedHashMap<String, SeenGetMessage>>>,
@@ -432,9 +432,7 @@ impl Node {
 
                     if let Some(put) = msg_obj.get("put") {
                         if let Some(put_obj) = put.as_object() {
-                            // TODO: if msg[@] and msg[##] !== meta.last_seen_hash, send it to meta.from
                             self.incoming_put(&msg_str, &msg_id, &from, msg_obj, put_obj);
-                            // TODO: if no msg[@], send to random selection of peers
                         }
                     }
                     if let Some(get) = msg_obj.get("get") {
@@ -463,25 +461,27 @@ impl Node {
 
     fn incoming_put(&mut self, msg_str: &String, msg_id: &String, from: &String, msg_obj: &serde_json::Map<String, SerdeJsonValue>, put_obj: &serde_json::Map<String, SerdeJsonValue>) {
         let mut recipients = HashSet::new();
+        let mut is_ack = false;
         if let Some(in_response_to) = msg_obj.get("@") {
+            is_ack = true;
             if let Some(content_hash) = msg_obj.get("##") {
                 let content_hash = content_hash.to_string();
                 if let Some(seen_get_message) = self.seen_get_messages.write().unwrap().get_mut(in_response_to.to_string()) {
                     if content_hash == seen_get_message.last_reply_hash {
                         return;
-                    } else {
-                        seen_get_message.last_reply_hash = content_hash;
-                    }
-                    recipients.insert(from.clone());
-                    // TODO: only reply to seen_get_message.from
+                    } // failing these conditions, should we still send the ack to someone?
+                    seen_get_message.last_reply_hash = content_hash;
+                    recipients.insert(seen_get_message.from.clone());
                 }
             }
         }
         for (updated_key, update_data) in put_obj.iter() {
-            let topic = updated_key.split("/").next().unwrap_or("");
-            debug!("getting subscribers for topic {}", topic);
-            if let Some(subscribers) = self.subscribers_by_topic.read().unwrap().get(topic) {
-                recipients.extend(subscribers.clone());
+            if !is_ack {
+                let topic = updated_key.split("/").next().unwrap_or("");
+                debug!("getting subscribers for topic {}", topic);
+                if let Some(subscribers) = self.subscribers_by_topic.read().unwrap().get(topic) {
+                    recipients.extend(subscribers.clone());
+                }
             }
             let mut node = self.clone();// = self.get(updated_key);
             for node_name in updated_key.split("/") {

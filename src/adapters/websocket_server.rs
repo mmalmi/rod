@@ -58,7 +58,7 @@ impl Actor for MyWs {
         let addr = ctx.address();
         tokio::task::spawn(async move {
             loop {
-                if let Ok(message) = rx.recv().await {
+                if let Ok(message) = rx.recv().await { // TODO: single thread for all actors, then IncomingMessages per recipient
                     if message.from == id {
                         continue;
                     }
