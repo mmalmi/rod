@@ -437,6 +437,10 @@ impl Node {
                     }
                     if let Some(get) = msg_obj.get("get") {
                         if let Some(get_obj) = get.as_object() {
+                            self.seen_get_messages.write().unwrap().insert(msg_id.clone(), SeenGetMessage {
+                                from: from.clone(),
+                                last_reply_hash: "".to_string()
+                            });
                             self.incoming_get(get_obj, from);
                             self.outgoing_message(&msg_str, from, msg_id, None); // TODO: randomly sample recipients
                         }
@@ -463,10 +467,14 @@ impl Node {
         let mut recipients = HashSet::new();
         let mut is_ack = false;
         if let Some(in_response_to) = msg_obj.get("@") {
-            is_ack = true;
-            if let Some(content_hash) = msg_obj.get("##") {
-                let content_hash = content_hash.to_string();
-                if let Some(seen_get_message) = self.seen_get_messages.write().unwrap().get_mut(in_response_to.to_string()) {
+            if let Some(in_response_to) = in_response_to.as_str() {
+                is_ack = true;
+                let mut content_hash = "-".to_string();
+                if let Some(hash) = msg_obj.get("##") {
+                    content_hash = hash.to_string();
+                }
+                let in_response_to = in_response_to.to_string();
+                if let Some(seen_get_message) = self.seen_get_messages.write().unwrap().get_mut(&in_response_to) {
                     if content_hash == seen_get_message.last_reply_hash {
                         return;
                     } // failing these conditions, should we still send the ack to someone?

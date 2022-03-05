@@ -148,12 +148,12 @@ impl<K: Clone + std::hash::Hash + std::cmp::Eq, V> BoundedHashMap<K, V> {
         self.map.insert(key, value);
     }
 
-    pub fn get(&self, key: K) -> Option<&V> {
-        self.map.get(&key)
+    pub fn get(&self, key: &K) -> Option<&V> {
+        self.map.get(key)
     }
 
-    pub fn get_mut(&mut self, key: K) -> Option<&mut V> {
-        self.map.get_mut(&key)
+    pub fn get_mut(&mut self, key: &K) -> Option<&mut V> {
+        self.map.get_mut(key)
     }
 
     pub fn contains_key(&self, key: &K) -> bool {

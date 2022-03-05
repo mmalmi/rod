@@ -52,6 +52,7 @@ impl Actor for MyWs {
     type Context = ws::WebsocketContext<Self>;
 
     fn started(&mut self, ctx: &mut ws::WebsocketContext<Self>) {
+        // TODO say hi [{"dam":"hi","#":"iED196J6w"}]
         let mut rx = self.node.get_outgoing_msg_receiver();
         let id = self.id.clone();
         self.users.write().unwrap().insert(id.clone());
