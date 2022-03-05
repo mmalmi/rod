@@ -546,7 +546,7 @@ impl Node {
         }
     }
 
-    fn send_get_response_if_have(&self) {
+    fn send_get_response_if_have(&self, from: &str) {
         if let Some(value) = self.get_local_value_once() {
             let msg_id = random_string(8);
             let full_path = &self.path.join("/");
@@ -566,7 +566,9 @@ impl Node {
                 "#": msg_id,
             }).to_string();
             debug!("have! sending response {}", msg_id);
-            self.outgoing_message(&json, &self.get_peer_id(), msg_id, None); // TODO: send only to the requester
+            let mut recipients = HashSet::new();
+            recipients.insert(from.to_string());
+            self.outgoing_message(&json, &self.get_peer_id(), msg_id, Some(recipients)); // TODO: send only to the requester
         }
     }
 
@@ -591,7 +593,7 @@ impl Node {
                             node = node.get(node_name); // TODO get only existing nodes in order to not spam our graph with empties
                         }
                         node = node.get(key);
-                        node.send_get_response_if_have(); // TODO don't send response to everyone
+                        node.send_get_response_if_have(from); // TODO don't send response to everyone
                     }
                 } else {
                     let mut split = path.split("/");
@@ -599,7 +601,7 @@ impl Node {
                     for node_name in split.nth(0) {
                         node = node.get(node_name); // TODO get only existing nodes in order to not spam our graph with empties
                     }
-                    node.send_get_response_if_have();
+                    node.send_get_response_if_have(from);
 
                     // debug!("no {}", path);
                 }
