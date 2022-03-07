@@ -47,7 +47,7 @@ if let GunValue::Text(str) = sub.recv().await.unwrap() {
 - [x] Advanced deduplication of sync messages
 - [x] Publish & subscribe
 - [ ] Disk storage
-- [ ] SEA
+- [ ] SEA (verification of signed data)
 
 ### Issues
 - When multiple adapters are enabled, it sometimes gets stuck
