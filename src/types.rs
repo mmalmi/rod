@@ -78,7 +78,8 @@ pub trait NetworkAdapter {
 #[derive(Clone, Debug)]
 pub struct GunMessage {
     pub msg: String,
-    pub from: String
+    pub from: String,
+    pub to: Option<HashSet<String>>
 }
 
 /// When full, every insert pushes out the oldest entry in the set.
@@ -114,6 +115,49 @@ impl BoundedHashSet {
 
     pub fn contains(&self, s: &str) -> bool {
         return self.set.contains(s);
+    }
+}
+
+/// When full, every insert pushes out the oldest entry in the set.
+///
+/// Used to record last seen message IDs.
+pub struct BoundedHashMap<K, V> {
+    map: HashMap<K, V>,
+    queue: VecDeque<K>,
+    max_entries: usize
+}
+
+impl<K: Clone + std::hash::Hash + std::cmp::Eq, V> BoundedHashMap<K, V> {
+    pub fn new(max_entries: usize) -> Self {
+        BoundedHashMap {
+            map: HashMap::new(),
+            queue: VecDeque::new(),
+            max_entries
+        }
+    }
+
+    pub fn insert(&mut self, key: K, value: V) {
+        if self.queue.len() >= self.max_entries {
+            if let Some(removed) = self.queue.pop_back() {
+                self.map.remove(&removed);
+            }
+        }
+        if !self.map.contains_key(&key) {
+            self.queue.push_front(key.clone());
+        }
+        self.map.insert(key, value);
+    }
+
+    pub fn get(&self, key: &K) -> Option<&V> {
+        self.map.get(key)
+    }
+
+    pub fn get_mut(&mut self, key: &K) -> Option<&mut V> {
+        self.map.get_mut(key)
+    }
+
+    pub fn contains_key(&self, key: &K) -> bool {
+        return self.map.contains_key(key);
     }
 }
 

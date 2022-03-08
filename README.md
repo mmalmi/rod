@@ -44,9 +44,10 @@ if let GunValue::Text(str) = sub.recv().await.unwrap() {
 - [x] Multicast (Iris messages seem not to propagate — size limit?)
 - [x] In-memory storage
 - [x] TLS support (env CERT_PATH and KEY_PATH)
+- [x] Advanced deduplication of sync messages
+- [x] Publish & subscribe
 - [ ] Disk storage
-- [ ] SEA
-- [ ] Advanced deduplication
+- [ ] SEA (verification of signed data)
 
 ### Issues
 - When multiple adapters are enabled, it sometimes gets stuck

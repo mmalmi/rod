@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashSet, HashMap};
 use std::time::{SystemTime, Instant};
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
@@ -33,7 +33,7 @@ fn get_id() -> usize { COUNTER.fetch_add(1, Ordering::Relaxed) }
 pub struct NodeConfig {
     /// [tokio::sync::broadcast] channel size for outgoing network messages. Smaller value may slightly reduce memory usage, but lose outgoing messages when an adapter is lagging. Default: 10.
     pub rust_channel_size: usize,
-    /// Enable multicast? Default: true
+    /// Enable multicast? Default: false
     pub multicast: bool, // should we have (adapters: Vector<String>) instead, so you can be sure there's no unwanted sync happening?
     /// Outgoing websocket peers. Urls must use wss: prefix, not https:. Default: empty list.
     pub outgoing_websocket_peers: Vec<String>,
@@ -51,11 +51,16 @@ pub struct NodeConfig {
     pub stats: bool,
 }
 
+struct SeenGetMessage {
+    from: String,
+    last_reply_hash: String,
+}
+
 impl Default for NodeConfig {
     fn default() -> Self {
         NodeConfig {
             rust_channel_size: 1000,
-            multicast: true,
+            multicast: false,
             outgoing_websocket_peers: Vec::new(),
             websocket_server: true,
             websocket_server_port: 4944,
@@ -84,11 +89,15 @@ pub struct Node {
     parents: Parents,
     on_sender: broadcast::Sender<GunValue>,
     map_sender: broadcast::Sender<(String, GunValue)>,
-    store: SharedNodeStore,
+    store: SharedNodeStore, // experimental: replace this with redis?
     network_adapters: NetworkAdapters,
     seen_messages: Arc<RwLock<BoundedHashSet>>,
+    seen_get_messages: Arc<RwLock<BoundedHashMap<String, SeenGetMessage>>>,
+    subscribers_by_topic: Arc<RwLock<HashMap<String, HashSet<String>>>>,
     peer_id: Arc<RwLock<String>>,
     msg_counter: Arc<AtomicUsize>,
+    stop_signal_sender: broadcast::Sender<()>,
+    stop_signal_receiver: Arc<broadcast::Receiver<()>>,
     outgoing_msg_sender: broadcast::Sender<GunMessage>,
     outgoing_msg_receiver: Arc<broadcast::Receiver<GunMessage>>, // need to store 1 receiver instance so the channel doesn't get closed
     incoming_msg_sender: Arc<RwLock<Option<mpsc::Sender<GunMessage>>>>
@@ -123,6 +132,7 @@ impl Node {
     /// })
     /// ```
     pub fn new_with_config(config: NodeConfig) -> Self {
+        let stop_signal_channel = broadcast::channel::<()>(1);
         let outgoing_channel = broadcast::channel::<GunMessage>(config.rust_channel_size);
         let node = Self {
             id: 0,
@@ -139,8 +149,12 @@ impl Node {
             store: SharedNodeStore::default(),
             network_adapters: NetworkAdapters::default(),
             seen_messages: Arc::new(RwLock::new(BoundedHashSet::new(SEEN_MSGS_MAX_SIZE))),
+            seen_get_messages: Arc::new(RwLock::new(BoundedHashMap::new(SEEN_MSGS_MAX_SIZE))),
+            subscribers_by_topic: Arc::new(RwLock::new(HashMap::new())),
             peer_id: Arc::new(RwLock::new(random_string(16))),
             msg_counter: Arc::new(AtomicUsize::new(0)),
+            stop_signal_sender: stop_signal_channel.0,
+            stop_signal_receiver: Arc::new(stop_signal_channel.1),
             outgoing_msg_sender: outgoing_channel.0,
             outgoing_msg_receiver: Arc::new(outgoing_channel.1),
             incoming_msg_sender: Arc::new(RwLock::new(None))
@@ -225,7 +239,10 @@ impl Node {
         if self.config.read().unwrap().stats {
             self.update_stats();
         }
-        futures::future::join_all(futures).await;
+
+        let joined = futures::future::join_all(futures);
+
+        futures::future::select(joined, Box::pin(self.stop_signal_sender.subscribe().recv())).await;
     }
 
     fn new_child(&self, key: String) -> usize {
@@ -253,9 +270,13 @@ impl Node {
             map_sender: broadcast::channel::<(String, GunValue)>(config.rust_channel_size).0,
             store: self.store.clone(),
             network_adapters: self.network_adapters.clone(),
-            seen_messages: Arc::new(RwLock::new(BoundedHashSet::new(SEEN_MSGS_MAX_SIZE))),
+            seen_messages: self.seen_messages.clone(),
+            seen_get_messages: self.seen_get_messages.clone(),
+            subscribers_by_topic: self.subscribers_by_topic.clone(),
             peer_id: self.peer_id.clone(),
             msg_counter: self.msg_counter.clone(),
+            stop_signal_sender: self.stop_signal_sender.clone(),
+            stop_signal_receiver: self.stop_signal_receiver.clone(),
             outgoing_msg_sender: self.outgoing_msg_sender.clone(),
             outgoing_msg_receiver: self.outgoing_msg_receiver.clone(),
             incoming_msg_sender: self.incoming_msg_sender.clone()
@@ -274,7 +295,7 @@ impl Node {
     pub fn on(&mut self) -> broadcast::Receiver<GunValue> {
         if self.network_adapters.read().unwrap().len() > 0 {
             let (m, id) = self.create_get_msg();
-            self.outgoing_message(&m.to_string(), &self.get_peer_id(), id);
+            self.outgoing_message(&m.to_string(), &self.get_peer_id(), id, None);
         }
         let sub = self.on_sender.subscribe();
         if let Some(val) = self.get_local_value_once() {
@@ -393,8 +414,8 @@ impl Node {
             }
             return;
         }
-        if let Some(obj) = msg.as_object() {
-            if let Some(msg_id) = obj.get("#") {
+        if let Some(msg_obj) = msg.as_object() {
+            if let Some(msg_id) = msg_obj.get("#") {
                 if let Some(msg_id) = msg_id.as_str() {
                     let msg_id = msg_id.to_string();
                     if self.seen_messages.read().unwrap().contains(&msg_id) {
@@ -409,16 +430,19 @@ impl Node {
                     let s: String = msg_str.chars().take(300).collect();
                     debug!("in ID {}:\n{}\n", msg_id, s);
 
-                    if let Some(put) = obj.get("put") {
-                        if let Some(obj) = put.as_object() {
-                            self.incoming_put(obj);
-                            self.outgoing_message(&msg_str, from, msg_id.clone());
+                    if let Some(put) = msg_obj.get("put") {
+                        if let Some(put_obj) = put.as_object() {
+                            self.incoming_put(&msg_str, &msg_id, &from, msg_obj, put_obj);
                         }
                     }
-                    if let Some(get) = obj.get("get") {
-                        if let Some(obj) = get.as_object() {
-                            self.incoming_get(obj);
-                            self.outgoing_message(&msg_str, from, msg_id);
+                    if let Some(get) = msg_obj.get("get") {
+                        if let Some(get_obj) = get.as_object() {
+                            self.seen_get_messages.write().unwrap().insert(msg_id.clone(), SeenGetMessage {
+                                from: from.clone(),
+                                last_reply_hash: "".to_string()
+                            });
+                            self.incoming_get(get_obj, from);
+                            self.outgoing_message(&msg_str, from, msg_id, None); // TODO: randomly sample recipients
                         }
                     }
                 }
@@ -439,8 +463,34 @@ impl Node {
         self.incoming_message_json(&json, false, Some(msg), from);
     }
 
-    fn incoming_put(&mut self, put: &serde_json::Map<String, SerdeJsonValue>) {
-        for (updated_key, update_data) in put.iter() {
+    fn incoming_put(&mut self, msg_str: &String, msg_id: &String, from: &String, msg_obj: &serde_json::Map<String, SerdeJsonValue>, put_obj: &serde_json::Map<String, SerdeJsonValue>) {
+        let mut recipients = HashSet::new();
+        let mut is_ack = false;
+        if let Some(in_response_to) = msg_obj.get("@") {
+            if let Some(in_response_to) = in_response_to.as_str() {
+                is_ack = true;
+                let mut content_hash = "-".to_string();
+                if let Some(hash) = msg_obj.get("##") {
+                    content_hash = hash.to_string();
+                }
+                let in_response_to = in_response_to.to_string();
+                if let Some(seen_get_message) = self.seen_get_messages.write().unwrap().get_mut(&in_response_to) {
+                    if content_hash == seen_get_message.last_reply_hash {
+                        return;
+                    } // failing these conditions, should we still send the ack to someone?
+                    seen_get_message.last_reply_hash = content_hash;
+                    recipients.insert(seen_get_message.from.clone());
+                }
+            }
+        }
+        for (updated_key, update_data) in put_obj.iter() {
+            if !is_ack {
+                let topic = updated_key.split("/").next().unwrap_or("");
+                debug!("getting subscribers for topic {}", topic);
+                if let Some(subscribers) = self.subscribers_by_topic.read().unwrap().get(topic) {
+                    recipients.extend(subscribers.clone());
+                }
+            }
             let mut node = self.clone();// = self.get(updated_key);
             for node_name in updated_key.split("/") {
                 node = node.get(node_name);
@@ -449,7 +499,7 @@ impl Node {
                 for (child_key, incoming_val_updated_at) in updated_at_times.iter() {
                     if let Some(incoming_val_updated_at) = incoming_val_updated_at.as_f64() {
                         let mut child = node.get(child_key);
-                        if *child.updated_at.read().unwrap() < incoming_val_updated_at {
+                        if *child.updated_at.read().unwrap() <= incoming_val_updated_at {
                             // TODO if incoming_val_updated_at > current_time { defer_operation() }
                             if let Some(new_value) = update_data.get(child_key) {
                                 if let Ok(new_value) = serde_json::from_value::<GunValue>(new_value.clone()) {
@@ -461,6 +511,8 @@ impl Node {
                 }
             }
         }
+        recipients.remove(from);
+        self.outgoing_message(&msg_str, from, msg_id.clone(), Some(recipients));
     }
 
     fn _children_to_gun_value(&self, children: &BTreeMap<String, usize>) -> GunValue {
@@ -482,10 +534,10 @@ impl Node {
         GunValue::Children(map)
     }
 
-    fn outgoing_message(&self, msg: &String, from: &String, msg_id: String) {
-        debug!("sending msg {} {}", &msg_id, msg);
+    fn outgoing_message(&self, msg: &String, from: &String, msg_id: String, to: Option<HashSet<String>>) {
+        //debug!("sending msg {} {}", &msg_id, msg);
         self.seen_messages.write().unwrap().insert(msg_id); // TODO: doesn't seem to work, at least on multicast
-        if let Err(e) = self.outgoing_msg_sender.send(GunMessage { msg: msg.clone(), from: from.clone() }) {
+        if let Err(e) = self.outgoing_msg_sender.send(GunMessage { msg: msg.clone(), from: from.clone(), to }) {
             error!("failed to send outgoing message from node: {}", e);
         };
     }
@@ -503,7 +555,7 @@ impl Node {
         }
     }
 
-    fn send_get_response_if_have(&self) {
+    fn send_get_response_if_have(&self, from: &str) {
         if let Some(value) = self.get_local_value_once() {
             let msg_id = random_string(8);
             let full_path = &self.path.join("/");
@@ -523,13 +575,24 @@ impl Node {
                 "#": msg_id,
             }).to_string();
             debug!("have! sending response {}", msg_id);
-            self.outgoing_message(&json, &self.get_peer_id(), msg_id);
+            let mut recipients = HashSet::new();
+            recipients.insert(from.to_string());
+            self.outgoing_message(&json, &self.get_peer_id(), msg_id, Some(recipients)); // TODO: send only to the requester
         }
     }
 
-    fn incoming_get(&mut self, get: &serde_json::Map<String, SerdeJsonValue>) {
+    fn incoming_get(&mut self, get: &serde_json::Map<String, SerdeJsonValue>, from: &String) {
         if let Some(path) = get.get("#") {
             if let Some(path) = path.as_str() {
+                {
+                    let topic = path.split("/").next().unwrap_or("");
+                    debug!("{} subscribed to {}", from, topic);
+                    let mut subscribers_by_topic = self.subscribers_by_topic.write().unwrap();
+                    if !subscribers_by_topic.contains_key(topic) {
+                        subscribers_by_topic.insert(topic.to_string(), HashSet::new());
+                    }
+                    subscribers_by_topic.get_mut(topic.clone()).unwrap().insert(from.clone());
+                }
                 if let Some(key) = get.get(".") {
                     // debug!("yes . {} {}", path, key);
                     if let Some(key) = key.as_str() {
@@ -539,7 +602,7 @@ impl Node {
                             node = node.get(node_name); // TODO get only existing nodes in order to not spam our graph with empties
                         }
                         node = node.get(key);
-                        node.send_get_response_if_have(); // TODO don't send response to everyone
+                        node.send_get_response_if_have(from); // TODO don't send response to everyone
                     }
                 } else {
                     let mut split = path.split("/");
@@ -547,7 +610,7 @@ impl Node {
                     for node_name in split.nth(0) {
                         node = node.get(node_name); // TODO get only existing nodes in order to not spam our graph with empties
                     }
-                    node.send_get_response_if_have();
+                    node.send_get_response_if_have(from);
 
                     // debug!("no {}", path);
                 }
@@ -561,7 +624,18 @@ impl Node {
         self.put_local(value.clone(), time);
         if self.network_adapters.read().unwrap().len() > 0 {
             let (m, id) = self.create_put_msg(&value, time);
-            self.outgoing_message(&m, &self.get_peer_id(), id);
+            let recipients;
+            let mut topic = "";
+            if let Some(path) = self.path.get(0) {
+                topic = path;
+            }
+            debug!("getting subscribers for topic {}", topic);
+            if let Some(subscribers) = self.subscribers_by_topic.read().unwrap().get(topic) {
+                recipients = subscribers.clone();
+            } else {
+                recipients = HashSet::new();
+            }
+            self.outgoing_message(&m, &self.get_peer_id(), id, Some(recipients));
         }
     }
 
@@ -580,7 +654,10 @@ impl Node {
      Text("{\":\":\"MacGyver!!!!!\",\"~\":\"6sCGKSjDeUygA+QisLCjGEKCfTjF5phrNVwlU1k95QWeazyjFnZ0Alm4Kvod070aDFz/5pt7i9CHci4ReRF4Ug==\"}")
 
          */
+        *self.updated_at.write().unwrap() = time;
         *self.children.write().unwrap() = BTreeMap::new();
+        *self.value.write().unwrap() = Some(value.clone());
+        debug!("send to sender {:?}", value.clone());
         self.on_sender.send(value.clone()).ok();
         for (parent_id, key) in self.parents.read().unwrap().iter() { // rayon?
             if let Some(parent) = self.store.read().unwrap().get(parent_id) {
@@ -592,14 +669,27 @@ impl Node {
             }
         }
     }
+
+    /// Stop any running adapters
+    pub fn stop(&mut self) {
+        let _ = self.stop_signal_sender.send(());
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{Node, NodeConfig};
     use crate::types::GunValue;
-    use std::time::{Instant};
     use tokio::time::{sleep, Duration};
+    use std::sync::Once;
+
+    static INIT: Once = Once::new();
+
+    fn setup() {
+        INIT.call_once(|| {
+            env_logger::init();
+        });
+    }
 
     // TODO proper test
     // TODO test .map()
@@ -612,7 +702,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn put_and_get() {
+    async fn first_get_then_put() {
+        setup();
+        let mut gun = Node::new();
+        let mut node = gun.get("Anborn");
+        let mut sub = node.on();
+        node.put("Ancalagon".into());
+        if let GunValue::Text(str) = sub.recv().await.unwrap() {
+            assert_eq!(&str, "Ancalagon");
+        }
+    }
+
+    #[tokio::test]
+    async fn first_put_then_get() {
+        setup();
         let mut gun = Node::new();
         let mut node = gun.get("Finglas");
         node.put("Fingolfin".into());
@@ -622,89 +725,102 @@ mod tests {
         }
     }
 
-    /*
     #[tokio::test]
     async fn connect_and_sync_over_websocket() {
-        let mut node1 = Node::new();
+        let mut node1 = Node::new_with_config(NodeConfig {
+            websocket_server: true,
+            multicast: false,
+            stats: false,
+            ..NodeConfig::default()
+        });
         let mut node2 = Node::new_with_config(NodeConfig {
             websocket_server: false,
             multicast: false,
+            stats: false,
             outgoing_websocket_peers: vec!["ws://localhost:4944/gun".to_string()],
             ..NodeConfig::default()
         });
-        println!("asdf1");
         async fn tst(mut node1: Node, mut node2: Node) {
             sleep(Duration::from_millis(1000)).await;
-            let mut sub1 = node1.get("test1").on();
+            node1.get("node1").put("Amandil".into());
+            node2.get("node2").put("Beregond".into());
+            let mut sub1 = node1.get("node2").on();
+            let mut sub2 = node2.get("node1").on();
             match sub1.recv().await.unwrap() {
                 GunValue::Text(str) => {
-                    println!("test1");
                     assert_eq!(&str, "Beregond");
                 },
                 _ => panic!("Expected GunValue::Text")
             }
-            let mut sub2 = node2.get("test2").on();
             match sub2.recv().await.unwrap() {
                 GunValue::Text(str) => {
-                    println!("test2");
                     assert_eq!(&str, "Amandil");
                 },
                 _ => panic!("Expected GunValue::Text")
             }
-            println!("asdf2");
-            node1.get("test2").put("Amandil".into());
-            node2.get("test1").put("Beregond".into());
+            node1.stop();
+            node2.stop();
+        }
+        let node1_clone = node1.clone();
+        let node2_clone = node2.clone();
+        tokio::join!(node1.start_adapters(), node2.start_adapters(), tst(node1_clone, node2_clone));
+    }
+
+    /*
+    #[tokio::test]
+    async fn sync_over_multicast() {
+        let mut node1 = Node::new_with_config(NodeConfig {
+            websocket_server: false,
+            multicast: true,
+            stats: false,
+            ..NodeConfig::default()
+        });
+        let mut node2 = Node::new_with_config(NodeConfig {
+            websocket_server: false,
+            multicast: true,
+            stats: false,
+            ..NodeConfig::default()
+        });
+        async fn tst(mut node1: Node, mut node2: Node) {
+            sleep(Duration::from_millis(1000)).await;
+            node1.get("node1a").put("Gorlim".into());
+            node2.get("node2a").put("Smaug".into());
+            let mut sub1 = node1.get("node2a").on();
+            let mut sub2 = node2.get("node1a").on();
+            match sub1.recv().await.unwrap() {
+                GunValue::Text(str) => {
+                    assert_eq!(&str, "Smaug");
+                },
+                _ => panic!("Expected GunValue::Text")
+            }
+            match sub2.recv().await.unwrap() {
+                GunValue::Text(str) => {
+                    assert_eq!(&str, "Gorlim");
+                },
+                _ => panic!("Expected GunValue::Text")
+            }
+            node1.stop();
+            node2.stop();
         }
         let node1_clone = node1.clone();
         let node2_clone = node2.clone();
         tokio::join!(node1.start_adapters(), node2.start_adapters(), tst(node1_clone, node2_clone));
     }*/
 
-    #[tokio::test]
-    async fn multicast_sync() {
-        let mut node1 = Node::new();
-        let mut node2 = Node::new_with_config(NodeConfig {
-            websocket_server: false,
-            ..NodeConfig::default()
-        });
-        println!("asdf1");
-        async fn tst(mut node1: Node, mut node2: Node) {
-            sleep(Duration::from_millis(1000)).await;
-            let mut sub1 = node1.get("test1").on();
-            match sub1.recv().await.unwrap() {
-                GunValue::Text(str) => {
-                    println!("test1");
-                    assert_eq!(&str, "Beregond");
-                },
-                _ => panic!("Expected GunValue::Text")
-            }
-            let mut sub2 = node2.get("test2").on();
-            match sub2.recv().await.unwrap() {
-                GunValue::Text(str) => {
-                    println!("test2");
-                    assert_eq!(&str, "Amandil");
-                },
-                _ => panic!("Expected GunValue::Text")
-            }
-            println!("asdf2");
-            node1.get("test2").put("Amandil".into());
-            node2.get("test1").put("Beregond".into());
-        }
-        let node1_clone = node1.clone();
-        let node2_clone = node2.clone();
-        tokio::join!(node1.start_adapters(), node2.start_adapters(), tst(node1_clone, node2_clone));
-    }
+    /*
 
     #[test]
     fn save_and_retrieve_user_space_data() {
+        setup();
         let mut node = Node::new();
     }
 
-    #[test]
+    #[test] // use #[bench] when it's stable
     fn write_benchmark() { // to see the result with optimized binary, run: cargo test --release -- --nocapture
+        setup();
         let start = Instant::now();
         let mut gun = Node::new();
-        let n = 10000;
+        let n = 1000;
         for i in 0..n {
             gun.get(&format!("a{:?}", i)).get("Pelendur").put(format!("{:?}b", i).into());
         }
@@ -713,4 +829,5 @@ mod tests {
         println!("Wrote {} entries in {:?} ({} / second)", n, duration, per_second);
         // compare with gun.js: var i = 100000, j = i, s = +new Date; while(--i){ gun.get('a'+i).get('lol').put(i+'yo') } console.log(j / ((+new Date - s) / 1000), 'ops/sec');
     }
+     */
 }

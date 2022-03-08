@@ -112,7 +112,7 @@ async fn user_connected(mut node: Node, ws: WebSocketStream<tokio_tungstenite::M
         };
         match msg.to_text() {
             Ok(s) => {
-                if let Err(e) = incoming_message_sender.try_send(GunMessage { msg: s.to_string(), from: my_id.clone() }) {
+                if let Err(e) = incoming_message_sender.try_send(GunMessage { msg: s.to_string(), from: my_id.clone(), to: None }) {
                     error!("failed to send incoming message to node: {}", e);
                 }
             },

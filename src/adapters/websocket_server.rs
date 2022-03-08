@@ -1,4 +1,4 @@
-use actix::{Actor, StreamHandler, AsyncContext, Handler}; // would much rather use warp, but its dependency "hyper" has a memory leak https://github.com/hyperium/hyper/issues/1790
+use actix::{Actor, StreamHandler, AsyncContext, Handler, Addr}; // would much rather use warp, but its dependency "hyper" has a memory leak https://github.com/hyperium/hyper/issues/1790
 use actix_web::{web, App, Error, HttpRequest, HttpResponse, HttpServer, middleware};
 use actix_web_actors::ws;
 use actix_files as fs;
@@ -9,12 +9,13 @@ use actix_http::ws::{Codec, Message, ProtocolError};
 use bytes::Bytes;
 use futures::Stream;
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use async_trait::async_trait;
 use crate::types::{NetworkAdapter, GunMessage};
 use crate::Node;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc};
+use tokio::sync::RwLock;
 use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
 
 use log::{debug, error};
@@ -41,7 +42,7 @@ struct MyWs {
 }
 
 struct OutgoingMessage {
-    gun_message: GunMessage
+    gun_message: String
 }
 
 impl actix::Message for OutgoingMessage {
@@ -52,38 +53,29 @@ impl Actor for MyWs {
     type Context = ws::WebsocketContext<Self>;
 
     fn started(&mut self, ctx: &mut ws::WebsocketContext<Self>) {
-        let mut rx = self.node.get_outgoing_msg_receiver();
+        // TODO say hi [{"dam":"hi","#":"iED196J6w"}]
         let id = self.id.clone();
-        self.users.write().unwrap().insert(id.clone());
         let addr = ctx.address();
+        let users = self.users.clone();
+        let mut node = self.node.clone();
         tokio::task::spawn(async move {
-            loop {
-                if let Ok(message) = rx.recv().await {
-                    if message.from == id {
-                        continue;
-                    }
-                    let res = addr.send(OutgoingMessage { gun_message: message }).await; // TODO break on Closed error only
-                    if let Err(e) = res {
-                        if let actix::prelude::MailboxError::Closed = e {
-                            break;
-                        }
-                    }
-                }
-            }
+            let mut users = users.write().await;
+            users.insert(id.clone(), addr);
+            let peer_id = node.get_peer_id();
+            node.get("node_stats").get(&peer_id).get("websocket_server_connections").put(users.len().to_string().into());
         });
-        self.update_stats();
     }
 
     fn stopped(&mut self, _ctx: &mut ws::WebsocketContext<Self>) {
-        self.users.write().unwrap().remove(&self.id);
-        self.update_stats();
-    }
-}
-
-impl MyWs {
-    fn update_stats(&mut self) {
-        let peer_id = self.node.get_peer_id();
-        self.node.get("node_stats").get(&peer_id).get("websocket_server_connections").put(self.users.read().unwrap().len().to_string().into());
+        let users = self.users.clone();
+        let mut node = self.node.clone();
+        let id = self.id.clone();
+        tokio::task::spawn(async move {
+            let mut users = users.write().await;
+            users.remove(&id);
+            let peer_id = node.get_peer_id();
+            node.get("node_stats").get(&peer_id).get("websocket_server_connections").put(users.len().to_string().into());
+        });
     }
 }
 
@@ -91,7 +83,7 @@ impl Handler<OutgoingMessage> for MyWs {
     type Result = ();
 
     fn handle(&mut self, msg: OutgoingMessage, ctx: &mut Self::Context) {
-        let text = format!("{}", msg.gun_message.msg);
+        let text = format!("{}", msg.gun_message);
         debug!("out {}", text);
         ctx.text(text);
     }
@@ -108,7 +100,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for MyWs {
             Ok(ws::Message::Ping(msg)) => ctx.pong(&msg),
             Ok(ws::Message::Text(text)) => {
                 debug!("in: {}", text);
-                if let Err(e) = self.incoming_msg_sender.try_send(GunMessage { msg: text.to_string(), from: self.id.clone() }) {
+                if let Err(e) = self.incoming_msg_sender.try_send(GunMessage { msg: text.to_string(), from: self.id.clone(), to: None }) {
                     error!("error sending incoming message to node: {}", e);
                 }
             },
@@ -121,7 +113,7 @@ struct AppState {
     peer_id: String,
 }
 
-type Users = Arc<RwLock<HashSet<String>>>;
+type Users = Arc<RwLock<HashMap<String, Addr<MyWs>>>>;
 
 pub struct WebsocketServer {
     node: Node,
@@ -150,9 +142,10 @@ impl WebsocketServer {
         let url = format!("0.0.0.0:{}", config.websocket_server_port);
 
         let node_clone = node.clone();
+        let users_clone = users.clone();
         let server = HttpServer::new(move || {
             let node = node_clone.clone();
-            let users = users.clone();
+            let users = users_clone.clone();
             let peer_id = node.get_peer_id();
             App::new()
                 .data(AppState { peer_id })
@@ -167,6 +160,8 @@ impl WebsocketServer {
                 .service(fs::Files::new("/", "assets/iris").index_file("index.html"))
         });
 
+        Self::send_outgoing_msgs(&node, &users);
+
         if let Some(cert_path) = &config.cert_path {
             if let Some(key_path) = &config.key_path {
                 let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls()).unwrap();
@@ -179,6 +174,39 @@ impl WebsocketServer {
         }
 
         server.bind(url).unwrap().run()
+    }
+
+    fn send_outgoing_msgs(node: &Node, users: &Users) {
+        let mut rx = node.get_outgoing_msg_receiver();
+        let users = users.clone();
+        tokio::task::spawn(async move {
+            loop {
+                if let Ok(message) = rx.recv().await {
+                    let users = users.read().await;
+                    if let Some(recipients) = message.to.clone() { // ELSE SEND TO EVERYONE
+                        for recipient in recipients {
+                            let message = message.clone();
+                            if let Some(addr) = users.get(&recipient) {
+                                let res = addr.send(OutgoingMessage { gun_message: message.msg }).await; // TODO break on Closed error only
+                                if let Err(e) = res {
+                                    error!("error sending outgoing msg to websocket actor: {}", e);
+                                }
+                            }
+                        }
+                    } else {
+                        for recipient in users.keys() { // TODO cleanup, basically the same code as above
+                            let message = message.clone();
+                            if let Some(addr) = users.get(recipient) {
+                                let res = addr.send(OutgoingMessage { gun_message: message.msg }).await; // TODO break on Closed error only
+                                if let Err(e) = res {
+                                    error!("error sending outgoing msg to websocket actor: {}", e);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
     }
 
     async fn peer_id(data: web::Data<AppState>) -> String {
