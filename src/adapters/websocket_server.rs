@@ -42,7 +42,7 @@ struct MyWs {
 }
 
 struct OutgoingMessage {
-    gun_message: GunMessage
+    gun_message: String
 }
 
 impl actix::Message for OutgoingMessage {
@@ -83,7 +83,7 @@ impl Handler<OutgoingMessage> for MyWs {
     type Result = ();
 
     fn handle(&mut self, msg: OutgoingMessage, ctx: &mut Self::Context) {
-        let text = format!("{}", msg.gun_message.msg);
+        let text = format!("{}", msg.gun_message);
         debug!("out {}", text);
         ctx.text(text);
     }
@@ -187,7 +187,7 @@ impl WebsocketServer {
                         for recipient in recipients {
                             let message = message.clone();
                             if let Some(addr) = users.get(&recipient) {
-                                let res = addr.send(OutgoingMessage { gun_message: message }).await; // TODO break on Closed error only
+                                let res = addr.send(OutgoingMessage { gun_message: message.msg }).await; // TODO break on Closed error only
                                 if let Err(e) = res {
                                     error!("error sending outgoing msg to websocket actor: {}", e);
                                 }
@@ -197,7 +197,7 @@ impl WebsocketServer {
                         for recipient in users.keys() { // TODO cleanup, basically the same code as above
                             let message = message.clone();
                             if let Some(addr) = users.get(recipient) {
-                                let res = addr.send(OutgoingMessage { gun_message: message }).await; // TODO break on Closed error only
+                                let res = addr.send(OutgoingMessage { gun_message: message.msg }).await; // TODO break on Closed error only
                                 if let Err(e) = res {
                                     error!("error sending outgoing msg to websocket actor: {}", e);
                                 }
