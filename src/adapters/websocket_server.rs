@@ -18,7 +18,7 @@ use std::sync::{Arc};
 use tokio::sync::RwLock;
 use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
 
-use log::{debug, error, info};
+use log::{debug, error};
 
 static NEXT_USER_ID: AtomicUsize = AtomicUsize::new(1);
 
