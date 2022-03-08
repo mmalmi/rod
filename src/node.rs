@@ -511,6 +511,7 @@ impl Node {
                 }
             }
         }
+        recipients.remove(from);
         self.outgoing_message(&msg_str, from, msg_id.clone(), Some(recipients));
     }
 
@@ -679,10 +680,8 @@ impl Node {
 mod tests {
     use crate::{Node, NodeConfig};
     use crate::types::GunValue;
-    use std::time::{Instant};
     use tokio::time::{sleep, Duration};
     use std::sync::Once;
-    use log::debug;
 
     static INIT: Once = Once::new();
 
