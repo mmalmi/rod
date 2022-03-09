@@ -76,7 +76,7 @@ async fn user_connected(mut node: Node, ws: WebSocketStream<tokio_tungstenite::M
     let mut rx = node.get_outgoing_msg_receiver();
 
     let my_id_clone = my_id.clone();
-    tokio::task::spawn(async move {
+    tokio::task::spawn(async move { // TODO as in websocket_server, there should be only 1 task that relays to the addressed message recipient
         loop {
             if let Ok(message) = rx.recv().await {
                 if message.from == my_id_clone {

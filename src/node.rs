@@ -3,7 +3,7 @@ use std::time::{SystemTime, Instant};
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
-    RwLock
+    RwLock // TODO: could we use async RwLock? Would require some changes to the chaining api (.get()).
 };
 use serde_json::{json, Value as SerdeJsonValue};
 use crate::types::*;
@@ -17,8 +17,6 @@ use tokio::sync::{broadcast, mpsc};
 use sysinfo::{ProcessorExt, System, SystemExt};
 
 static SEEN_MSGS_MAX_SIZE: usize = 10000;
-static COUNTER: AtomicUsize = AtomicUsize::new(1);
-fn get_id() -> usize { COUNTER.fetch_add(1, Ordering::Relaxed) }
 
 // TODO extract networking to struct Mesh
 // TODO proper automatic tests
@@ -78,7 +76,7 @@ impl Default for NodeConfig {
 /// Disk storage adapter to be done.
 #[derive(Clone)]
 pub struct Node {
-    id: usize,
+    id: String,
     pub config: Arc<RwLock<NodeConfig>>,
     graph_size_bytes: Arc<RwLock<usize>>,
     updated_at: Arc<RwLock<f64>>, // TODO: Option<f64>?
@@ -135,7 +133,7 @@ impl Node {
         let stop_signal_channel = broadcast::channel::<()>(1);
         let outgoing_channel = broadcast::channel::<GunMessage>(config.rust_channel_size);
         let node = Self {
-            id: 0,
+            id: "".to_string(),
             config: Arc::new(RwLock::new(config.clone())),
             graph_size_bytes: Arc::new(RwLock::new(0)),
             updated_at: Arc::new(RwLock::new(0.0)),
@@ -245,19 +243,19 @@ impl Node {
         futures::future::select(joined, Box::pin(self.stop_signal_sender.subscribe().recv())).await;
     }
 
-    fn new_child(&self, key: String) -> usize {
+    fn new_child(&self, key: String) -> String {
         assert!(key.len() > 0, "Key length must be greater than zero");
         debug!("new child {} {}", self.path.join("/"), key);
         let mut parents = HashSet::new();
-        parents.insert((self.id, key.clone()));
+        parents.insert((self.id.clone(), key.clone()));
         let mut path = self.path.clone();
         if self.key.len() > 0 {
             path.push(self.key.clone());
         }
         let config = self.config.read().unwrap();
-        let id = get_id();
+        let id = random_string(16);
         let node = Self {
-            id,
+            id: id.clone(),
             config: self.config.clone(),
             graph_size_bytes: self.graph_size_bytes.clone(),
             updated_at: Arc::new(RwLock::new(0.0)),
@@ -281,8 +279,8 @@ impl Node {
             outgoing_msg_receiver: self.outgoing_msg_receiver.clone(),
             incoming_msg_sender: self.incoming_msg_sender.clone()
         };
-        self.store.write().unwrap().insert(id, node);
-        self.children.write().unwrap().insert(key, id);
+        self.store.write().unwrap().insert(id.clone(), node);
+        self.children.write().unwrap().insert(key, id.clone());
         id
     }
 
@@ -319,7 +317,7 @@ impl Node {
     /// Subscribe to all children of this Node.
     pub fn map(&self) -> broadcast::Receiver<(String, GunValue)> {
         for (key, child_id) in self.children.read().unwrap().iter() { // TODO can be faster with rayon multithreading?
-            if let Some(child) = self.store.read().unwrap().get(&child_id) {
+            if let Some(child) = self.store.read().unwrap().get(child_id) {
                 if let Some(child_val) = child.clone().get_local_value_once() {
                     self.map_sender.send((key.to_string(), child_val)).ok(); // TODO first return Receiver and then do this in another thread?
                 }
@@ -329,9 +327,9 @@ impl Node {
         // TODO: send get messages to adapters!!
     }
 
-    fn get_child_id(&mut self, key: String) -> usize {
+    fn get_child_id(&mut self, key: String) -> String {
         let existing_id = match self.children.read().unwrap().get(&key) {
-            Some(node_id) => Some(*node_id),
+            Some(node_id) => Some(node_id.clone()),
             _ => None
         };
         match existing_id {
@@ -370,14 +368,15 @@ impl Node {
         let key = &self.key.clone();
         let mut json = json!({
             "put": {
-                full_path: {
+                full_path: { // soul, not path
                     "_": {
-                        "#": full_path,
+                        "#": full_path, // soul, not path
                         ">": {
                             key: updated_at
                         }
                     },
-                    key: value
+                    key: value // TODO: in case of Link / Children, this should be the Soul
+                    // https://gun.eco/docs/FAQ#what-is-a-soul-what-does-a-node-look-like
                 }
             },
             "#": msg_id,
@@ -389,13 +388,13 @@ impl Node {
             let path = self.path[..i].join("/");
             let path_obj = json!({
                 "_": {
-                    "#": path,
+                    "#": path, // soul, not path
                     ">": {
                         node_name: updated_at
                     }
                 },
                 node_name: {
-                    "#": self.path[..(i+1)].join("/")
+                    "#": self.path[..(i+1)].join("/") // this should be the soul? sea signed
                 }
             });
             puts[path] = path_obj;
@@ -515,10 +514,10 @@ impl Node {
         self.outgoing_message(&msg_str, from, msg_id.clone(), Some(recipients));
     }
 
-    fn _children_to_gun_value(&self, children: &BTreeMap<String, usize>) -> GunValue {
+    fn _children_to_gun_value(&self, children: &BTreeMap<String, String>) -> GunValue {
         let mut map = BTreeMap::<String, GunValue>::new();
         for (key, child_id) in children.iter() { // TODO faster with rayon?
-            let child_value: Option<GunValue> = match self.store.read().unwrap().get(&child_id) {
+            let child_value: Option<GunValue> = match self.store.read().unwrap().get(child_id) {
                 Some(child) => match &*(child.value.read().unwrap()) {
                     Some(value) => Some(value.clone()),
                     _ => None
@@ -528,7 +527,7 @@ impl Node {
             if let Some(value) = child_value {
                 map.insert(key.clone(), value);
             } else { // return child Node object
-                map.insert(key.clone(), GunValue::Link(*child_id));
+                map.insert(key.clone(), GunValue::Link(child_id.clone()));
             }
         }
         GunValue::Children(map)
@@ -644,16 +643,7 @@ impl Node {
         // root.get(soul).get(key).put(jsvalue)
         // TODO handle javascript Object values
         // TODO: if "children" is replaced with "value", remove backreference from linked objects
-        /* TODO: this fails for user-space puts:
 
-        [2022-01-18T13:41:36Z DEBUG gun::node] in ID 0iv38ttemfzo:
-    {"put":{"~dHaU4idIv7wpnP_NjOvA7EV75eYUZf64FvTetITqo3k.zCQ7b4Xhry5DZdry0arNm8xu6I0gUcpnYQB1wyIAOD4/profile":{"_":{"#":"~dHaU4idIv7wpnP_NjOvA7EV75eYUZf64FvTetITqo3k.zCQ7b4Xhry5DZdry0arNm8xu6I0gUcpnYQB1wyIAOD4/profile",">":{"name":1642513296695}},"name":"{\":\":\"MacGyver!!!!!\",\"~\":\"6sCGKSjDeUygA+Q
-
-[2022-01-18T13:41:36Z DEBUG gun::node] put_local
-     ~dHaU4idIv7wpnP_NjOvA7EV75eYUZf64FvTetITqo3k.zCQ7b4Xhry5DZdry0arNm8xu6I0gUcpnYQB1wyIAOD4/profile/profile
-     Text("{\":\":\"MacGyver!!!!!\",\"~\":\"6sCGKSjDeUygA+QisLCjGEKCfTjF5phrNVwlU1k95QWeazyjFnZ0Alm4Kvod070aDFz/5pt7i9CHci4ReRF4Ug==\"}")
-
-         */
         *self.updated_at.write().unwrap() = time;
         *self.children.write().unwrap() = BTreeMap::new();
         *self.value.write().unwrap() = Some(value.clone());
@@ -698,7 +688,7 @@ mod tests {
     fn it_doesnt_error() {
         let mut gun = Node::new();
         let _ = gun.get("Meneldor"); // Pick Tolkien names from https://www.behindthename.com/namesakes/list/tolkien/alpha
-        assert_eq!(gun.id, 0);
+        assert!(gun.id.len() == 0);
     }
 
     #[tokio::test]
