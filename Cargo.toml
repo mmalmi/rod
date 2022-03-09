@@ -27,10 +27,10 @@ url = "2.2.2"
 multicast-socket = "0.2.2"
 sysinfo = "0.23.5"
 actix = "0.13.0"
-actix-web = { version = "4.0.0-beta.19", features = ["openssl"] }
+actix-web = { version = "4.0.1", features = ["openssl"] }
 actix-web-actors = "4.1.0"
-actix-files = "0.6.0-beta.13"
-actix-http = "3.0.0-beta.18"
+actix-files = "0.6.0"
+actix-http = "3.0.3"
 bytes = "1.1.0"
 openssl = { version = "0.10", features = ["v110"] }
 size_format = "1.0.2"
