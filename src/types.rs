@@ -12,7 +12,7 @@ pub enum GunValue {
     Bit(bool),
     Number(f64),
     Text(String),
-    Link(usize),
+    Link(String),
     Children(BTreeMap<String, GunValue>),
 }
 
@@ -166,7 +166,7 @@ impl<K: Clone + std::hash::Hash + std::cmp::Eq, V> BoundedHashMap<K, V> {
 // Arc<RwLock<NodeInner>> pattern?
 // The code is not pretty with all these Arc-RwLock read/write().unwraps().
 pub(crate) type Value = Arc<RwLock<Option<GunValue>>>;
-pub(crate) type Children = Arc<RwLock<BTreeMap<String, usize>>>;
-pub(crate) type Parents = Arc<RwLock<HashSet<(usize, String)>>>;
-pub(crate) type SharedNodeStore = Arc<RwLock<HashMap<usize, Node>>>;
+pub(crate) type Children = Arc<RwLock<BTreeMap<String, String>>>;
+pub(crate) type Parents = Arc<RwLock<HashSet<(String, String)>>>;
+pub(crate) type SharedNodeStore = Arc<RwLock<HashMap<String, Node>>>;
 pub(crate) type NetworkAdapters = Arc<RwLock<HashMap<String, Box<dyn NetworkAdapter + Send + Sync>>>>;
