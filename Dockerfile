@@ -1,8 +1,13 @@
 FROM rust:latest
 
 WORKDIR /usr/src/gun-rs
-COPY . .
 
-RUN cargo build
+COPY Cargo.toml .
+COPY Cargo.lock .
+COPY assets assets
+COPY src src
 
-CMD ["./target/debug/gundb", "start"]
+
+RUN cargo build --release
+
+CMD ["./target/release/gundb", "start"]
