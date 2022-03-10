@@ -253,7 +253,9 @@ impl Node {
             path.push(self.key.clone());
         }
         let config = self.config.read().unwrap();
-        let id = random_string(16);
+        let mut path_clone = path.clone();
+        path_clone.push(key.clone());
+        let id = path_clone.join("/").to_string(); // random_string(16);
         let node = Self {
             id: id.clone(),
             config: self.config.clone(),
