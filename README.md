@@ -13,7 +13,7 @@ Live stats: https://gun-rs.iris.to/stats
 ## Use
 Install [Rust](https://doc.rust-lang.org/book/ch01-01-installation.html) first.
 
-### Gun server
+### Gun relay
 ```
 cargo install gundb
 gundb start
