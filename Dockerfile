@@ -7,7 +7,6 @@ COPY Cargo.lock .
 COPY assets assets
 COPY src src
 
-
 RUN cargo build --release
 
 CMD ["./target/release/gundb", "start"]
