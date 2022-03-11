@@ -87,7 +87,7 @@ pub struct Node {
     parents: Parents,
     on_sender: broadcast::Sender<GunValue>,
     map_sender: broadcast::Sender<(String, GunValue)>,
-    store: SharedNodeStore, // experimental: replace this with redis?
+    store: SharedNodeStore, // If we don't want to store everything in memory, this needs to use something like Redis or LevelDB. Or have a FileSystem adapter for persistence and evict the least important stuff from memory when it's full.
     network_adapters: NetworkAdapters,
     seen_messages: Arc<RwLock<BoundedHashSet>>,
     seen_get_messages: Arc<RwLock<BoundedHashMap<String, SeenGetMessage>>>,

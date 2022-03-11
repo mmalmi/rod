@@ -1,4 +1,5 @@
-use actix::{Actor, StreamHandler, AsyncContext, Handler, Addr}; // would much rather use warp, but its dependency "hyper" has a memory leak https://github.com/hyperium/hyper/issues/1790
+use actix::{Actor, StreamHandler, AsyncContext, Handler, Addr}; use actix_web::web::Data;
+// would much rather use warp, but its dependency "hyper" has a memory leak https://github.com/hyperium/hyper/issues/1790
 use actix_web::{web, App, Error, HttpRequest, HttpResponse, HttpServer, middleware};
 use actix_web_actors::ws;
 use actix_files as fs;
@@ -132,6 +133,7 @@ impl NetworkAdapter for WebsocketServer {
     async fn start(&self) {
         let node = self.node.clone();
         let users = self.users.clone();
+        // TODO: start thread that updates connection counts once per second (if changed)
         Self::actix_start(node, users).await.unwrap();
     }
 }
@@ -148,7 +150,7 @@ impl WebsocketServer {
             let users = users_clone.clone();
             let peer_id = node.get_peer_id();
             App::new()
-                .data(AppState { peer_id })
+                .app_data(Data::new(AppState { peer_id }))
                 .wrap(middleware::Logger::default())
                 .route("/peer_id", web::get().to(Self::peer_id))
                 .service(fs::Files::new("/stats", "assets/stats").index_file("index.html"))
