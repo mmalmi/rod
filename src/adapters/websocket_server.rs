@@ -133,6 +133,7 @@ impl NetworkAdapter for WebsocketServer {
     async fn start(&self) {
         let node = self.node.clone();
         let users = self.users.clone();
+        // TODO: start thread that updates connection counts once per second (if changed)
         Self::actix_start(node, users).await.unwrap();
     }
 }
