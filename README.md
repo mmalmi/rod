@@ -2,9 +2,9 @@
 
 Pure Rust implementation of [Gun.js](https://github.com/amark/gun). For a wasm version, check out [gun-rs-wasm](https://github.com/mmalmi/gun-rs-wasm).
 
-Deployed at https://cosmic.rocks (serves [iris-messenger](https://github.com/irislib/iris-messenger) at the root)
+Deployed at https://gun-rs.iris.to (serves [iris-messenger](https://github.com/irislib/iris-messenger) at the root)
 
-Live stats: https://cosmic.rocks/stats
+Live stats: https://gun-rs.iris.to/stats
 
 ## Why?
 - Rust can be compiled into high-performing native binaries on many platforms, including embedded systems.
