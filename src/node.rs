@@ -28,7 +28,7 @@ static SEEN_MSGS_MAX_SIZE: usize = 10000;
 
 // TODO: separate configs for each adapter?
 /// [Node] configuration object.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct NodeConfig {
     /// [tokio::sync::broadcast] channel size for outgoing network messages. Smaller value may slightly reduce memory usage, but lose outgoing messages when an adapter is lagging. Default: 10.
     pub rust_channel_size: usize,
