@@ -5,6 +5,7 @@ use std::sync::{
     Arc,
     RwLock // TODO: could we use async RwLock? Would require some changes to the chaining api (.get()).
 };
+use serde::{Serialize, Deserialize};
 use serde_json::{json, Value as SerdeJsonValue};
 use crate::types::*;
 use crate::utils::random_string;
@@ -74,7 +75,7 @@ impl Default for NodeConfig {
 ///
 /// Supports graph synchronization over [NetworkAdapter]s (currently websocket and multicast).
 /// Disk storage adapter to be done.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Node {
     id: String,
     pub config: Arc<RwLock<NodeConfig>>,
