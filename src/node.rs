@@ -133,6 +133,7 @@ impl Node {
     pub fn new_with_config(config: NodeConfig) -> Self {
         let stop_signal_channel = broadcast::channel::<()>(1);
         let outgoing_channel = broadcast::channel::<GunMessage>(config.rust_channel_size);
+        let db: sled::Db = sled::open("./db.sled").unwrap_or_else(|_| panic!("Could not open database: {}", "./db.sled"));
         let node = Self {
             id: "".to_string(),
             config: Arc::new(RwLock::new(config.clone())),
@@ -145,7 +146,7 @@ impl Node {
             parents: Parents::default(),
             on_sender: broadcast::channel::<GunValue>(config.rust_channel_size).0,
             map_sender: broadcast::channel::<(String, GunValue)>(config.rust_channel_size).0,
-            store: SharedNodeStore::default(),
+            store: SharedNodeStore::new(db),
             network_adapters: NetworkAdapters::default(),
             seen_messages: Arc::new(RwLock::new(BoundedHashSet::new(SEEN_MSGS_MAX_SIZE))),
             seen_get_messages: Arc::new(RwLock::new(BoundedHashMap::new(SEEN_MSGS_MAX_SIZE))),
