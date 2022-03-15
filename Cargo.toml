@@ -9,7 +9,7 @@ license = "MIT"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-serde = { version =  "1.0", features = ["derive"] }
+serde = { version =  "1.0", features = ["derive", "rc"] }
 serde_json = "1.0.64"
 rand = "^0.8"
 clap = "2.33.3"
@@ -36,3 +36,4 @@ openssl = { version = "0.10", features = ["v110"] }
 size_format = "1.0.2"
 ctrlc = "3.2.1"
 tokio-test = "0.4.2"
+sled = "0.34.7"

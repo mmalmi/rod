@@ -168,5 +168,5 @@ impl<K: Clone + std::hash::Hash + std::cmp::Eq, V> BoundedHashMap<K, V> {
 pub(crate) type Value = Arc<RwLock<Option<GunValue>>>;
 pub(crate) type Children = Arc<RwLock<BTreeMap<String, String>>>;
 pub(crate) type Parents = Arc<RwLock<HashSet<(String, String)>>>;
-pub(crate) type SharedNodeStore = Arc<RwLock<HashMap<String, Node>>>;
+pub(crate) type SharedNodeStore = Arc<sled::Db>;
 pub(crate) type NetworkAdapters = Arc<RwLock<HashMap<String, Box<dyn NetworkAdapter + Send + Sync>>>>;
