@@ -16,6 +16,12 @@ pub enum GunValue {
     Children(BTreeMap<String, GunValue>),
 }
 
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct NodeData {
+    pub value: GunValue,
+    pub updated_at: f64
+}
+
 impl GunValue {
     pub fn size(&self) -> usize {
         match self {
@@ -165,8 +171,4 @@ impl<K: Clone + std::hash::Hash + std::cmp::Eq, V> BoundedHashMap<K, V> {
 // But can we somehow wrap Node itself into Arc<RwLock<>> instead of wrapping all its properties?
 // Arc<RwLock<NodeInner>> pattern?
 // The code is not pretty with all these Arc-RwLock read/write().unwraps().
-pub(crate) type Value = Arc<RwLock<Option<GunValue>>>;
-pub(crate) type Children = Arc<RwLock<BTreeMap<String, String>>>;
-pub(crate) type Parents = Arc<RwLock<HashSet<(String, String)>>>;
-pub(crate) type SharedNodeStore = Arc<RwLock<HashMap<String, Node>>>;
 pub(crate) type NetworkAdapters = Arc<RwLock<HashMap<String, Box<dyn NetworkAdapter + Send + Sync>>>>;

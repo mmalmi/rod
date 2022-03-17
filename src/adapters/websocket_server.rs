@@ -159,13 +159,15 @@ impl NetworkAdapter for WebsocketServer {
         let mut node_clone = node.clone();
         let users_clone = users.clone();
 
-        tokio::task::spawn(async move {
-            loop {
-                let users = users_clone.read().await;
-                node_clone.get("node_stats").get(&peer_id).get("websocket_server_connections").put(users.len().to_string().into());
-                sleep(tokio::time::Duration::from_millis(1000)).await;
-            }
-        });
+        if node.config.read().unwrap().stats {
+            tokio::task::spawn(async move {
+                loop {
+                    let users = users_clone.read().await;
+                    node_clone.get("node_stats").get(&peer_id).get("websocket_server_connections").put(users.len().to_string().into());
+                    sleep(tokio::time::Duration::from_millis(1000)).await;
+                }
+            });
+        }
 
         Self::actix_start(node, users).await.unwrap();
     }
