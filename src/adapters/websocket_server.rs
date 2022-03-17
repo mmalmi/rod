@@ -1,4 +1,4 @@
-use actix::{Actor, StreamHandler, AsyncContext, Handler, Addr}; use actix_web::web::Data;
+use actix::{Actor, Running, StreamHandler, AsyncContext, Handler, Addr}; use actix_web::web::Data;
 // would much rather use warp, but its dependency "hyper" has a memory leak https://github.com/hyperium/hyper/issues/1790
 use actix_web::{web, App, Error, HttpRequest, HttpResponse, HttpServer, middleware};
 use actix_web_actors::ws;
@@ -83,13 +83,14 @@ impl Actor for MyWs {
         });
     }
 
-    fn stopped(&mut self, _ctx: &mut ws::WebsocketContext<Self>) {
+    fn stopping(&mut self, _ctx: &mut ws::WebsocketContext<Self>) -> Running {
         let users = self.users.clone();
         let id = self.id.clone();
         tokio::task::spawn(async move {
             let mut users = users.write().await;
             users.remove(&id);
         });
+        Running::Stop
     }
 }
 
@@ -113,11 +114,18 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for MyWs {
         match msg {
             Ok(ws::Message::Ping(msg)) => ctx.pong(&msg), // TODO: send pings, and close connection if they don't pong on time?
             Ok(ws::Message::Pong(_)) => self.heartbeat = Instant::now(),
+            Ok(ws::Message::Close(reason)) => {
+                ctx.close(reason);
+            },
             Ok(ws::Message::Text(text)) => {
                 debug!("in: {}", text);
                 if let Err(e) = self.incoming_msg_sender.try_send(GunMessage { msg: text.to_string(), from: self.id.clone(), to: None }) {
                     error!("error sending incoming message to node: {}", e);
                 }
+            },
+            Err(e) => {
+                error!("error receiving from websocket: {}", e);
+                ctx.close(None);
             },
             _ => debug!("received non-text msg"),
         }
