@@ -25,8 +25,8 @@ use tokio::time::sleep;
 use log::{debug, error};
 
 static NEXT_USER_ID: AtomicUsize = AtomicUsize::new(1);
-const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
-const CLIENT_TIMEOUT: Duration = Duration::from_secs(30);
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
+const CLIENT_TIMEOUT: Duration = Duration::from_secs(60);
 
 // this is needed to set a higher websocket frame size in a custom Codec
 fn start_with_codec<A, S>(actor: A, req: &HttpRequest, stream: S, codec: Codec) -> Result<HttpResponse, Error>
