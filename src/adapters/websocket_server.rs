@@ -15,13 +15,16 @@ use async_trait::async_trait;
 use crate::types::{NetworkAdapter, GunMessage};
 use crate::Node;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc};
+use std::sync::Arc;
+use std::time::{Instant, Duration};
 use tokio::sync::RwLock;
 use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
 
 use log::{debug, error};
 
 static NEXT_USER_ID: AtomicUsize = AtomicUsize::new(1);
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
+const CLIENT_TIMEOUT: Duration = Duration::from_secs(30);
 
 // this is needed to set a higher websocket frame size in a custom Codec
 fn start_with_codec<A, S>(actor: A, req: &HttpRequest, stream: S, codec: Codec) -> Result<HttpResponse, Error>
@@ -39,7 +42,21 @@ struct MyWs {
     node: Node,
     id: String,
     users: Users,
-    incoming_msg_sender: tokio::sync::mpsc::Sender<GunMessage>
+    incoming_msg_sender: tokio::sync::mpsc::Sender<GunMessage>,
+    heartbeat: Instant
+}
+
+impl MyWs {
+    fn check_and_send_heartbeat(&self, ctx: &mut ws::WebsocketContext<Self>) {
+        ctx.run_interval(HEARTBEAT_INTERVAL, |actor, ctx| {
+            if Instant::now().duration_since(actor.heartbeat) > CLIENT_TIMEOUT {
+                ctx.close(None);
+                return;
+            }
+
+            ctx.ping(b"PING");
+        });
+    }
 }
 
 struct OutgoingMessage {
@@ -55,6 +72,7 @@ impl Actor for MyWs {
 
     fn started(&mut self, ctx: &mut ws::WebsocketContext<Self>) {
         // TODO say hi [{"dam":"hi","#":"iED196J6w"}]
+        self.check_and_send_heartbeat(ctx);
         let id = self.id.clone();
         let addr = ctx.address();
         let users = self.users.clone();
@@ -98,7 +116,8 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for MyWs {
         ctx: &mut Self::Context,
     ) {
         match msg {
-            Ok(ws::Message::Ping(msg)) => ctx.pong(&msg),
+            Ok(ws::Message::Ping(msg)) => ctx.pong(&msg), // TODO: send pings, and close connection if they don't pong on time?
+            Ok(ws::Message::Pong(_)) => self.heartbeat = Instant::now(),
             Ok(ws::Message::Text(text)) => {
                 debug!("in: {}", text);
                 if let Err(e) = self.incoming_msg_sender.try_send(GunMessage { msg: text.to_string(), from: self.id.clone(), to: None }) {
@@ -220,7 +239,13 @@ impl WebsocketServer {
         let id = NEXT_USER_ID.fetch_add(1, Ordering::Relaxed);
         let id = format!("ws_server_{}", id).to_string();
 
-        let ws = MyWs { node: node.clone(), id, users, incoming_msg_sender: node.get_incoming_msg_sender() };
+        let ws = MyWs {
+            node: node.clone(),
+            id,
+            users,
+            incoming_msg_sender: node.get_incoming_msg_sender(),
+            heartbeat: Instant::now()
+        };
 
         let config = node.config.read().unwrap();
         let resp = start_with_codec(ws, &req, stream, Codec::new().max_size(config.websocket_frame_max_size));
