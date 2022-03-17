@@ -20,6 +20,8 @@ use std::time::{Instant, Duration};
 use tokio::sync::RwLock;
 use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
 
+use tokio::time::sleep;
+
 use log::{debug, error};
 
 static NEXT_USER_ID: AtomicUsize = AtomicUsize::new(1);
@@ -75,24 +77,18 @@ impl Actor for MyWs {
         let id = self.id.clone();
         let addr = ctx.address();
         let users = self.users.clone();
-        let mut node = self.node.clone();
         tokio::task::spawn(async move {
             let mut users = users.write().await;
             users.insert(id.clone(), addr);
-            let peer_id = node.get_peer_id();
-            node.get("node_stats").get(&peer_id).get("websocket_server_connections").put(users.len().to_string().into());
         });
     }
 
     fn stopped(&mut self, _ctx: &mut ws::WebsocketContext<Self>) {
         let users = self.users.clone();
-        let mut node = self.node.clone();
         let id = self.id.clone();
         tokio::task::spawn(async move {
             let mut users = users.write().await;
             users.remove(&id);
-            let peer_id = node.get_peer_id();
-            node.get("node_stats").get(&peer_id).get("websocket_server_connections").put(users.len().to_string().into());
         });
     }
 }
@@ -151,7 +147,18 @@ impl NetworkAdapter for WebsocketServer {
     async fn start(&self) {
         let node = self.node.clone();
         let users = self.users.clone();
-        // TODO: start thread that updates connection counts once per second (if changed)
+        let peer_id = node.get_peer_id();
+        let mut node_clone = node.clone();
+        let users_clone = users.clone();
+
+        tokio::task::spawn(async move {
+            loop {
+                let users = users_clone.read().await;
+                node_clone.get("node_stats").get(&peer_id).get("websocket_server_connections").put(users.len().to_string().into());
+                sleep(tokio::time::Duration::from_millis(1000)).await;
+            }
+        });
+
         Self::actix_start(node, users).await.unwrap();
     }
 }
