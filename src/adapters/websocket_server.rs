@@ -53,7 +53,6 @@ impl MyWs {
                 ctx.close(None);
                 return;
             }
-
             ctx.ping(b"PING");
         });
     }
@@ -71,7 +70,7 @@ impl Actor for MyWs {
     type Context = ws::WebsocketContext<Self>;
 
     fn started(&mut self, ctx: &mut ws::WebsocketContext<Self>) {
-        // TODO say hi [{"dam":"hi","#":"iED196J6w"}]
+        ctx.text(format!("[{{\"dam\":\"hi\",\"#\":\"{}\"}}]", self.node.get_peer_id()));
         self.check_and_send_heartbeat(ctx);
         let id = self.id.clone();
         let addr = ctx.address();
