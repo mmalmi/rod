@@ -22,6 +22,15 @@ pub struct NodeData {
     pub updated_at: f64
 }
 
+impl NodeData {
+    pub fn default() -> Self {
+        Self {
+            value: GunValue::Null,
+            updated_at: 0.0
+        }
+    }
+}
+
 impl GunValue {
     pub fn size(&self) -> usize {
         match self {

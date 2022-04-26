@@ -8,6 +8,7 @@ use std::sync::{
 use serde_json::{json, Value as SerdeJsonValue};
 use crate::types::*;
 use crate::utils::random_string;
+use crate::adapters::MemoryStorage;
 use crate::adapters::WebsocketServer;
 use crate::adapters::WebsocketClient;
 use crate::adapters::Multicast;
@@ -31,6 +32,8 @@ static SEEN_MSGS_MAX_SIZE: usize = 10000;
 pub struct NodeConfig {
     /// [tokio::sync::broadcast] channel size for outgoing network messages. Smaller value may slightly reduce memory usage, but lose outgoing messages when an adapter is lagging. Default: 10.
     pub rust_channel_size: usize,
+    /// Enable in-memory storage? Default: true
+    pub memory_storage: bool,
     /// Enable multicast? Default: false
     pub multicast: bool, // should we have (adapters: Vector<String>) instead, so you can be sure there's no unwanted sync happening?
     /// Outgoing websocket peers. Urls must use wss: prefix, not https:. Default: empty list.
@@ -58,6 +61,7 @@ impl Default for NodeConfig {
     fn default() -> Self {
         NodeConfig {
             rust_channel_size: 1000,
+            memory_storage: true,
             multicast: false,
             outgoing_websocket_peers: Vec::new(),
             websocket_server: true,
@@ -70,6 +74,7 @@ impl Default for NodeConfig {
     }
 }
 
+// Confusing name? Node is both a graph node and a network node.
 /// A Graph Node that provides an API for graph traversal and publish-subscribe.
 ///
 /// Supports graph synchronization over [NetworkAdapter]s (currently websocket and multicast).
@@ -77,15 +82,13 @@ impl Default for NodeConfig {
 #[derive(Clone)]
 pub struct Node {
     path: Vec<String>,
-    store_key: Arc<RwLock<String>>,
-    graph_size_bytes: Arc<RwLock<usize>>,
+    uid: Arc<RwLock<String>>,
     children: Arc<RwLock<BTreeMap<String, Node>>>,
     parents: Arc<RwLock<BTreeMap<String, Node>>>,
     pub config: Arc<RwLock<NodeConfig>>,
     on_sender: broadcast::Sender<GunValue>,
     map_sender: broadcast::Sender<(String, GunValue)>,
-    store: Arc<RwLock<HashMap<String, NodeData>>>, // If we don't want to store everything in memory, this needs to use something like Redis or LevelDB. Or have a FileSystem adapter for persistence and evict the least important stuff from memory when it's full.
-    network_adapters: NetworkAdapters,
+    adapters: NetworkAdapters,
     seen_messages: Arc<RwLock<BoundedHashSet>>,
     seen_get_messages: Arc<RwLock<BoundedHashMap<String, SeenGetMessage>>>,
     subscribers_by_topic: Arc<RwLock<HashMap<String, HashSet<String>>>>,
@@ -132,15 +135,13 @@ impl Node {
         let outgoing_channel = broadcast::channel::<GunMessage>(config.rust_channel_size);
         let node = Self {
             path: vec![],
-            store_key: Arc::new(RwLock::new("".to_string())),
+            uid: Arc::new(RwLock::new("".to_string())),
             config: Arc::new(RwLock::new(config.clone())),
-            graph_size_bytes: Arc::new(RwLock::new(0)),
             children: Arc::new(RwLock::new(BTreeMap::new())),
             parents: Arc::new(RwLock::new(BTreeMap::new())),
             on_sender: broadcast::channel::<GunValue>(config.rust_channel_size).0,
             map_sender: broadcast::channel::<(String, GunValue)>(config.rust_channel_size).0,
-            store: Arc::new(RwLock::new(HashMap::new())),
-            network_adapters: NetworkAdapters::default(),
+            adapters: NetworkAdapters::default(),
             seen_messages: Arc::new(RwLock::new(BoundedHashSet::new(SEEN_MSGS_MAX_SIZE))),
             seen_get_messages: Arc::new(RwLock::new(BoundedHashMap::new(SEEN_MSGS_MAX_SIZE))),
             subscribers_by_topic: Arc::new(RwLock::new(HashMap::new())),
@@ -155,14 +156,18 @@ impl Node {
         };
         if config.multicast {
             let multicast = Multicast::new(node.clone());
-            node.network_adapters.write().unwrap().insert("multicast".to_string(), Box::new(multicast));
+            node.adapters.write().unwrap().insert("multicast".to_string(), Box::new(multicast));
         }
         if config.websocket_server {
             let server = WebsocketServer::new(node.clone());
-            node.network_adapters.write().unwrap().insert("ws_server".to_string(), Box::new(server));
+            node.adapters.write().unwrap().insert("ws_server".to_string(), Box::new(server));
+        }
+        if config.memory_storage {
+            let memory_storage = MemoryStorage::new(node.clone());
+            node.adapters.write().unwrap().insert("memory_storage".to_string(), Box::new(memory_storage));
         }
         let client = WebsocketClient::new(node.clone());
-        node.network_adapters.write().unwrap().insert("ws_client".to_string(), Box::new(client));
+        node.adapters.write().unwrap().insert("ws_client".to_string(), Box::new(client));
         node
     }
 
@@ -178,20 +183,15 @@ impl Node {
 
     fn update_stats(&self) {
         let mut node = self.clone();
-        let peer_id = node.peer_id.read().unwrap().to_string();
+        let peer_id = self.get_peer_id();
+        let mut stats = node.get("node_stats").get(&peer_id);
         let start_time = Instant::now();
         tokio::task::spawn(async move {
             let mut sys = System::new_all();
             loop {
                 sys.refresh_all();
-                let count = node.store.read().unwrap().len().to_string();
-                let graph_size_bytes = *node.graph_size_bytes.read().unwrap();
-                let graph_size_bytes = format!("{}B", size_format::SizeFormatterBinary::new(graph_size_bytes as u64).to_string());
-                let mut stats = node.get("node_stats").get(&peer_id);
                 stats.get("msgs_per_second").put(node.msg_counter.load(Ordering::Relaxed).into());
                 node.msg_counter.store(0, Ordering::Relaxed);
-                stats.get("graph_node_count").put(count.into());
-                stats.get("graph_size_bytes").put(graph_size_bytes.into());
                 stats.get("total_memory").put(format!("{} MB", sys.total_memory() / 1000).into());
                 stats.get("used_memory").put(format!("{} MB", sys.used_memory() / 1000).into());
                 stats.get("cpu_usage").put(format!("{} %", sys.global_processor_info().cpu_usage() as u64).into());
@@ -228,7 +228,7 @@ impl Node {
 
         debug!("henlo2");
 
-        let adapters = self.network_adapters.read().unwrap();
+        let adapters = self.adapters.read().unwrap();
         let mut futures = Vec::new();
         for adapter in adapters.values() {
             futures.push(adapter.start()); // adapters must be non-blocking: use async functions or spawn_blocking
@@ -248,22 +248,20 @@ impl Node {
         assert!(key.len() > 0, "Key length must be greater than zero");
         debug!("new child {}", key);
         let mut parents = BTreeMap::new();
-        parents.insert(self.store_key.read().unwrap().clone(), self.clone());
+        parents.insert(self.uid.read().unwrap().clone(), self.clone());
         let config = self.config.read().unwrap();
         let mut path = self.path.clone();
         path.push(key.clone());
-        let new_child_store_key = path.join("/");
-        debug!("new_child_store_key {:?}", new_child_store_key);
+        let new_child_uid = path.join("/");
+        debug!("new_child_uid {:?}", new_child_uid);
         let node = Self {
             path,
             config: self.config.clone(),
-            graph_size_bytes: self.graph_size_bytes.clone(),
             children: Arc::new(RwLock::new(BTreeMap::new())),
             parents: Arc::new(RwLock::new(parents)),
             on_sender: broadcast::channel::<GunValue>(config.rust_channel_size).0,
             map_sender: broadcast::channel::<(String, GunValue)>(config.rust_channel_size).0,
-            store: self.store.clone(),
-            network_adapters: self.network_adapters.clone(),
+            adapters: self.adapters.clone(),
             seen_messages: self.seen_messages.clone(),
             seen_get_messages: self.seen_get_messages.clone(),
             subscribers_by_topic: self.subscribers_by_topic.clone(),
@@ -274,7 +272,7 @@ impl Node {
             outgoing_msg_sender: self.outgoing_msg_sender.clone(),
             outgoing_msg_receiver: self.outgoing_msg_receiver.clone(),
             incoming_msg_sender: self.incoming_msg_sender.clone(),
-            store_key: Arc::new(RwLock::new(new_child_store_key)),
+            uid: Arc::new(RwLock::new(new_child_uid)),
             subscriptions_by_node_id: self.subscriptions_by_node_id.clone()
         };
         self.children.write().unwrap().insert(key, node.clone());
@@ -288,7 +286,7 @@ impl Node {
 
     /// Subscribe to the Node's value.
     pub fn on(&mut self) -> broadcast::Receiver<GunValue> {
-        if self.network_adapters.read().unwrap().len() > 0 {
+        if self.adapters.read().unwrap().len() > 0 {
             let key;
             if self.path.len() > 1 {
                 key = self.path.iter().nth(self.path.len() - 1).cloned();
@@ -299,11 +297,8 @@ impl Node {
             self.outgoing_message(&m.to_string(), &self.get_peer_id(), id, None);
         }
         let sub = self.on_sender.subscribe();
-        let store_key = self.store_key.read().unwrap().clone();
-        self.subscriptions_by_node_id.write().unwrap().entry(store_key).or_insert_with(Vec::new).push(self.on_sender.clone());
-        if let Some(data) = self.get_stored_data() {
-            self.on_sender.send(data.value).ok();
-        }
+        let uid = self.uid.read().unwrap().clone();
+        self.subscriptions_by_node_id.write().unwrap().entry(uid).or_insert_with(Vec::new).push(self.on_sender.clone());
         sub
     }
 
@@ -323,11 +318,13 @@ impl Node {
 
     /// Subscribe to all children of this Node.
     pub fn map(&self) -> broadcast::Receiver<(String, GunValue)> {
+        /*
         for (key, child) in self.children.read().unwrap().iter() { // TODO can be faster with rayon multithreading?
             if let Some(child_data) = child.clone().get_stored_data() {
                 self.map_sender.send((key.to_string(), child_data.value)).ok(); // TODO first return Receiver and then do this in another thread?
             }
         }
+         */
         self.map_sender.subscribe()
         // TODO: send get messages to adapters!!
     }
@@ -335,7 +332,7 @@ impl Node {
     fn create_get_msg(&self, key: Option<String>) -> (String, String) {
         let msg_id = random_string(8);
         let json;
-        let id = self.store_key.read().unwrap().clone();
+        let id = self.uid.read().unwrap().clone();
         if let Some(key) = key {
             json = json!({
                 "get": {
@@ -355,9 +352,9 @@ impl Node {
         (json, msg_id)
     }
 
-    fn create_put_msg(&self, value: &GunValue, updated_at: f64) -> (String, String) {
+    fn create_put_msg(&self, id: String, value: &GunValue, updated_at: f64) -> (String, String) {
         let msg_id = random_string(8);
-        let id = self.path.join("/");
+        // let id = self.path.join("/");
         let key = self.path.last().cloned().unwrap();
         let mut json = json!({
             "put": {
@@ -375,32 +372,6 @@ impl Node {
             "#": msg_id,
         });
 
-        let puts = &mut json["put"];
-        // if it's a nested node, put its parents also
-
-        for (i, node_name) in self.path.iter().enumerate().nth(1) {
-            let path = self.path[..i].join("/");
-            let node_key = self.path[..(i+1)].join("/");
-            debug!("node_key {}", node_key);
-            if let Some(data) = self.store.read().unwrap().get(&node_key) {
-                let path_obj = json!({
-                    "_": {
-                        "#": path, // actually soul, not path
-                        ">": {
-                            node_name: data.updated_at
-                        }
-                    },
-                    node_name: data.value /*
-                        link:
-                        {
-                            "#": id
-                        }
-                        or value (e.g. sea signed string)
-                    */
-                });
-                puts[path] = path_obj;
-            }
-        }
         (json.to_string(), msg_id)
     }
 
@@ -420,7 +391,7 @@ impl Node {
                 if let Some(msg_id) = msg_id.as_str() {
                     let msg_id = msg_id.to_string();
                     if self.seen_messages.read().unwrap().contains(&msg_id) {
-                        debug!("already have {}", &msg_id);
+                        debug!("already seen message {}", &msg_id);
                         return;
                     }
                     self.seen_messages.write().unwrap().insert(msg_id.clone());
@@ -431,21 +402,7 @@ impl Node {
                     let s: String = msg_str.chars().take(300).collect();
                     debug!("in ID {}:\n{}\n", msg_id, s);
 
-                    if let Some(put) = msg_obj.get("put") {
-                        if let Some(put_obj) = put.as_object() {
-                            self.incoming_put(&msg_str, &msg_id, &from, msg_obj, put_obj); // TODO move to mem or sled storage adapter
-                        }
-                    }
-                    if let Some(get) = msg_obj.get("get") {
-                        if let Some(get_obj) = get.as_object() {
-                            self.seen_get_messages.write().unwrap().insert(msg_id.clone(), SeenGetMessage {
-                                from: from.clone(),
-                                last_reply_hash: "".to_string()
-                            });
-                            self.incoming_get(get_obj, from); // TODO move to mem or sled storage adapter
-                            self.outgoing_message(&msg_str, from, msg_id, None); // TODO: randomly sample recipients
-                        }
-                    }
+                    self.outgoing_message(&msg_str, from, msg_id, None);
                 }
             } else {
                 debug!("msg without id: {}\n", msg);
@@ -464,91 +421,6 @@ impl Node {
         self.incoming_message_json(&json, false, Some(msg), from);
     }
 
-    fn incoming_put(&mut self, msg_str: &String, msg_id: &String, from: &String, msg_obj: &serde_json::Map<String, SerdeJsonValue>, put_obj: &serde_json::Map<String, SerdeJsonValue>) {
-        let mut recipients = HashSet::new();
-        let mut is_ack = false;
-        if let Some(in_response_to) = msg_obj.get("@") {
-            if let Some(in_response_to) = in_response_to.as_str() {
-                is_ack = true;
-                let mut content_hash = "-".to_string();
-                if let Some(hash) = msg_obj.get("##") {
-                    content_hash = hash.to_string();
-                }
-                let in_response_to = in_response_to.to_string();
-                if let Some(seen_get_message) = self.seen_get_messages.write().unwrap().get_mut(&in_response_to) {
-                    if content_hash == seen_get_message.last_reply_hash {
-                        debug!("same reply already sent");
-                        return;
-                    } // failing these conditions, should we still send the ack to someone?
-                    seen_get_message.last_reply_hash = content_hash;
-                    recipients.insert(seen_get_message.from.clone());
-                }
-            }
-        }
-        for (updated_node_id, update_data) in put_obj.iter() {
-            if !is_ack {
-                let topic = updated_node_id.split("/").next().unwrap_or("");
-                debug!("getting subscribers for topic {}", topic);
-                if let Some(subscribers) = self.subscribers_by_topic.read().unwrap().get(topic) {
-                    recipients.extend(subscribers.clone());
-                }
-            }
-            if let Some(updated_at_times) = update_data["_"][">"].as_object() {
-                for (child_key, incoming_val_updated_at) in updated_at_times.iter() {
-                    if let Some(incoming_val_updated_at) = incoming_val_updated_at.as_f64() {
-                        let update = || {
-                            if let Some(new_value) = update_data.get(child_key) {
-                                if let Ok(new_value) = serde_json::from_value::<GunValue>(new_value.clone()) {
-                                    if let Some(subs) = self.subscriptions_by_node_id.read().unwrap().get(updated_node_id) {
-                                        for sub in subs {
-                                            sub.send(new_value.clone());
-                                        }
-                                    }
-                                    self.store.write().unwrap().insert(child_key.clone(), NodeData {
-                                        value: new_value,
-                                        updated_at: incoming_val_updated_at
-                                    });
-                                }
-                            }
-                        };
-
-                        let existing_data: Option<NodeData>;
-                        { // to prevent store deadlock
-                            existing_data = self.store.read().unwrap().get(child_key).cloned();
-                        }
-                        if let Some(existing_data) = existing_data {
-                            // TODO: merge
-                            if existing_data.updated_at <= incoming_val_updated_at {
-                                update();
-                            }
-                        } else {
-                            update();
-                        }
-                    }
-                }
-            }
-        }
-        recipients.remove(from);
-        self.outgoing_message(&msg_str, from, msg_id.clone(), Some(recipients));
-    }
-
-    fn _children_to_gun_value(&self, children: &BTreeMap<String, Node>) -> GunValue {
-        let mut map = BTreeMap::<String, GunValue>::new();
-        for (key, child) in children.iter() { // TODO faster with rayon?
-            let child_id = child.store_key.read().unwrap().clone();
-            let child_value: Option<GunValue> = match self.store.read().unwrap().get(&child_id) {
-                Some(data) => Some(data.value.clone()),
-                _ => None
-            };
-            if let Some(value) = child_value {
-                map.insert(key.clone(), value);
-            } else { // return child Node object
-                map.insert(key.clone(), GunValue::Link(child_id.clone()));
-            }
-        }
-        GunValue::Children(map)
-    }
-
     fn outgoing_message(&self, msg: &String, from: &String, msg_id: String, to: Option<HashSet<String>>) {
         debug!("[{}] msg out {} {}", &self.get_peer_id()[..4], &msg_id, msg);
         self.seen_messages.write().unwrap().insert(msg_id); // TODO: doesn't seem to work, at least on multicast
@@ -557,74 +429,14 @@ impl Node {
         };
     }
 
-    pub fn get_stored_data(&self) -> Option<NodeData> {
-        match self.store.read().unwrap().get(&self.store_key.read().unwrap().clone()) {
-            Some(value) => Some(value.clone()),
-            None => None
-        }
-    }
-
-    fn send_get_response(&self, id: String, data: NodeData, recipient: &String) {
-        let msg_id = random_string(8);
-        let json = json!({
-            "put": {
-                &id: {
-                    "_": {
-                        "#": &id,
-                        ">": {
-                            &id: data.updated_at
-                        }
-                    },
-                    &id: data.value.clone()
-                }
-            },
-            "#": msg_id,
-        }).to_string();
-        debug!("have! sending response {}", msg_id);
-        let mut recipients = HashSet::new();
-        recipients.insert(recipient.to_string());
-        self.outgoing_message(&json, &self.get_peer_id(), msg_id, Some(recipients)); // TODO: send only to the requester
-    }
-
-    fn incoming_get(&mut self, get: &serde_json::Map<String, SerdeJsonValue>, from: &String) {
-        if let Some(id) = get.get("#") {
-            if let Some(id) = id.as_str() {
-                let data = self.store.read().unwrap().get(id).cloned();
-                if let Some(data) = data {
-                    debug!("have {}: {:?}", id, data);
-                    {
-                        let topic = id.split("/").next().unwrap_or("");
-                        debug!("{} subscribed to {}", from, topic);
-                        self.subscribers_by_topic.write().unwrap().entry(topic.to_string())
-                            .or_insert_with(HashSet::new).insert(from.clone());
-                    }
-                    if let Some(key) = get.get(".") {
-                        if let Some(key) = key.as_str() {
-                            // todo: send data[key]
-                            self.send_get_response(id.to_string(), data, from);
-                        }
-                    } else { // get all children of the (root level?) node
-                        self.send_get_response(id.to_string(), data, from);
-                    }
-
-
-
-                } else {
-                    debug!("have not {}", id);
-                }
-            }
-        }
-    }
-
     /// Set a GunValue for the Node.
     pub fn put(&mut self, value: GunValue) {
         let time: f64 = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis() as f64;
         // TODO: move in-memory storage into an adapter
-        let store_key = self.store_key.read().unwrap().clone();
+        let uid = self.uid.read().unwrap().clone();
         // TODO: save parents, or move self.store to adapter
-        self.store.write().unwrap().insert(store_key, NodeData { value: value.clone(), updated_at: time });
         self.on_sender.send(value.clone()).ok();
-        if self.network_adapters.read().unwrap().len() > 0 {
+        if self.adapters.read().unwrap().len() > 0 {
             let (m, id) = self.create_put_msg(&value, time);
             let recipients;
             let topic = self.path.iter().next().unwrap();
