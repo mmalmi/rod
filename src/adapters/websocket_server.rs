@@ -12,7 +12,8 @@ use futures::Stream;
 
 use std::collections::HashMap;
 use async_trait::async_trait;
-use crate::types::{NetworkAdapter, GunMessage};
+use crate::message::Message as GunMessage;
+use crate::types::NetworkAdapter;
 use crate::Node;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;

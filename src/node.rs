@@ -5,9 +5,8 @@ use std::sync::{
     Arc,
     RwLock // TODO: could we use async RwLock? Would require some changes to the chaining api (.get()).
 };
-use serde_json::{json, Value as SerdeJsonValue};
+use crate::message::Message;
 use crate::types::*;
-use crate::utils::random_string;
 use crate::adapters::MemoryStorage;
 use crate::adapters::WebsocketServer;
 use crate::adapters::WebsocketClient;
@@ -96,9 +95,9 @@ pub struct Node {
     msg_counter: Arc<AtomicUsize>,
     stop_signal_sender: broadcast::Sender<()>,
     stop_signal_receiver: Arc<broadcast::Receiver<()>>,
-    outgoing_msg_sender: broadcast::Sender<GunMessage>,
-    outgoing_msg_receiver: Arc<broadcast::Receiver<GunMessage>>, // need to store 1 receiver instance so the channel doesn't get closed
-    incoming_msg_sender: Arc<RwLock<Option<mpsc::Sender<GunMessage>>>>,
+    outgoing_msg_sender: broadcast::Sender<Message>,
+    outgoing_msg_receiver: Arc<broadcast::Receiver<Message>>, // need to store 1 receiver instance so the channel doesn't get closed
+    incoming_msg_sender: Arc<RwLock<Option<mpsc::Sender<Message>>>>,
     subscriptions_by_node_id: Arc<RwLock<HashMap<String, Vec<broadcast::Sender<GunValue>>>>>
 }
 
@@ -132,7 +131,7 @@ impl Node {
     /// ```
     pub fn new_with_config(config: NodeConfig) -> Self {
         let stop_signal_channel = broadcast::channel::<()>(1);
-        let outgoing_channel = broadcast::channel::<GunMessage>(config.rust_channel_size);
+        let outgoing_channel = broadcast::channel::<Message>(config.rust_channel_size);
         let node = Self {
             path: vec![],
             uid: Arc::new(RwLock::new("".to_string())),
@@ -172,12 +171,12 @@ impl Node {
     }
 
     /// NetworkAdapters should use this to receive outbound messages.
-    pub fn get_outgoing_msg_receiver(&self) -> broadcast::Receiver<GunMessage> {
+    pub fn get_outgoing_msg_receiver(&self) -> broadcast::Receiver<Message> {
         self.outgoing_msg_sender.subscribe()
     }
 
-    /// NetworkAdapters should use this to receive outbound messages.
-    pub fn get_incoming_msg_sender(&self) -> mpsc::Sender<GunMessage> {
+    /// NetworkAdapters should use this to relay inbound messages.
+    pub fn get_incoming_msg_sender(&self) -> mpsc::Sender<Message> {
         self.incoming_msg_sender.read().unwrap().as_ref().unwrap().clone()
     }
 
@@ -213,7 +212,7 @@ impl Node {
     // should we start adapters on ::new()? in a new thread
     /// Starts [NetworkAdapter]s that are enabled for this Node.
     pub async fn start_adapters(&mut self) {
-        let (incoming_tx, mut incoming_rx) = mpsc::channel::<GunMessage>(self.config.read().unwrap().rust_channel_size);
+        let (incoming_tx, mut incoming_rx) = mpsc::channel::<Message>(self.config.read().unwrap().rust_channel_size);
         *self.incoming_msg_sender.write().unwrap() = Some(incoming_tx);
         let mut node = self.clone();
         debug!("henlo1");
@@ -402,6 +401,47 @@ impl Node {
                     let s: String = msg_str.chars().take(300).collect();
                     debug!("in ID {}:\n{}\n", msg_id, s);
 
+                    if let Some(put) = msg_obj.get("put") {
+                        if let Some(put_obj) = put.as_object() {
+                            // merge & notify subscriptions - or do it in adapters?
+                        }
+                    }
+                    if let Some(get) = msg_obj.get("get") {
+                        {
+                            let topic = msg_id.split("/").next().unwrap_or("");
+                            debug!("{} subscribed to {}", from, topic);
+                            self.subscribers_by_topic.write().unwrap().entry(topic.to_string())
+                                .or_insert_with(HashSet::new).insert(from.clone());
+                        }
+                    }
+
+                    let mut is_ack = false;
+                    if let Some(in_response_to) = msg_obj.get("@") {
+                        if let Some(in_response_to) = in_response_to.as_str() {
+                            is_ack = true;
+                            let mut content_hash = "-".to_string();
+                            if let Some(hash) = msg_obj.get("##") {
+                                content_hash = hash.to_string();
+                            }
+                            let in_response_to = in_response_to.to_string();
+                            if let Some(seen_get_message) = self.seen_get_messages.write().unwrap().get_mut(&in_response_to) {
+                                if content_hash == seen_get_message.last_reply_hash {
+                                    debug!("same reply already sent");
+                                    return;
+                                } // failing these conditions, should we still send the ack to someone?
+                                seen_get_message.last_reply_hash = content_hash;
+                                recipients.insert(seen_get_message.from.clone());
+                            }
+                        }
+                    }
+                    if !is_ack {
+                        let topic = node_id.split("/").next().unwrap_or("");
+                        debug!("getting subscribers for topic {}", topic);
+                        if let Some(subscribers) = self.subscribers_by_topic.read().unwrap().get(topic) {
+                            recipients.extend(subscribers.clone());
+                        }
+                    }
+
                     self.outgoing_message(&msg_str, from, msg_id, None);
                 }
             } else {
@@ -410,7 +450,6 @@ impl Node {
         }
     }
 
-    /// NetworkAdapters should call this for received messages.
     fn incoming_message(&mut self, msg: String, from: &String) {
         debug!("[{}] msg in {}", &self.get_peer_id()[..4], msg);
         self.msg_counter.fetch_add(1, Ordering::Relaxed);
@@ -424,7 +463,7 @@ impl Node {
     fn outgoing_message(&self, msg: &String, from: &String, msg_id: String, to: Option<HashSet<String>>) {
         debug!("[{}] msg out {} {}", &self.get_peer_id()[..4], &msg_id, msg);
         self.seen_messages.write().unwrap().insert(msg_id); // TODO: doesn't seem to work, at least on multicast
-        if let Err(e) = self.outgoing_msg_sender.send(GunMessage { msg: msg.clone(), from: from.clone(), to }) {
+        if let Err(e) = self.outgoing_msg_sender.send(Message { msg: msg.clone(), from: from.clone(), to }) {
             error!("failed to send outgoing message from node: {}", e);
         };
     }

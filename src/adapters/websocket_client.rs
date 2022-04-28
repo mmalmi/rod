@@ -1,14 +1,15 @@
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::{
     connect_async,
-    tungstenite::{Message},
+    tungstenite::{Message as WsMessage},
     WebSocketStream
 };
 use tokio::sync::RwLock;
 use url::Url;
 use std::collections::HashMap;
 
-use crate::types::{NetworkAdapter, GunMessage};
+use crate::message::Message;
+use crate::types::NetworkAdapter;
 use crate::Node;
 use async_trait::async_trait;
 use log::{debug, error};
@@ -82,7 +83,7 @@ async fn user_connected(mut node: Node, ws: WebSocketStream<tokio_tungstenite::M
                 if message.from == my_id_clone {
                     continue;
                 }
-                if let Err(_) = user_ws_tx.send(Message::text(message.msg)).await {
+                if let Err(_) = user_ws_tx.send(WsMessage::text(message.msg)).await {
                     break;
                 }
             }
@@ -112,7 +113,7 @@ async fn user_connected(mut node: Node, ws: WebSocketStream<tokio_tungstenite::M
         };
         match msg.to_text() {
             Ok(s) => {
-                if let Err(e) = incoming_message_sender.try_send(GunMessage { msg: s.to_string(), from: my_id.clone(), to: None }) {
+                if let Err(e) = incoming_message_sender.try_send(Message { msg: s.to_string(), from: my_id.clone(), to: None }) {
                     error!("failed to send incoming message to node: {}", e);
                 }
             },

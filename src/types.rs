@@ -89,14 +89,6 @@ pub trait NetworkAdapter {
     async fn start(&self);
 }
 
-/// Used internally to represent Gun network messages.
-#[derive(Clone, Debug)]
-pub struct GunMessage {
-    pub msg: String,
-    pub from: String,
-    pub to: Option<HashSet<String>>
-}
-
 /// When full, every insert pushes out the oldest entry in the set.
 ///
 /// Used to record last seen message IDs.
