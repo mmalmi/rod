@@ -1,4 +1,3 @@
-use tokio::sync::RwLock;
 use std::collections::{HashMap, BTreeMap};
 
 use crate::message::Message;
@@ -8,13 +7,13 @@ use crate::types::*;
 
 use async_trait::async_trait;
 use log::{debug};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use tokio::time::{sleep, Duration};
 
 pub struct MemoryStorage {
     id: String,
     node: Node,
-    graph_size_bytes: usize,
+    graph_size_bytes: Arc<RwLock<usize>>,
     store: Arc<RwLock<HashMap<String, NodeData>>>,
 }
 
@@ -23,10 +22,11 @@ impl MemoryStorage {
         let peer_id = self.node.get_peer_id();
         let mut stats = self.node.clone().get("node_stats").get(&peer_id);
         let store = self.store.clone();
+        let graph_size_bytes = self.graph_size_bytes.clone();
         tokio::task::spawn(async move {
             loop {
                 let count = store.read().unwrap().len().to_string();
-                let graph_size_bytes = format!("{}B", size_format::SizeFormatterBinary::new(self.graph_size_bytes as u64).to_string());
+                let graph_size_bytes = format!("{}B", size_format::SizeFormatterBinary::new(graph_size_bytes as u64).to_string());
                 stats.get("graph_node_count").put(count.into());
                 stats.get("graph_size_bytes").put(graph_size_bytes.into());
                 sleep(Duration::from_millis(1000)).await;
@@ -144,7 +144,7 @@ impl NetworkAdapter for MemoryStorage {
         MemoryStorage {
             id: "memory_storage".to_string(),
             node,
-            graph_size_bytes: 0,
+            graph_size_bytes: Arc::new(RwLock::new(0)),
             store: Arc::new(RwLock::new(HashMap::new())), // If we don't want to store everything in memory, this needs to use something like Redis or LevelDB. Or have a FileSystem adapter for persistence and evict the least important stuff from memory when it's full.
         }
     }
@@ -157,6 +157,12 @@ impl NetworkAdapter for MemoryStorage {
         tokio::task::spawn(async move {
             loop {
                 if let Ok(message) = rx.recv().await {
+                    match message {
+                        Message::Get => self.handle_get(message),
+                        Message::Put => self.handle_put(message),
+                        _ => {}
+                    }
+
                     if message.from == self.id {
                         continue;
                     }

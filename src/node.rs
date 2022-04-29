@@ -328,52 +328,6 @@ impl Node {
         // TODO: send get messages to adapters!!
     }
 
-    fn create_get_msg(&self, key: Option<String>) -> (String, String) {
-        let msg_id = random_string(8);
-        let json;
-        let id = self.uid.read().unwrap().clone();
-        if let Some(key) = key {
-            json = json!({
-                "get": {
-                    "#": id,
-                    ".": key
-                },
-                "#": msg_id
-            }).to_string();
-        } else {
-            json = json!({
-                "get": {
-                    "#": id
-                },
-                "#": msg_id
-            }).to_string();
-        }
-        (json, msg_id)
-    }
-
-    fn create_put_msg(&self, id: String, value: &GunValue, updated_at: f64) -> (String, String) {
-        let msg_id = random_string(8);
-        // let id = self.path.join("/");
-        let key = self.path.last().cloned().unwrap();
-        let mut json = json!({
-            "put": {
-                &id: {
-                    "_": {
-                        "#": &id,
-                        ">": {
-                            &key: updated_at
-                        }
-                    },
-                    &key: value // TODO: in case of Link / Children, value should be the id
-                    // https://gun.eco/docs/FAQ#what-is-a-soul-what-does-a-node-look-like
-                }
-            },
-            "#": msg_id,
-        });
-
-        (json.to_string(), msg_id)
-    }
-
     fn incoming_message_json(&mut self, msg: &SerdeJsonValue, is_from_array: bool, msg_str: Option<String>, from: &String) {
         if let Some(array) = msg.as_array() {
             if is_from_array {
@@ -399,7 +353,7 @@ impl Node {
                         None => msg.to_string()
                     };
                     let s: String = msg_str.chars().take(300).collect();
-                    debug!("in ID {}:\n{}\n", msg_id, s);
+                    debug!("in ID {}:\n{}\n", msg_id.to_string(), s);
 
                     if let Some(put) = msg_obj.get("put") {
                         if let Some(put_obj) = put.as_object() {
@@ -442,7 +396,7 @@ impl Node {
                         }
                     }
 
-                    self.outgoing_message(&msg_str, from, msg_id, None);
+                    self.outgoing_message(&msg_str, from, msg_id.to_string(), None);
                 }
             } else {
                 debug!("msg without id: {}\n", msg);
