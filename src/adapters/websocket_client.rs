@@ -80,10 +80,15 @@ async fn user_connected(mut node: Node, ws: WebSocketStream<tokio_tungstenite::M
     tokio::task::spawn(async move { // TODO as in websocket_server, there should be only 1 task that relays to the addressed message recipient
         loop {
             if let Ok(message) = rx.recv().await {
-                if message.from == my_id_clone {
+                let from = match message.clone() {
+                    Message::Get(get) => get.from,
+                    Message::Put(put) => put.from,
+                    _ => "".to_string()
+                };
+                if from == my_id_clone {
                     continue;
                 }
-                if let Err(_) = user_ws_tx.send(WsMessage::text(message.msg)).await {
+                if let Err(_) = user_ws_tx.send(WsMessage::text(message.to_string())).await {
                     break;
                 }
             }
@@ -113,8 +118,16 @@ async fn user_connected(mut node: Node, ws: WebSocketStream<tokio_tungstenite::M
         };
         match msg.to_text() {
             Ok(s) => {
-                if let Err(e) = incoming_message_sender.try_send(Message { msg: s.to_string(), from: my_id.clone(), to: None }) {
-                    error!("failed to send incoming message to node: {}", e);
+                match Message::try_from(s) {
+                    Ok(msg) => {
+                        if let Err(e) = incoming_message_sender.try_send(msg) {
+                            error!("failed to send incoming message to node: {}", e);
+                        }
+                    },
+                    Err(e) => {
+                        error!("{}", e);
+                        continue;
+                    }
                 }
             },
             Err(e) => {

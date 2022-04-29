@@ -5,7 +5,8 @@ use std::sync::{
     Arc,
     RwLock // TODO: could we use async RwLock? Would require some changes to the chaining api (.get()).
 };
-use crate::message::Message;
+use crate::utils::random_string;
+use crate::message::{Message, Put, Get};
 use crate::types::*;
 use crate::adapters::MemoryStorage;
 use crate::adapters::WebsocketServer;
@@ -75,6 +76,7 @@ impl Default for NodeConfig {
 
 // Confusing name? Node is both a graph node and a network node.
 /// A Graph Node that provides an API for graph traversal and publish-subscribe.
+/// Sends, processes and relays Put & Get messages between storage and transport adapters.
 ///
 /// Supports graph synchronization over [NetworkAdapter]s (currently websocket and multicast).
 /// Disk storage adapter to be done.
@@ -215,17 +217,18 @@ impl Node {
         let (incoming_tx, mut incoming_rx) = mpsc::channel::<Message>(self.config.read().unwrap().rust_channel_size);
         *self.incoming_msg_sender.write().unwrap() = Some(incoming_tx);
         let mut node = self.clone();
-        debug!("henlo1");
         tokio::task::spawn(async move {
             loop {
-                if let Some(gun_message) = incoming_rx.recv().await {
+                if let Some(msg) = incoming_rx.recv().await {
                     debug!("incoming message");
-                    node.incoming_message(gun_message.msg, &gun_message.from);
+                    match msg {
+                        Message::Put(put) => node.handle_put(put),
+                        Message::Get(get) => node.handle_get(get),
+                        _ => {}
+                    }
                 }
             }
         });
-
-        debug!("henlo2");
 
         let adapters = self.adapters.read().unwrap();
         let mut futures = Vec::new();
@@ -235,8 +238,6 @@ impl Node {
         if self.config.read().unwrap().stats {
             self.update_stats();
         }
-
-        debug!("henlo3");
 
         let joined = futures::future::join_all(futures);
 
@@ -292,8 +293,8 @@ impl Node {
             } else {
                 key = None;
             }
-            let (m, id) = self.create_get_msg(key);
-            self.outgoing_message(&m.to_string(), &self.get_peer_id(), id, None);
+            let get = Get::new(self.uid.read().unwrap().to_string(), key);
+            self.outgoing_message(Message::Get(get), get.id.clone());
         }
         let sub = self.on_sender.subscribe();
         let uid = self.uid.read().unwrap().clone();
@@ -328,109 +329,84 @@ impl Node {
         // TODO: send get messages to adapters!!
     }
 
-    fn incoming_message_json(&mut self, msg: &SerdeJsonValue, is_from_array: bool, msg_str: Option<String>, from: &String) {
-        if let Some(array) = msg.as_array() {
-            if is_from_array {
-                error!("received nested array {}", msg);
-                return;
-            } // don't allow array inside array
-            for msg in array.iter() {
-                self.incoming_message_json(msg, true, None, from);
-            }
+    // record subscription & relay
+    fn handle_get(&mut self, msg: Get) {
+        if self.is_message_seen(msg.id.clone(), msg.to_string()) {
             return;
         }
-        if let Some(msg_obj) = msg.as_object() {
-            if let Some(msg_id) = msg_obj.get("#") {
-                if let Some(msg_id) = msg_id.as_str() {
-                    let msg_id = msg_id.to_string();
-                    if self.seen_messages.read().unwrap().contains(&msg_id) {
-                        debug!("already seen message {}", &msg_id);
-                        return;
-                    }
-                    self.seen_messages.write().unwrap().insert(msg_id.clone());
-                    let msg_str = match msg_str {
-                        Some(s) => s,
-                        None => msg.to_string()
-                    };
-                    let s: String = msg_str.chars().take(300).collect();
-                    debug!("in ID {}:\n{}\n", msg_id.to_string(), s);
+        let topic = msg.node_id.split("/").next().unwrap_or("");
+        debug!("{} subscribed to {}", from, topic);
+        self.subscribers_by_topic.write().unwrap().entry(topic.to_string())
+            .or_insert_with(HashSet::new).insert(from.clone());
+        self.outgoing_message(Message::Get(msg), msg.id.clone());
+    }
 
-                    if let Some(put) = msg_obj.get("put") {
-                        if let Some(put_obj) = put.as_object() {
-                            // merge & notify subscriptions - or do it in adapters?
-                        }
-                    }
-                    if let Some(get) = msg_obj.get("get") {
-                        {
-                            let topic = msg_id.split("/").next().unwrap_or("");
-                            debug!("{} subscribed to {}", from, topic);
-                            self.subscribers_by_topic.write().unwrap().entry(topic.to_string())
-                                .or_insert_with(HashSet::new).insert(from.clone());
-                        }
-                    }
-
-                    let mut is_ack = false;
-                    if let Some(in_response_to) = msg_obj.get("@") {
-                        if let Some(in_response_to) = in_response_to.as_str() {
-                            is_ack = true;
-                            let mut content_hash = "-".to_string();
-                            if let Some(hash) = msg_obj.get("##") {
-                                content_hash = hash.to_string();
-                            }
-                            let in_response_to = in_response_to.to_string();
-                            if let Some(seen_get_message) = self.seen_get_messages.write().unwrap().get_mut(&in_response_to) {
-                                if content_hash == seen_get_message.last_reply_hash {
-                                    debug!("same reply already sent");
-                                    return;
-                                } // failing these conditions, should we still send the ack to someone?
-                                seen_get_message.last_reply_hash = content_hash;
-                                recipients.insert(seen_get_message.from.clone());
-                            }
-                        }
-                    }
-                    if !is_ack {
-                        let topic = node_id.split("/").next().unwrap_or("");
-                        debug!("getting subscribers for topic {}", topic);
-                        if let Some(subscribers) = self.subscribers_by_topic.read().unwrap().get(topic) {
-                            recipients.extend(subscribers.clone());
-                        }
-                    }
-
-                    self.outgoing_message(&msg_str, from, msg_id.to_string(), None);
+    // relay to original requester or all subscribers
+    fn handle_put(&mut self, msg: Put) {
+        if self.is_message_seen(msg.id.clone(), msg.to_string()) {
+            return;
+        }
+        let mut recipients = HashSet::<String>::new();
+        if let Some(in_response_to) = msg.in_response_to {
+            let mut content_hash = "-".to_string();
+            if let Some(hash) = msg_obj.get("##") {
+                content_hash = hash.to_string();
+            }
+            let in_response_to = in_response_to.to_string();
+            if let Some(seen_get_message) = self.seen_get_messages.write().unwrap().get_mut(&in_response_to) {
+                if content_hash == seen_get_message.last_reply_hash {
+                    debug!("same reply already sent");
+                    return;
+                } // failing these conditions, should we still send the ack to someone?
+                seen_get_message.last_reply_hash = content_hash;
+                recipients.insert(seen_get_message.from.clone());
+            }
+        } else {
+            for node_id in msg.updated_nodes.keys() {
+                let topic = node_id.split("/").next().unwrap_or("");
+                debug!("getting subscribers for topic {}", topic);
+                if let Some(subscribers) = self.subscribers_by_topic.read().unwrap().get(topic) {
+                    recipients.extend(subscribers.clone());
                 }
-            } else {
-                debug!("msg without id: {}\n", msg);
             }
         }
+        let mut msg = msg.clone();
+        msg.recipients = Some(recipients);
+        self.outgoing_message(Message::Put(msg), msg.id.clone());
     }
 
-    fn incoming_message(&mut self, msg: String, from: &String) {
-        debug!("[{}] msg in {}", &self.get_peer_id()[..4], msg);
+    fn is_message_seen(&mut self, id: String, msg_str: String) -> bool {
         self.msg_counter.fetch_add(1, Ordering::Relaxed);
-        let json: SerdeJsonValue = match serde_json::from_str(&msg) {
-            Ok(json) => json,
-            Err(_) => { return; }
-        };
-        self.incoming_message_json(&json, false, Some(msg), from);
+
+        if self.seen_messages.read().unwrap().contains(&id) {
+            debug!("already seen message {}", &id);
+            return true;
+        }
+        self.seen_messages.write().unwrap().insert(id.clone());
+
+        let s: String = msg_str.chars().take(300).collect();
+        debug!("in ID {}:\n{}\n", id.to_string(), s);
+        return false;
     }
 
-    fn outgoing_message(&self, msg: &String, from: &String, msg_id: String, to: Option<HashSet<String>>) {
-        debug!("[{}] msg out {} {}", &self.get_peer_id()[..4], &msg_id, msg);
+    fn outgoing_message(&self, msg: Message, msg_id: String) {
+        debug!("[{}] msg out {:?}", &self.get_peer_id()[..4], msg.to_string());
         self.seen_messages.write().unwrap().insert(msg_id); // TODO: doesn't seem to work, at least on multicast
-        if let Err(e) = self.outgoing_msg_sender.send(Message { msg: msg.clone(), from: from.clone(), to }) {
+        if let Err(e) = self.outgoing_msg_sender.send(msg) {
             error!("failed to send outgoing message from node: {}", e);
         };
     }
 
     /// Set a GunValue for the Node.
     pub fn put(&mut self, value: GunValue) {
-        let time: f64 = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis() as f64;
+        let updated_at: f64 = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis() as f64;
         // TODO: move in-memory storage into an adapter
         let uid = self.uid.read().unwrap().clone();
         // TODO: save parents, or move self.store to adapter
         self.on_sender.send(value.clone()).ok();
         if self.adapters.read().unwrap().len() > 0 {
-            let (m, id) = self.create_put_msg(&value, time);
+            let mut put = Put::new_from_kv(uid, NodeData { value, updated_at });
+            put.from = self.get_peer_id();
             let recipients;
             let topic = self.path.iter().next().unwrap();
             debug!("getting subscribers for topic {}", topic);
@@ -439,7 +415,8 @@ impl Node {
             } else {
                 recipients = HashSet::new();
             }
-            self.outgoing_message(&m, &self.get_peer_id(), id, Some(recipients));
+            put.recipients = Some(recipients);
+            self.outgoing_message(Message::Put(put), put.id.clone());
         }
     }
 

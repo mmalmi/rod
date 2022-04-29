@@ -37,8 +37,25 @@ impl NetworkAdapter for Multicast {
                     if let Ok(data) = std::str::from_utf8(&message.data) {
                         debug!("in: {}", data);
                         let from = format!("multicast_{:?}", message.interface).to_string();
-                        if let Err(e) = incoming_message_sender.try_send(Message { msg: data.to_string(), from, to: None }) {
-                            error!("failed to send message to node: {}", e);
+                        match Message::try_from(data) {
+                            Ok(msg) => {
+                                match msg {
+                                    Message::Put(put) => {
+                                        put.from = from;
+                                        if let Err(e) = incoming_message_sender.try_send(msg) {
+                                            error!("failed to send message to node: {}", e);
+                                        }
+                                    },
+                                    Message::Get(get) => {
+                                        get.from = from;
+                                        if let Err(e) = incoming_message_sender.try_send(msg) {
+                                            error!("failed to send message to node: {}", e);
+                                        }
+                                    },
+                                    _ => {}
+                                }
+                            },
+                            Err(e) => error!("message parsing failed: {}", e)
                         }
                     }
                 };
@@ -48,10 +65,21 @@ impl NetworkAdapter for Multicast {
         let socket = self.socket.clone();
         tokio::task::spawn(async move {
             loop {
-                if let Ok(message) = rx.recv().await { // TODO loop and handle rx closed
-                    debug!("out {}", message.msg);
-                    if let Err(e) = socket.write().await.broadcast(message.msg.as_bytes()) {
-                        error!("multicast send error {}", e);
+                if let Ok(msg) = rx.recv().await { // TODO loop and handle rx closed
+                    //debug!("out {}", msg);
+
+                    match msg {
+                        Message::Put(put) => {
+                            if let Err(e) = socket.write().await.broadcast(put.to_string().as_bytes()) {
+                                error!("multicast send error {}", e);
+                            }
+                        },
+                        Message::Get(get) => {
+                            if let Err(e) = socket.write().await.broadcast(get.to_string().as_bytes()) {
+                                error!("multicast send error {}", e);
+                            }
+                        },
+                        _ => {}
                     }
                 }
             }

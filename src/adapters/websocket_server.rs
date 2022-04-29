@@ -10,7 +10,7 @@ use actix_http::ws::{Codec, Message, ProtocolError};
 use bytes::Bytes;
 use futures::Stream;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use async_trait::async_trait;
 use crate::message::Message as GunMessage;
 use crate::types::NetworkAdapter;
@@ -120,9 +120,14 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for MyWs {
             },
             Ok(ws::Message::Text(text)) => {
                 debug!("in: {}", text);
-                if let Err(e) = self.incoming_msg_sender.try_send(GunMessage { msg: text.to_string(), from: self.id.clone(), to: None }) {
-                    error!("error sending incoming message to node: {}", e);
-                }
+                match GunMessage::try_from(&text.to_string()) {
+                    Ok(msg) => {
+                        if let Err(e) = self.incoming_msg_sender.try_send(msg) {
+                            error!("error sending incoming message to node: {}", e);
+                        }
+                    },
+                    Err(e) => error!("{}", e)
+                };
             },
             Err(e) => {
                 error!("error receiving from websocket: {}", e);
@@ -214,34 +219,41 @@ impl WebsocketServer {
         server.bind(url).unwrap().run()
     }
 
+    async fn send_outgoing_msg(msg_str: String, recipients: Option<HashSet<String>>, users: Users) {
+        let users = users.read().await;
+        if let Some(recipients) = recipients { // ELSE SEND TO EVERYONE
+            for recipient in recipients {
+                if let Some(addr) = users.get(&recipient) {
+                    let res = addr.send(OutgoingMessage { gun_message: msg_str.clone() }).await; // TODO break on Closed error only
+                    if let Err(e) = res {
+                        error!("error sending outgoing msg to websocket actor: {}", e);
+                    }
+                }
+            }
+        } else {
+            for recipient in users.keys() { // TODO cleanup, basically the same code as above
+                if let Some(addr) = users.get(recipient) {
+                    let res = addr.send(OutgoingMessage { gun_message: msg_str.clone() }).await; // TODO break on Closed error only
+                    if let Err(e) = res {
+                        error!("error sending outgoing msg to websocket actor: {}", e);
+                    }
+                }
+            }
+        }
+    }
+
     fn send_outgoing_msgs(node: &Node, users: &Users) {
         let mut rx = node.get_outgoing_msg_receiver();
         let users = users.clone();
         tokio::task::spawn(async move {
             loop {
                 if let Ok(message) = rx.recv().await {
-                    let users = users.read().await;
-                    if let Some(recipients) = message.to.clone() { // ELSE SEND TO EVERYONE
-                        for recipient in recipients {
-                            let message = message.clone();
-                            if let Some(addr) = users.get(&recipient) {
-                                let res = addr.send(OutgoingMessage { gun_message: message.msg }).await; // TODO break on Closed error only
-                                if let Err(e) = res {
-                                    error!("error sending outgoing msg to websocket actor: {}", e);
-                                }
-                            }
-                        }
-                    } else {
-                        for recipient in users.keys() { // TODO cleanup, basically the same code as above
-                            let message = message.clone();
-                            if let Some(addr) = users.get(recipient) {
-                                let res = addr.send(OutgoingMessage { gun_message: message.msg }).await; // TODO break on Closed error only
-                                if let Err(e) = res {
-                                    error!("error sending outgoing msg to websocket actor: {}", e);
-                                }
-                            }
-                        }
+                    match message {
+                        GunMessage::Get(msg) => { Self::send_outgoing_msg(msg.to_string(), msg.recipients, users).await; },
+                        GunMessage::Put(msg) => { Self::send_outgoing_msg(msg.to_string(), msg.recipients, users).await; },
+                        _ => {}
                     }
+
                 }
             }
         });
