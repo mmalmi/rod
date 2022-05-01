@@ -64,37 +64,26 @@ impl MemoryStorage {
 
         for (node_id, update_data) in msg.updated_nodes.iter() {
             let update = || {
-                if let Some(new_value) = update_data.get(child_key) {
-                    if let Ok(new_value) = serde_json::from_value::<GunValue>(new_value.clone()) {
-                        /*
-                        if let Some(subs) = self.subscriptions_by_node_id.read().unwrap().get(node_id) {
-                            for sub in subs {
-                                sub.send(new_value.clone());
-                            }
-                        }
-                        */
-                        debug!("saving new k-v {}: {:?}", node_id, new_value);
-                        let mut write = self.store.write().unwrap();
-                        let data = write.entry(node_id.to_string())
-                            .or_insert_with(NodeData::default);
-                        let mut map = match &data.value {
-                            GunValue::Children(map) => map.clone(),
-                            _ => BTreeMap::<String, GunValue>::new()
-                        };
-                        map.insert(child_key.clone(), new_value);
-                        data.value = GunValue::Children(map);
-                        data.updated_at = incoming_val_updated_at;
-                    }
-                }
+                debug!("saving new k-v {}: {:?}", node_id, update_data);
+                let mut write = self.store.write().unwrap();
+                let data = write.entry(node_id.to_string())
+                    .or_insert_with(NodeData::default);
+                let mut map = match &data.value {
+                    GunValue::Children(map) => map.clone(),
+                    _ => BTreeMap::<String, GunValue>::new()
+                };
+                map.insert(node_id.clone(), update_data);
+                data.value = GunValue::Children(map);
+                data.updated_at = update_data.updated_at;
             };
 
             let existing_data: Option<NodeData>;
             { // to prevent store deadlock
-                existing_data = self.store.read().unwrap().get(child_key).cloned();
+                existing_data = self.store.read().unwrap().get(node_id).cloned();
             }
             if let Some(existing_data) = existing_data {
                 // TODO: merge
-                if existing_data.updated_at <= incoming_val_updated_at {
+                if existing_data.updated_at <= update_data.updated_at {
                     update();
                 }
             } else {

@@ -54,7 +54,7 @@ pub struct NodeConfig {
 
 struct SeenGetMessage {
     from: String,
-    last_reply_hash: String,
+    last_reply_checksum: Option<String>,
 }
 
 impl Default for NodeConfig {
@@ -335,9 +335,9 @@ impl Node {
             return;
         }
         let topic = msg.node_id.split("/").next().unwrap_or("");
-        debug!("{} subscribed to {}", from, topic);
+        debug!("{} subscribed to {}", msg.from, topic);
         self.subscribers_by_topic.write().unwrap().entry(topic.to_string())
-            .or_insert_with(HashSet::new).insert(from.clone());
+            .or_insert_with(HashSet::new).insert(msg.from.clone());
         self.outgoing_message(Message::Get(msg), msg.id.clone());
     }
 
@@ -348,17 +348,13 @@ impl Node {
         }
         let mut recipients = HashSet::<String>::new();
         if let Some(in_response_to) = msg.in_response_to {
-            let mut content_hash = "-".to_string();
-            if let Some(hash) = msg_obj.get("##") {
-                content_hash = hash.to_string();
-            }
             let in_response_to = in_response_to.to_string();
             if let Some(seen_get_message) = self.seen_get_messages.write().unwrap().get_mut(&in_response_to) {
-                if content_hash == seen_get_message.last_reply_hash {
+                if msg.checksum != None && msg.checksum == seen_get_message.last_reply_checksum {
                     debug!("same reply already sent");
                     return;
                 } // failing these conditions, should we still send the ack to someone?
-                seen_get_message.last_reply_hash = content_hash;
+                seen_get_message.last_reply_checksum = msg.checksum.clone();
                 recipients.insert(seen_get_message.from.clone());
             }
         } else {

@@ -43,7 +43,7 @@ pub struct Put {
     pub recipients: Option<HashSet<String>>,
     pub in_response_to: Option<String>,
     pub updated_nodes: BTreeMap<String, NodeData>,
-    pub checksum: String
+    pub checksum: Option<String>
 }
 impl Put {
     pub fn new(updated_nodes: BTreeMap<String, NodeData>, in_response_to: Option<String>) -> Self {
@@ -53,7 +53,7 @@ impl Put {
             recipients: None,
             in_response_to,
             updated_nodes,
-            checksum: "".to_string()
+            checksum: None
         }
     }
 
