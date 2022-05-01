@@ -35,12 +35,12 @@ impl MemoryStorage {
         });
     }
 
-    fn handle_get(&mut self, msg: Get) {
-        if msg.from == self.id {
+    fn handle_get(msg: Get, my_id: String, store: Arc<RwLock<HashMap<String, NodeData>>>, node: Node) {
+        if msg.from == my_id {
             return;
         }
 
-        let data = self.store.read().unwrap().get(&msg.node_id).cloned();
+        let data = store.read().unwrap().get(&msg.node_id).cloned();
         if let Some(data) = data {
             debug!("have {}: {:?}", msg.id, data);
             match data.value {
@@ -48,7 +48,7 @@ impl MemoryStorage {
                     let mut recipients = HashSet::new();
                     recipients.insert(msg.from.clone());
                     let put = Put::new(map.clone(), Some(msg.id.clone()));
-                    self.node.get_incoming_msg_sender().send(Message::Put(put));
+                    node.get_incoming_msg_sender().send(Message::Put(put));
                 },
                 _ => {}
             };
@@ -57,29 +57,29 @@ impl MemoryStorage {
         }
     }
 
-    fn handle_put(&mut self, msg: Put) {
-        if msg.from == self.id {
+    fn handle_put(msg: Put, my_id: String, store: Arc<RwLock<HashMap<String, NodeData>>>) {
+        if msg.from == my_id {
             return;
         }
 
         for (node_id, update_data) in msg.updated_nodes.iter() {
             let update = || {
                 debug!("saving new k-v {}: {:?}", node_id, update_data);
-                let mut write = self.store.write().unwrap();
+                let mut write = store.write().unwrap();
                 let data = write.entry(node_id.to_string())
                     .or_insert_with(NodeData::default);
                 let mut map = match &data.value {
                     GunValue::Children(map) => map.clone(),
-                    _ => BTreeMap::<String, GunValue>::new()
+                    _ => BTreeMap::<String, NodeData>::new()
                 };
-                map.insert(node_id.clone(), update_data);
+                map.insert(node_id.clone(), update_data.clone());
                 data.value = GunValue::Children(map);
                 data.updated_at = update_data.updated_at;
             };
 
             let existing_data: Option<NodeData>;
             { // to prevent store deadlock
-                existing_data = self.store.read().unwrap().get(node_id).cloned();
+                existing_data = store.read().unwrap().get(node_id).cloned();
             }
             if let Some(existing_data) = existing_data {
                 // TODO: merge
@@ -105,16 +105,21 @@ impl NetworkAdapter for MemoryStorage {
     }
 
     async fn start(&self) {
-        self.update_stats();
+        let store = self.store.clone();
+        let my_id = self.id.clone();
+        let node = self.node.clone();
 
-        let mut rx = self.node.get_outgoing_msg_receiver();
+        if node.config.read().unwrap().stats {
+            self.update_stats();
+        }
 
+        let mut rx = node.get_outgoing_msg_receiver();
         tokio::task::spawn(async move {
             loop {
                 if let Ok(message) = rx.recv().await {
                     match message {
-                        Message::Get(get) => self.handle_get(get),
-                        Message::Put(put) => self.handle_put(put),
+                        Message::Get(get) => Self::handle_get(get.clone(), my_id.clone(), store.clone(), node.clone()),
+                        Message::Put(put) => Self::handle_put(put.clone(), my_id.clone(), store.clone()),
                         _ => {}
                     }
                 }

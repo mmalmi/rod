@@ -294,7 +294,8 @@ impl Node {
                 key = None;
             }
             let get = Get::new(self.uid.read().unwrap().to_string(), key);
-            self.outgoing_message(Message::Get(get), get.id.clone());
+            let id = get.id.clone();
+            self.outgoing_message(Message::Get(get), id);
         }
         let sub = self.on_sender.subscribe();
         let uid = self.uid.read().unwrap().clone();
@@ -338,7 +339,8 @@ impl Node {
         debug!("{} subscribed to {}", msg.from, topic);
         self.subscribers_by_topic.write().unwrap().entry(topic.to_string())
             .or_insert_with(HashSet::new).insert(msg.from.clone());
-        self.outgoing_message(Message::Get(msg), msg.id.clone());
+        let id = msg.id.clone();
+        self.outgoing_message(Message::Get(msg), id);
     }
 
     // relay to original requester or all subscribers
@@ -347,7 +349,8 @@ impl Node {
             return;
         }
         let mut recipients = HashSet::<String>::new();
-        if let Some(in_response_to) = msg.in_response_to {
+        let in_response_to = msg.in_response_to.clone();
+        if let Some(in_response_to) = in_response_to {
             let in_response_to = in_response_to.to_string();
             if let Some(seen_get_message) = self.seen_get_messages.write().unwrap().get_mut(&in_response_to) {
                 if msg.checksum != None && msg.checksum == seen_get_message.last_reply_checksum {
@@ -368,7 +371,8 @@ impl Node {
         }
         let mut msg = msg.clone();
         msg.recipients = Some(recipients);
-        self.outgoing_message(Message::Put(msg), msg.id.clone());
+        let id = msg.id.clone();
+        self.outgoing_message(Message::Put(msg), id);
     }
 
     fn is_message_seen(&mut self, id: String, msg_str: String) -> bool {
@@ -386,7 +390,7 @@ impl Node {
     }
 
     fn outgoing_message(&self, msg: Message, msg_id: String) {
-        debug!("[{}] msg out {:?}", &self.get_peer_id()[..4], msg.to_string());
+        debug!("[{}] msg out {:?}", &self.get_peer_id()[..4], msg);
         self.seen_messages.write().unwrap().insert(msg_id); // TODO: doesn't seem to work, at least on multicast
         if let Err(e) = self.outgoing_msg_sender.send(msg) {
             error!("failed to send outgoing message from node: {}", e);
@@ -412,7 +416,8 @@ impl Node {
                 recipients = HashSet::new();
             }
             put.recipients = Some(recipients);
-            self.outgoing_message(Message::Put(put), put.id.clone());
+            let id = put.id.clone();
+            self.outgoing_message(Message::Put(put), id);
         }
     }
 

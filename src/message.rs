@@ -29,7 +29,7 @@ impl Get {
             },
             "#": self.id
         });
-        if let Some(child_key) = self.child_key {
+        if let Some(child_key) = self.child_key.clone() {
             json["get"]["."] = json!(child_key);
         }
         json.to_string()
@@ -58,7 +58,7 @@ impl Put {
     }
 
     pub fn new_from_kv(key: String, data: NodeData) -> Self {
-        let updated_nodes = BTreeMap::new();
+        let mut updated_nodes = BTreeMap::new();
         updated_nodes.insert(key, data);
         Put::new(updated_nodes, None)
     }
@@ -70,12 +70,12 @@ impl Put {
         });
 
         for (node_id, node_data) in self.updated_nodes.iter() {
-            let mut node = json["put"][node_id];
+            let node = &mut json["put"][node_id];
             node["_"] = json!({
                 "#": node_id,
                 ">": {}
             });
-            match node_data.value {
+            match &node_data.value {
                 GunValue::Children(children) => {
                     for (k, v) in children.iter() {
                         node[">"][k] = json!(node_data.updated_at);

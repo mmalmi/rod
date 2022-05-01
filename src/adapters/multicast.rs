@@ -41,14 +41,16 @@ impl NetworkAdapter for Multicast {
                             Ok(msg) => {
                                 match msg {
                                     Message::Put(put) => {
+                                        let mut put = put.clone();
                                         put.from = from;
-                                        if let Err(e) = incoming_message_sender.try_send(msg) {
+                                        if let Err(e) = incoming_message_sender.try_send(Message::Put(put)) {
                                             error!("failed to send message to node: {}", e);
                                         }
                                     },
                                     Message::Get(get) => {
+                                        let mut get = get.clone();
                                         get.from = from;
-                                        if let Err(e) = incoming_message_sender.try_send(msg) {
+                                        if let Err(e) = incoming_message_sender.try_send(Message::Get(get)) {
                                             error!("failed to send message to node: {}", e);
                                         }
                                     },

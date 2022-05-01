@@ -249,8 +249,8 @@ impl WebsocketServer {
             loop {
                 if let Ok(message) = rx.recv().await {
                     match message {
-                        GunMessage::Get(msg) => { Self::send_outgoing_msg(msg.to_string(), msg.recipients, users).await; },
-                        GunMessage::Put(msg) => { Self::send_outgoing_msg(msg.to_string(), msg.recipients, users).await; },
+                        GunMessage::Get(msg) => { Self::send_outgoing_msg(msg.to_string(), msg.recipients, users.clone()).await; },
+                        GunMessage::Put(msg) => { Self::send_outgoing_msg(msg.to_string(), msg.recipients, users.clone()).await; },
                         _ => {}
                     }
 

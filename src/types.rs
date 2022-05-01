@@ -13,7 +13,7 @@ pub enum GunValue {
     Number(f64),
     Text(String),
     Link(String),
-    Children(BTreeMap<String, GunValue>),
+    Children(BTreeMap<String, NodeData>),
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]

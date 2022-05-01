@@ -118,6 +118,9 @@ async fn user_connected(mut node: Node, ws: WebSocketStream<tokio_tungstenite::M
         };
         match msg.to_text() {
             Ok(s) => {
+                if s == "PING" {
+                    continue;
+                }
                 match Message::try_from(s) {
                     Ok(msg) => {
                         if let Err(e) = incoming_message_sender.try_send(msg) {
