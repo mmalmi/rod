@@ -37,20 +37,18 @@ impl NetworkAdapter for Multicast {
                     if let Ok(data) = std::str::from_utf8(&message.data) {
                         debug!("in: {}", data);
                         let from = format!("multicast_{:?}", message.interface).to_string();
-                        match Message::try_from(data) {
+                        match Message::try_from(data, from) {
                             Ok(msgs) => {
                                 for msg in msgs.into_iter() {
                                     match msg {
                                         Message::Put(put) => {
-                                            let mut put = put.clone();
-                                            put.from = from.clone();
+                                            let put = put.clone();
                                             if let Err(e) = incoming_message_sender.try_send(Message::Put(put)) {
                                                 error!("failed to send message to node: {}", e);
                                             }
                                         },
                                         Message::Get(get) => {
-                                            let mut get = get.clone();
-                                            get.from = from.clone();
+                                            let get = get.clone();
                                             if let Err(e) = incoming_message_sender.try_send(Message::Get(get)) {
                                                 error!("failed to send message to node: {}", e);
                                             }

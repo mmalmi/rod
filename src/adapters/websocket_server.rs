@@ -120,7 +120,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for MyWs {
             },
             Ok(ws::Message::Text(text)) => {
                 debug!("in: {}", text);
-                match GunMessage::try_from(&text.to_string()) {
+                match GunMessage::try_from(&text.to_string(), self.id.clone()) {
                     Ok(msgs) => {
                         for msg in msgs.into_iter() {
                             if let Err(e) = self.incoming_msg_sender.try_send(msg) {
