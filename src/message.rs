@@ -2,6 +2,8 @@ use serde_json::{json, Value as SerdeJsonValue};
 use crate::utils::random_string;
 use std::collections::{HashSet, BTreeMap};
 use crate::types::*;
+use log::{debug, error};
+
 
 #[derive(Clone, Debug)]
 pub struct Get {
@@ -27,7 +29,7 @@ impl Get {
             "get": {
                 "#": self.node_id
             },
-            "#": self.id
+            "#": self.id.to_string()
         });
         if let Some(child_key) = self.child_key.clone() {
             json["get"]["."] = json!(child_key);
@@ -66,7 +68,7 @@ impl Put {
     pub fn to_string(&self) -> String {
         let mut json = json!({
             "put": {},
-            "#": self.id,
+            "#": self.id.to_string(),
         });
 
         for (node_id, node_data) in self.updated_nodes.iter() {
@@ -105,12 +107,80 @@ impl Message {
         }
     }
 
-    pub fn try_from(s: &str) -> Result<Self, &str> {
+    fn from_put_obj(json: &SerdeJsonValue, msg_id: String) -> Result<Self, &'static str> {
+        let obj = match json.as_object() {
+            Some(obj) => obj,
+            _ => { return Err("invalid message: msg.put was not an object"); }
+        };
+        let mut updated_nodes = BTreeMap::<String, NodeData>::new();
+        for (node_id, node_data) in obj.iter() {
+
+        }
+        let put = Put {
+            id: msg_id.to_string(),
+            from: "".to_string(),
+            recipients: None,
+            in_response_to: None,
+            updated_nodes,
+            checksum: None
+        };
+        Ok(Message::Put(put))
+    }
+
+    fn from_get_obj(json: &SerdeJsonValue, msg_id: String) -> Result<Self, &'static str> {
+        let get = Get {
+            id: msg_id,
+            from: "".to_string(),
+            recipients: None,
+            node_id: "".to_string(),
+            child_key: None,
+        };
+        Ok(Message::Get(get))
+    }
+    
+    pub fn from_json_obj(json: &SerdeJsonValue) -> Result<Self, &'static str> {
+        let obj = match json.as_object() {
+            Some(obj) => obj,
+            _ => { return Err("not a json object"); }
+        };
+        let msg_id = match obj["#"].as_str() {
+            Some(str) => str.to_string(),
+            _ => { return Err("msg id not a string"); }
+        };
+        if msg_id.len() > 24 {
+            return Err("msg id too long (> 24)");
+        }
+        if !msg_id.chars().all(char::is_alphanumeric) {
+            return Err("msg_id must be alphanumeric");
+        }
+        if let Some(put) = obj.get("put") {
+            Self::from_put_obj(put, msg_id)
+        } else if let Some(get) = obj.get("get") {
+            Self::from_get_obj(get, msg_id)
+        } else if let Some(dam) = obj.get("dam") {
+            Ok(Message::Hi { from: msg_id })
+        } else {
+            Err("Unrecognized message")
+        }
+    }
+
+    pub fn try_from(s: &str) -> Result<Vec<Self>, &str> {
         let json: SerdeJsonValue = match serde_json::from_str(s) {
             Ok(json) => json,
             Err(_) => { return Err("Failed to parse message as JSON"); }
         };
-
-        Ok(Message::Hi { from: "".to_string() })
+        
+        if let Some(arr) = json.as_array() {
+            let mut vec = Vec::<Self>::new();
+            for msg in arr {
+                vec.push(Self::from_json_obj(msg)?);
+            }
+            Ok(vec)
+        } else {
+            match Self::from_json_obj(&json) {
+                Ok(msg) => Ok(vec![msg]),
+                Err(e) => Err(e)
+            }
+        }
     }
 }

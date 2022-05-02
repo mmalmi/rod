@@ -122,9 +122,11 @@ async fn user_connected(mut node: Node, ws: WebSocketStream<tokio_tungstenite::M
                     continue;
                 }
                 match Message::try_from(s) {
-                    Ok(msg) => {
-                        if let Err(e) = incoming_message_sender.try_send(msg) {
-                            error!("failed to send incoming message to node: {}", e);
+                    Ok(msgs) => {
+                        for msg in msgs.into_iter() {
+                            if let Err(e) = incoming_message_sender.try_send(msg) {
+                                error!("failed to send incoming message to node: {}", e);
+                            }
                         }
                     },
                     Err(e) => {

@@ -38,23 +38,25 @@ impl NetworkAdapter for Multicast {
                         debug!("in: {}", data);
                         let from = format!("multicast_{:?}", message.interface).to_string();
                         match Message::try_from(data) {
-                            Ok(msg) => {
-                                match msg {
-                                    Message::Put(put) => {
-                                        let mut put = put.clone();
-                                        put.from = from;
-                                        if let Err(e) = incoming_message_sender.try_send(Message::Put(put)) {
-                                            error!("failed to send message to node: {}", e);
-                                        }
-                                    },
-                                    Message::Get(get) => {
-                                        let mut get = get.clone();
-                                        get.from = from;
-                                        if let Err(e) = incoming_message_sender.try_send(Message::Get(get)) {
-                                            error!("failed to send message to node: {}", e);
-                                        }
-                                    },
-                                    _ => {}
+                            Ok(msgs) => {
+                                for msg in msgs.into_iter() {
+                                    match msg {
+                                        Message::Put(put) => {
+                                            let mut put = put.clone();
+                                            put.from = from.clone();
+                                            if let Err(e) = incoming_message_sender.try_send(Message::Put(put)) {
+                                                error!("failed to send message to node: {}", e);
+                                            }
+                                        },
+                                        Message::Get(get) => {
+                                            let mut get = get.clone();
+                                            get.from = from.clone();
+                                            if let Err(e) = incoming_message_sender.try_send(Message::Get(get)) {
+                                                error!("failed to send message to node: {}", e);
+                                            }
+                                        },
+                                        _ => {}
+                                    }
                                 }
                             },
                             Err(e) => error!("message parsing failed: {}", e)

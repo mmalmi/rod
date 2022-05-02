@@ -121,9 +121,11 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for MyWs {
             Ok(ws::Message::Text(text)) => {
                 debug!("in: {}", text);
                 match GunMessage::try_from(&text.to_string()) {
-                    Ok(msg) => {
-                        if let Err(e) = self.incoming_msg_sender.try_send(msg) {
-                            error!("error sending incoming message to node: {}", e);
+                    Ok(msgs) => {
+                        for msg in msgs.into_iter() {
+                            if let Err(e) = self.incoming_msg_sender.try_send(msg) {
+                                error!("error sending incoming message to node: {}", e);
+                            }
                         }
                     },
                     Err(e) => error!("{}", e)
