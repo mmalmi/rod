@@ -15,10 +15,10 @@ pub struct Get {
     pub json_str: Option<String>
 }
 impl Get {
-    pub fn new(node_id: String, child_key: Option<String>) -> Self {
+    pub fn new(node_id: String, child_key: Option<String>, from: String) -> Self {
         Self {
             id: random_string(8),
-            from: "".to_string(),
+            from,
             recipients: None,
             node_id,
             child_key,
@@ -31,15 +31,19 @@ impl Get {
             return json_str;
         }
 
+        debug!("1 node_id {}", self.node_id);
+
         let mut json = json!({
             "get": {
-                "#": self.node_id
+                "#": &self.node_id
             },
-            "#": self.id.to_string()
+            "#": &self.id
         });
         if let Some(child_key) = self.child_key.clone() {
             json["get"]["."] = json!(child_key);
         }
+
+        debug!("json {}", json.to_string());
         json.to_string()
     }
 }
@@ -141,10 +145,11 @@ impl Message {
     }
 
     fn from_get_obj(json: &SerdeJsonValue, json_str: String, msg_id: String, from: String) -> Result<Self, &'static str> {
-        let (node_id, _) = match json.as_object().unwrap().iter().next() {
+        let node_id = match json["#"].as_str() {
             Some(str) => str,
-            _ => { return Err("no node id found in get message"); }
+            _ => { return Err("no node id (#) found in get message"); }
         };
+        debug!("get node_id {}", node_id);
         let get = Get {
             id: msg_id,
             from,
@@ -162,9 +167,11 @@ impl Message {
             _ => { return Err("not a json object"); }
         };
         let msg_id = match obj["#"].as_str() {
-            Some(str) => str.to_string(),
+            Some(str) => str,
             _ => { return Err("msg id not a string"); }
         };
+        debug!("!!! {}", msg_id);
+        let msg_id = std::string::String::from(msg_id);
         if msg_id.len() > 24 {
             return Err("msg id too long (> 24)");
         }
@@ -194,7 +201,7 @@ impl Message {
         if let Some(arr) = json.as_array() {
             let mut vec = Vec::<Self>::new();
             for msg in arr {
-                vec.push(Self::from_json_obj(msg, s.to_string(), from.clone())?);
+                vec.push(Self::from_json_obj(msg, msg.to_string(), from.clone())?);
             }
             Ok(vec)
         } else {

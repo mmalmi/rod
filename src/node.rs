@@ -253,7 +253,7 @@ impl Node {
         let mut path = self.path.clone();
         path.push(key.clone());
         let new_child_uid = path.join("/");
-        debug!("new_child_uid {:?}", new_child_uid);
+        debug!("new_child_uid {}", new_child_uid);
         let node = Self {
             path,
             config: self.config.clone(),
@@ -293,7 +293,7 @@ impl Node {
             } else {
                 key = None;
             }
-            let get = Get::new(self.uid.read().unwrap().to_string(), key);
+            let get = Get::new(self.uid.read().unwrap().to_string(), key, self.get_peer_id().clone());
             let id = get.id.clone();
             self.outgoing_message(Message::Get(get), id);
         }
