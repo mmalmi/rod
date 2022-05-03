@@ -41,7 +41,7 @@ impl MemoryStorage {
         }
 
         if let Some(children) = store.read().unwrap().get(&msg.node_id).cloned() {
-            debug!("have {}: {:?}", msg.id, children);
+            debug!("have {}: {:?}", msg.node_id, children);
             let mut recipients = HashSet::new();
             recipients.insert(msg.from.clone());
             let mut updated_nodes = BTreeMap::new();
@@ -49,7 +49,7 @@ impl MemoryStorage {
             let put = Put::new(updated_nodes, Some(msg.id.clone())); // TODO: check if only one child_key was requested
             node.get_incoming_msg_sender().send(Message::Put(put));
         } else {
-            debug!("have not {}", msg.id);
+            debug!("have not {}", msg.node_id);
         }
     }
 

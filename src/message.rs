@@ -129,16 +129,20 @@ impl Message {
                 Some(obj) => obj,
                 _ => { return Err("put node data was not an object"); }
             };
-            let updated_at_times = match node_data["_"].as_object() {
+            let updated_at_times = match node_data["_"][">"].as_object() {
                 Some(obj) => obj,
                 _ => { return Err("no metadata _ in Put node object"); }
             };
             let mut children = Children::default();
             for (child_key, child_val) in node_data.iter() {
                 if child_key == "_" { continue; }
-                let updated_at = match updated_at_times[child_key].as_f64() {
+                let updated_at = match updated_at_times.get(child_key) {
+                    Some(updated_at) => updated_at,
+                    _ => { return Err("no updated_at found for Put key"); }
+                };
+                let updated_at = match updated_at.as_f64() {
                     Some(val) => val,
-                    None => { return Err("no updated_at found for Put key"); }
+                    None => { return Err("updated_at was not a number"); }
                 };
                 children.insert(child_key.to_string(), NodeData { updated_at, value: child_val.to_string().into() });
             }
@@ -148,7 +152,7 @@ impl Message {
             id: msg_id.to_string(),
             from,
             recipients: None,
-            in_response_to: None,
+            in_response_to: None, // TODO
             updated_nodes,
             checksum: None,
             json_str: Some(json_str)

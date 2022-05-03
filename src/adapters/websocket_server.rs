@@ -127,7 +127,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for MyWs {
                             }
                         }
                     },
-                    Err(e) => error!("{}", e)
+                    Err(e) => debug!("{}", e)
                 };
             },
             Err(e) => {

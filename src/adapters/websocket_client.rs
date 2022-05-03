@@ -76,6 +76,8 @@ async fn user_connected(mut node: Node, ws: WebSocketStream<tokio_tungstenite::M
 
     let mut rx = node.get_outgoing_msg_receiver();
 
+    let update_stats = node.config.read().unwrap().stats;
+
     let my_id_clone = my_id.clone();
     tokio::task::spawn(async move { // TODO as in websocket_server, there should be only 1 task that relays to the addressed message recipient
         loop {
@@ -100,7 +102,9 @@ async fn user_connected(mut node: Node, ws: WebSocketStream<tokio_tungstenite::M
     users.write().await.insert(my_id.clone(), user);
 
     let peer_id = node.get_peer_id();
-    node.get("node_stats").get(&peer_id).get("websocket_client_connections").put(users.read().await.len().to_string().into());
+    if update_stats {
+        node.get("node_stats").get(&peer_id).get("websocket_client_connections").put(users.read().await.len().to_string().into());
+    }
 
     // Return a `Future` that is basically a state machine managing
     // this specific user's connection.
@@ -145,6 +149,8 @@ async fn user_connected(mut node: Node, ws: WebSocketStream<tokio_tungstenite::M
     // user_ws_rx stream will keep processing as long as the user stays
     // connected. Once they disconnect, then...
     users.write().await.remove(&my_id);
-    node.get("node_stats").get(&peer_id).get("websocket_client_connections").put(users.read().await.len().to_string().into());
+    if update_stats {
+        node.get("node_stats").get(&peer_id).get("websocket_client_connections").put(users.read().await.len().to_string().into());
+    }
 }
 

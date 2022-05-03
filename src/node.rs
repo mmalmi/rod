@@ -368,14 +368,14 @@ impl Node {
         } else {
             for node_id in msg.updated_nodes.keys() {
                 let topic = node_id.split("/").next().unwrap_or("");
-                debug!("getting subscribers for topic {}", topic);
                 if let Some(subscribers) = self.subscribers_by_topic.read().unwrap().get(topic) {
                     recipients.extend(subscribers.clone());
                 }
+                debug!("getting subscribers for topic {}: {:?}", topic, recipients);
             }
         }
         let mut msg = msg.clone();
-        msg.recipients = Some(recipients);
+        msg.recipients = None; // Some(recipients);
         let id = msg.id.clone();
         self.outgoing_message(Message::Put(msg), id);
     }
@@ -407,10 +407,11 @@ impl Node {
         let uid = self.uid.read().unwrap().clone();
         self.on_sender.send(value.clone()).ok();
         if self.adapters.read().unwrap().len() > 0 {
-            // TODO: write to parents
+            // TODO: write the full chain of parents
             for (parent_id, _parent) in self.parents.read().unwrap().iter() {
                 let mut children = Children::default();
-                children.insert(self.uid.read().unwrap().clone(), NodeData { value: value.clone(), updated_at });
+
+                children.insert(self.path.last().unwrap().clone(), NodeData { value: value.clone(), updated_at });
                 let mut put = Put::new_from_kv(parent_id.to_string(), children);
                 put.from = self.get_peer_id();
                 let recipients;
@@ -502,10 +503,10 @@ mod tests {
         });
         async fn tst(mut node1: Node, mut node2: Node) {
             sleep(Duration::from_millis(1000)).await;
-            let mut sub1 = node1.get("node2").on();
-            let mut sub2 = node2.get("node1").on();
-            node1.get("node1").put("Amandil".into());
-            node2.get("node2").put("Beregond".into());
+            let mut sub1 = node1.get("node2").get("name").on();
+            let mut sub2 = node2.get("node1").get("name").on();
+            node1.get("node1").get("name").put("Amandil".into());
+            node2.get("node2").get("name").put("Beregond".into());
             match sub1.recv().await.unwrap() {
                 GunValue::Text(str) => {
                     assert_eq!(&str, "Beregond");
