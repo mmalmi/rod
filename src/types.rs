@@ -13,8 +13,9 @@ pub enum GunValue {
     Number(f64),
     Text(String),
     Link(String),
-    Children(BTreeMap<String, NodeData>),
 }
+
+pub type Children = BTreeMap<String, NodeData>;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct NodeData {

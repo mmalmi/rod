@@ -332,6 +332,11 @@ impl Node {
 
     // record subscription & relay
     fn handle_get(&mut self, msg: Get) {
+        debug!("aaaa {}", msg.id);
+        if !msg.id.chars().all(char::is_alphanumeric) {
+            error!("id {}", msg.id);
+            panic!("msg_id must be alphanumeric");
+        }
         if self.is_message_seen(msg.id.clone(), msg.to_string()) {
             return;
         }
@@ -385,7 +390,6 @@ impl Node {
         self.seen_messages.write().unwrap().insert(id.clone());
 
         let s: String = msg_str.chars().take(300).collect();
-        debug!("in ID {}:\n{}\n", id.to_string(), s);
         return false;
     }
 
@@ -400,24 +404,27 @@ impl Node {
     /// Set a GunValue for the Node.
     pub fn put(&mut self, value: GunValue) {
         let updated_at: f64 = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis() as f64;
-        // TODO: move in-memory storage into an adapter
         let uid = self.uid.read().unwrap().clone();
-        // TODO: save parents, or move self.store to adapter
         self.on_sender.send(value.clone()).ok();
         if self.adapters.read().unwrap().len() > 0 {
-            let mut put = Put::new_from_kv(uid, NodeData { value, updated_at });
-            put.from = self.get_peer_id();
-            let recipients;
-            let topic = self.path.iter().next().unwrap();
-            debug!("getting subscribers for topic {}", topic);
-            if let Some(subscribers) = self.subscribers_by_topic.read().unwrap().get(topic) {
-                recipients = subscribers.clone();
-            } else {
-                recipients = HashSet::new();
+            // TODO: write to parents
+            for (parent_id, _parent) in self.parents.read().unwrap().iter() {
+                let mut children = Children::default();
+                children.insert(self.uid.read().unwrap().clone(), NodeData { value: value.clone(), updated_at });
+                let mut put = Put::new_from_kv(parent_id.to_string(), children);
+                put.from = self.get_peer_id();
+                let recipients;
+                let topic = self.path.iter().next().unwrap();
+                debug!("getting subscribers for topic {}", topic);
+                if let Some(subscribers) = self.subscribers_by_topic.read().unwrap().get(topic) {
+                    recipients = subscribers.clone();
+                } else {
+                    recipients = HashSet::new();
+                }
+                put.recipients = Some(recipients);
+                let id = put.id.clone();
+                self.outgoing_message(Message::Put(put), id);
             }
-            put.recipients = Some(recipients);
-            let id = put.id.clone();
-            self.outgoing_message(Message::Put(put), id);
         }
     }
 

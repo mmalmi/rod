@@ -54,12 +54,12 @@ pub struct Put {
     pub from: String,
     pub recipients: Option<HashSet<String>>,
     pub in_response_to: Option<String>,
-    pub updated_nodes: BTreeMap<String, NodeData>,
+    pub updated_nodes: BTreeMap<String, Children>,
     pub checksum: Option<String>,
     pub json_str: Option<String>
 }
 impl Put {
-    pub fn new(updated_nodes: BTreeMap<String, NodeData>, in_response_to: Option<String>) -> Self {
+    pub fn new(updated_nodes: BTreeMap<String, Children>, in_response_to: Option<String>) -> Self {
         Self {
             id: random_string(8),
             from: "".to_string(),
@@ -71,9 +71,9 @@ impl Put {
         }
     }
 
-    pub fn new_from_kv(key: String, data: NodeData) -> Self {
+    pub fn new_from_kv(key: String, children: Children) -> Self {
         let mut updated_nodes = BTreeMap::new();
-        updated_nodes.insert(key, data);
+        updated_nodes.insert(key, children);
         Put::new(updated_nodes, None)
     }
 
@@ -87,20 +87,15 @@ impl Put {
             "#": self.id.to_string(),
         });
 
-        for (node_id, node_data) in self.updated_nodes.iter() {
+        for (node_id, children) in self.updated_nodes.iter() {
             let node = &mut json["put"][node_id];
             node["_"] = json!({
                 "#": node_id,
                 ">": {}
             });
-            match &node_data.value {
-                GunValue::Children(children) => {
-                    for (k, v) in children.iter() {
-                        node[">"][k] = json!(node_data.updated_at);
-                        node[k] = json!(v);
-                    }
-                },
-                _ => {}
+            for (k, v) in children.iter() {
+                node["_"][">"][k] = json!(v.updated_at);
+                node[k] = json!(v.value);
             }
         }
         json.to_string()
@@ -128,9 +123,26 @@ impl Message {
             Some(obj) => obj,
             _ => { return Err("invalid message: msg.put was not an object"); }
         };
-        let mut updated_nodes = BTreeMap::<String, NodeData>::new();
+        let mut updated_nodes = BTreeMap::<String, Children>::new();
         for (node_id, node_data) in obj.iter() {
-
+            let node_data = match node_data.as_object() {
+                Some(obj) => obj,
+                _ => { return Err("put node data was not an object"); }
+            };
+            let updated_at_times = match node_data["_"].as_object() {
+                Some(obj) => obj,
+                _ => { return Err("no metadata _ in Put node object"); }
+            };
+            let mut children = Children::default();
+            for (child_key, child_val) in node_data.iter() {
+                if child_key == "_" { continue; }
+                let updated_at = match updated_at_times[child_key].as_f64() {
+                    Some(val) => val,
+                    None => { return Err("no updated_at found for Put key"); }
+                };
+                children.insert(child_key.to_string(), NodeData { updated_at, value: child_val.to_string().into() });
+            }
+            updated_nodes.insert(node_id.to_string(), children);
         }
         let put = Put {
             id: msg_id.to_string(),
@@ -150,6 +162,7 @@ impl Message {
             _ => { return Err("no node id (#) found in get message"); }
         };
         debug!("get node_id {}", node_id);
+        let msg_id = msg_id.replace("\"", "");
         let get = Get {
             id: msg_id,
             from,
@@ -167,13 +180,11 @@ impl Message {
             _ => { return Err("not a json object"); }
         };
         let msg_id = match obj["#"].as_str() {
-            Some(str) => str,
+            Some(str) => str.to_string(),
             _ => { return Err("msg id not a string"); }
         };
-        debug!("!!! {}", msg_id);
-        let msg_id = std::string::String::from(msg_id);
-        if msg_id.len() > 24 {
-            return Err("msg id too long (> 24)");
+        if msg_id.len() > 32 {
+            return Err("msg id too long (> 32)");
         }
         if !msg_id.chars().all(char::is_alphanumeric) {
             return Err("msg_id must be alphanumeric");
@@ -182,12 +193,10 @@ impl Message {
             Self::from_put_obj(put, json_str, msg_id, from)
         } else if let Some(get) = obj.get("get") {
             Self::from_get_obj(get, json_str, msg_id, from)
-        } else if let Some(dam) = obj.get("dam") {
-            if msg_id != from {
-                return Err("\"hi\" message is not from claimed sender");
-            }
+        } else if let Some(_dam) = obj.get("dam") {
             Ok(Message::Hi { from: msg_id })
         } else {
+            error!("unrecognized message: {}", json_str);
             Err("Unrecognized message")
         }
     }

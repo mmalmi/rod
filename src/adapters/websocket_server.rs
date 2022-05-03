@@ -99,9 +99,8 @@ impl Handler<OutgoingMessage> for MyWs {
     type Result = ();
 
     fn handle(&mut self, msg: OutgoingMessage, ctx: &mut Self::Context) {
-        let text = format!("{}", msg.gun_message);
-        debug!("out {}", text);
-        ctx.text(text);
+        debug!("out {}", msg.gun_message);
+        ctx.text(msg.gun_message);
     }
 }
 

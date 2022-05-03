@@ -14,7 +14,7 @@ pub struct MemoryStorage {
     id: String,
     node: Node,
     graph_size_bytes: Arc<RwLock<usize>>,
-    store: Arc<RwLock<HashMap<String, NodeData>>>,
+    store: Arc<RwLock<HashMap<String, Children>>>,
 }
 
 impl MemoryStorage {
@@ -35,59 +35,44 @@ impl MemoryStorage {
         });
     }
 
-    fn handle_get(msg: Get, my_id: String, store: Arc<RwLock<HashMap<String, NodeData>>>, node: Node) {
+    fn handle_get(msg: Get, my_id: String, store: Arc<RwLock<HashMap<String, Children>>>, node: Node) {
         if msg.from == my_id {
             return;
         }
 
-        let data = store.read().unwrap().get(&msg.node_id).cloned();
-        if let Some(data) = data {
-            debug!("have {}: {:?}", msg.id, data);
-            match data.value {
-                GunValue::Children(map) => {
-                    let mut recipients = HashSet::new();
-                    recipients.insert(msg.from.clone());
-                    let put = Put::new(map.clone(), Some(msg.id.clone()));
-                    node.get_incoming_msg_sender().send(Message::Put(put));
-                },
-                _ => {}
-            };
+        if let Some(children) = store.read().unwrap().get(&msg.node_id).cloned() {
+            debug!("have {}: {:?}", msg.id, children);
+            let mut recipients = HashSet::new();
+            recipients.insert(msg.from.clone());
+            let mut updated_nodes = BTreeMap::new();
+            updated_nodes.insert(msg.node_id.clone(), children.clone());
+            let put = Put::new(updated_nodes, Some(msg.id.clone())); // TODO: check if only one child_key was requested
+            node.get_incoming_msg_sender().send(Message::Put(put));
         } else {
             debug!("have not {}", msg.id);
         }
     }
 
-    fn handle_put(msg: Put, my_id: String, store: Arc<RwLock<HashMap<String, NodeData>>>) {
+    fn handle_put(msg: Put, my_id: String, store: Arc<RwLock<HashMap<String, Children>>>) {
         if msg.from == my_id {
             return;
         }
 
         for (node_id, update_data) in msg.updated_nodes.iter() {
-            let update = || {
-                debug!("saving new k-v {}: {:?}", node_id, update_data);
-                let mut write = store.write().unwrap();
-                let data = write.entry(node_id.to_string())
-                    .or_insert_with(NodeData::default);
-                let mut map = match &data.value {
-                    GunValue::Children(map) => map.clone(),
-                    _ => BTreeMap::<String, NodeData>::new()
-                };
-                map.insert(node_id.clone(), update_data.clone());
-                data.value = GunValue::Children(map);
-                data.updated_at = update_data.updated_at;
-            };
-
-            let existing_data: Option<NodeData>;
-            { // to prevent store deadlock
-                existing_data = store.read().unwrap().get(node_id).cloned();
-            }
-            if let Some(existing_data) = existing_data {
-                // TODO: merge
-                if existing_data.updated_at <= update_data.updated_at {
-                    update();
+            debug!("saving new k-v {}: {:?}", node_id, update_data);
+            let mut write = store.write().unwrap();
+            if let Some(children) = write.get_mut(node_id) {
+                for (child_id, child_data) in update_data {
+                    if let Some(existing) = children.get(child_id) {
+                        if child_data.updated_at >= existing.updated_at {
+                            children.insert(child_id.clone(), child_data.clone());
+                        }
+                    } else {
+                        children.insert(child_id.clone(), child_data.clone());
+                    }
                 }
             } else {
-                update();
+                write.insert(node_id.to_string(), update_data.clone());
             }
         }
     }
