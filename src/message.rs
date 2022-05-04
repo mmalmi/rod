@@ -3,6 +3,7 @@ use crate::utils::random_string;
 use std::collections::{HashSet, BTreeMap};
 use crate::types::*;
 use log::{debug, error};
+use std::convert::TryFrom;
 
 
 #[derive(Clone, Debug)]
@@ -31,8 +32,6 @@ impl Get {
             return json_str;
         }
 
-        debug!("1 node_id {}", self.node_id);
-
         let mut json = json!({
             "get": {
                 "#": &self.node_id
@@ -42,8 +41,6 @@ impl Get {
         if let Some(child_key) = self.child_key.clone() {
             json["get"]["."] = json!(child_key);
         }
-
-        debug!("json {}", json.to_string());
         json.to_string()
     }
 }
@@ -95,9 +92,10 @@ impl Put {
             });
             for (k, v) in children.iter() {
                 node["_"][">"][k] = json!(v.updated_at);
-                node[k] = json!(v.value);
+                node[k] = v.value.clone().into();
             }
         }
+
         json.to_string()
     }
 }
@@ -144,7 +142,11 @@ impl Message {
                     Some(val) => val,
                     None => { return Err("updated_at was not a number"); }
                 };
-                children.insert(child_key.to_string(), NodeData { updated_at, value: child_val.to_string().into() });
+                let value = match GunValue::try_from(child_val.clone()) {
+                    Ok(v) => v,
+                    Err(e) => { return Err(e) }
+                };
+                children.insert(child_key.to_string(), NodeData { updated_at, value });
             }
             updated_nodes.insert(node_id.to_string(), children);
         }

@@ -3,6 +3,8 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::{Arc, RwLock};
 use crate::Node;
 use async_trait::async_trait;
+use serde_json::{json, Value as SerdeJsonValue};
+use std::convert::TryFrom;
 
 /// Value types supported by gun.
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -37,6 +39,38 @@ impl GunValue {
         match self {
             GunValue::Text(s) => s.len(),
             _ => std::mem::size_of_val(self)
+        }
+    }
+}
+
+impl TryFrom<SerdeJsonValue> for GunValue {
+    type Error = &'static str;
+
+    fn try_from(v: SerdeJsonValue) -> Result<GunValue, Self::Error> {
+        match v {
+            SerdeJsonValue::Null => Ok(GunValue::Null),
+            SerdeJsonValue::Bool(b) => Ok(GunValue::Bit(b)),
+            SerdeJsonValue::String(s) => Ok(GunValue::Text(s)),
+            SerdeJsonValue::Number(n) => {
+                match n.as_f64() {
+                    Some(n) => Ok(GunValue::Number(n)),
+                    _ => Err("not convertible to f64")
+                }
+            },
+            SerdeJsonValue::Object(_) => Err("cannot convert json object into GunValue"),
+            SerdeJsonValue::Array(_) => Err("cannot convert array into GunValue")
+        }
+    }
+}
+
+impl From<GunValue> for SerdeJsonValue {
+    fn from (v: GunValue) -> SerdeJsonValue {
+        match v {
+            GunValue::Null => SerdeJsonValue::Null,
+            GunValue::Text(t) => SerdeJsonValue::String(t),
+            GunValue::Bit(b) => SerdeJsonValue::Bool(b),
+            GunValue::Number(n) => json!(n),
+            GunValue::Link(l) => SerdeJsonValue::String(l) // TODO fix. Object?
         }
     }
 }
