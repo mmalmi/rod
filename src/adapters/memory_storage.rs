@@ -6,7 +6,7 @@ use crate::Node;
 use crate::types::*;
 
 use async_trait::async_trait;
-use log::{debug};
+use log::{debug, error};
 use std::sync::{Arc, RwLock};
 use tokio::time::{sleep, Duration};
 
@@ -47,7 +47,9 @@ impl MemoryStorage {
             let mut updated_nodes = BTreeMap::new();
             updated_nodes.insert(msg.node_id.clone(), children.clone());
             let put = Put::new(updated_nodes, Some(msg.id.clone())); // TODO: check if only one child_key was requested
-            node.get_incoming_msg_sender().send(Message::Put(put));
+            if let Err(e) = node.get_incoming_msg_sender().try_send(Message::Put(put)) {
+                error!("failed to send incoming message to node: {}", e);
+            }
         } else {
             debug!("have not {}", msg.node_id);
         }
@@ -59,7 +61,7 @@ impl MemoryStorage {
         }
 
         for (node_id, update_data) in msg.updated_nodes.iter() {
-            debug!("saving new k-v {}: {:?}", node_id, update_data);
+            debug!("saving k-v {}: {:?}", node_id, update_data);
             let mut write = store.write().unwrap();
             if let Some(children) = write.get_mut(node_id) {
                 for (child_id, child_data) in update_data {
