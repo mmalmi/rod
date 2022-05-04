@@ -42,11 +42,24 @@ impl MemoryStorage {
 
         if let Some(children) = store.read().unwrap().get(&msg.node_id).cloned() {
             debug!("have {}: {:?}", msg.node_id, children);
+            let reply_with_children = match msg.child_key {
+                Some(child_key) => { // reply with specific child if it's found
+                    match children.get(&child_key) {
+                        Some(child_val) => {
+                            let mut r = BTreeMap::new();
+                            r.insert(child_key.clone(), child_val.clone());
+                            r
+                        },
+                        None => { return; }
+                    }
+                },
+                None => children.clone() // reply with all children of this node
+            };
+            let mut reply_with_nodes = BTreeMap::new();
+            reply_with_nodes.insert(msg.node_id.clone(), reply_with_children);
             let mut recipients = HashSet::new();
             recipients.insert(msg.from.clone());
-            let mut updated_nodes = BTreeMap::new();
-            updated_nodes.insert(msg.node_id.clone(), children.clone());
-            let put = Put::new(updated_nodes, Some(msg.id.clone())); // TODO: check if only one child_key was requested
+            let put = Put::new(reply_with_nodes, Some(msg.id.clone()));
             if let Err(e) = node.get_incoming_msg_sender().try_send(Message::Put(put)) {
                 error!("failed to send incoming message to node: {}", e);
             }
