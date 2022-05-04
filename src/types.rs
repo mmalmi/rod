@@ -3,6 +3,8 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::{Arc, RwLock};
 use crate::Node;
 use async_trait::async_trait;
+use serde_json::{json, Value as SerdeJsonValue};
+use std::convert::TryFrom;
 
 /// Value types supported by gun.
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -13,7 +15,23 @@ pub enum GunValue {
     Number(f64),
     Text(String),
     Link(String),
-    Children(BTreeMap<String, GunValue>),
+}
+
+pub type Children = BTreeMap<String, NodeData>;
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct NodeData {
+    pub value: GunValue,
+    pub updated_at: f64
+}
+
+impl NodeData {
+    pub fn default() -> Self {
+        Self {
+            value: GunValue::Null,
+            updated_at: 0.0
+        }
+    }
 }
 
 impl GunValue {
@@ -21,6 +39,38 @@ impl GunValue {
         match self {
             GunValue::Text(s) => s.len(),
             _ => std::mem::size_of_val(self)
+        }
+    }
+}
+
+impl TryFrom<SerdeJsonValue> for GunValue {
+    type Error = &'static str;
+
+    fn try_from(v: SerdeJsonValue) -> Result<GunValue, Self::Error> {
+        match v {
+            SerdeJsonValue::Null => Ok(GunValue::Null),
+            SerdeJsonValue::Bool(b) => Ok(GunValue::Bit(b)),
+            SerdeJsonValue::String(s) => Ok(GunValue::Text(s)),
+            SerdeJsonValue::Number(n) => {
+                match n.as_f64() {
+                    Some(n) => Ok(GunValue::Number(n)),
+                    _ => Err("not convertible to f64")
+                }
+            },
+            SerdeJsonValue::Object(_) => Err("cannot convert json object into GunValue"),
+            SerdeJsonValue::Array(_) => Err("cannot convert array into GunValue")
+        }
+    }
+}
+
+impl From<GunValue> for SerdeJsonValue {
+    fn from (v: GunValue) -> SerdeJsonValue {
+        match v {
+            GunValue::Null => SerdeJsonValue::Null,
+            GunValue::Text(t) => SerdeJsonValue::String(t),
+            GunValue::Bit(b) => SerdeJsonValue::Bool(b),
+            GunValue::Number(n) => json!(n),
+            GunValue::Link(l) => SerdeJsonValue::String(l) // TODO fix. Object?
         }
     }
 }
@@ -72,14 +122,6 @@ pub trait NetworkAdapter {
     fn new(node: Node) -> Self where Self: Sized;
     /// This is called on node.start_adapters()
     async fn start(&self);
-}
-
-/// Used internally to represent Gun network messages.
-#[derive(Clone, Debug)]
-pub struct GunMessage {
-    pub msg: String,
-    pub from: String,
-    pub to: Option<HashSet<String>>
 }
 
 /// When full, every insert pushes out the oldest entry in the set.
@@ -165,8 +207,4 @@ impl<K: Clone + std::hash::Hash + std::cmp::Eq, V> BoundedHashMap<K, V> {
 // But can we somehow wrap Node itself into Arc<RwLock<>> instead of wrapping all its properties?
 // Arc<RwLock<NodeInner>> pattern?
 // The code is not pretty with all these Arc-RwLock read/write().unwraps().
-pub(crate) type Value = Arc<RwLock<Option<GunValue>>>;
-pub(crate) type Children = Arc<RwLock<BTreeMap<String, String>>>;
-pub(crate) type Parents = Arc<RwLock<HashSet<(String, String)>>>;
-pub(crate) type SharedNodeStore = Arc<RwLock<HashMap<String, Node>>>;
 pub(crate) type NetworkAdapters = Arc<RwLock<HashMap<String, Box<dyn NetworkAdapter + Send + Sync>>>>;

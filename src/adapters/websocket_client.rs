@@ -1,14 +1,15 @@
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::{
     connect_async,
-    tungstenite::{Message},
+    tungstenite::{Message as WsMessage},
     WebSocketStream
 };
 use tokio::sync::RwLock;
 use url::Url;
 use std::collections::HashMap;
 
-use crate::types::{NetworkAdapter, GunMessage};
+use crate::message::Message;
+use crate::types::NetworkAdapter;
 use crate::Node;
 use async_trait::async_trait;
 use log::{debug, error};
@@ -75,14 +76,21 @@ async fn user_connected(mut node: Node, ws: WebSocketStream<tokio_tungstenite::M
 
     let mut rx = node.get_outgoing_msg_receiver();
 
+    let update_stats = node.config.read().unwrap().stats;
+
     let my_id_clone = my_id.clone();
     tokio::task::spawn(async move { // TODO as in websocket_server, there should be only 1 task that relays to the addressed message recipient
         loop {
             if let Ok(message) = rx.recv().await {
-                if message.from == my_id_clone {
+                let from = match message.clone() {
+                    Message::Get(get) => get.from,
+                    Message::Put(put) => put.from,
+                    _ => "".to_string()
+                };
+                if from == my_id_clone {
                     continue;
                 }
-                if let Err(_) = user_ws_tx.send(Message::text(message.msg)).await {
+                if let Err(_) = user_ws_tx.send(WsMessage::text(message.to_string())).await {
                     break;
                 }
             }
@@ -94,7 +102,9 @@ async fn user_connected(mut node: Node, ws: WebSocketStream<tokio_tungstenite::M
     users.write().await.insert(my_id.clone(), user);
 
     let peer_id = node.get_peer_id();
-    node.get("node_stats").get(&peer_id).get("websocket_client_connections").put(users.read().await.len().to_string().into());
+    if update_stats {
+        node.get("node_stats").get(&peer_id).get("websocket_client_connections").put(users.read().await.len().to_string().into());
+    }
 
     // Return a `Future` that is basically a state machine managing
     // this specific user's connection.
@@ -112,8 +122,21 @@ async fn user_connected(mut node: Node, ws: WebSocketStream<tokio_tungstenite::M
         };
         match msg.to_text() {
             Ok(s) => {
-                if let Err(e) = incoming_message_sender.try_send(GunMessage { msg: s.to_string(), from: my_id.clone(), to: None }) {
-                    error!("failed to send incoming message to node: {}", e);
+                if s == "PING" {
+                    continue;
+                }
+                match Message::try_from(s, my_id.clone()) {
+                    Ok(msgs) => {
+                        for msg in msgs.into_iter() {
+                            if let Err(e) = incoming_message_sender.try_send(msg) {
+                                error!("failed to send incoming message to node: {}", e);
+                            }
+                        }
+                    },
+                    Err(e) => {
+                        error!("{}", e);
+                        continue;
+                    }
                 }
             },
             Err(e) => {
@@ -126,6 +149,8 @@ async fn user_connected(mut node: Node, ws: WebSocketStream<tokio_tungstenite::M
     // user_ws_rx stream will keep processing as long as the user stays
     // connected. Once they disconnect, then...
     users.write().await.remove(&my_id);
-    node.get("node_stats").get(&peer_id).get("websocket_client_connections").put(users.read().await.len().to_string().into());
+    if update_stats {
+        node.get("node_stats").get(&peer_id).get("websocket_client_connections").put(users.read().await.len().to_string().into());
+    }
 }
 

@@ -10,9 +10,10 @@ use actix_http::ws::{Codec, Message, ProtocolError};
 use bytes::Bytes;
 use futures::Stream;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use async_trait::async_trait;
-use crate::types::{NetworkAdapter, GunMessage};
+use crate::message::Message as GunMessage;
+use crate::types::NetworkAdapter;
 use crate::Node;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -98,9 +99,8 @@ impl Handler<OutgoingMessage> for MyWs {
     type Result = ();
 
     fn handle(&mut self, msg: OutgoingMessage, ctx: &mut Self::Context) {
-        let text = format!("{}", msg.gun_message);
-        debug!("out {}", text);
-        ctx.text(text);
+        debug!("out {}", msg.gun_message);
+        ctx.text(msg.gun_message);
     }
 }
 
@@ -119,9 +119,16 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for MyWs {
             },
             Ok(ws::Message::Text(text)) => {
                 debug!("in: {}", text);
-                if let Err(e) = self.incoming_msg_sender.try_send(GunMessage { msg: text.to_string(), from: self.id.clone(), to: None }) {
-                    error!("error sending incoming message to node: {}", e);
-                }
+                match GunMessage::try_from(&text.to_string(), self.id.clone()) {
+                    Ok(msgs) => {
+                        for msg in msgs.into_iter() {
+                            if let Err(e) = self.incoming_msg_sender.try_send(msg) {
+                                error!("error sending incoming message to node: {}", e);
+                            }
+                        }
+                    },
+                    Err(e) => debug!("{}", e)
+                };
             },
             Err(e) => {
                 error!("error receiving from websocket: {}", e);
@@ -159,13 +166,15 @@ impl NetworkAdapter for WebsocketServer {
         let mut node_clone = node.clone();
         let users_clone = users.clone();
 
-        tokio::task::spawn(async move {
-            loop {
-                let users = users_clone.read().await;
-                node_clone.get("node_stats").get(&peer_id).get("websocket_server_connections").put(users.len().to_string().into());
-                sleep(tokio::time::Duration::from_millis(1000)).await;
-            }
-        });
+        if node.config.read().unwrap().stats {
+            tokio::task::spawn(async move {
+                loop {
+                    let users = users_clone.read().await;
+                    node_clone.get("node_stats").get(&peer_id).get("websocket_server_connections").put(users.len().to_string().into());
+                    sleep(tokio::time::Duration::from_millis(1000)).await;
+                }
+            });
+        }
 
         Self::actix_start(node, users).await.unwrap();
     }
@@ -211,34 +220,41 @@ impl WebsocketServer {
         server.bind(url).unwrap().run()
     }
 
+    async fn send_outgoing_msg(msg_str: String, recipients: Option<HashSet<String>>, users: Users) {
+        let users = users.read().await;
+        if let Some(recipients) = recipients { // ELSE SEND TO EVERYONE
+            for recipient in recipients {
+                if let Some(addr) = users.get(&recipient) {
+                    let res = addr.send(OutgoingMessage { gun_message: msg_str.clone() }).await; // TODO break on Closed error only
+                    if let Err(e) = res {
+                        error!("error sending outgoing msg to websocket actor: {}", e);
+                    }
+                }
+            }
+        } else {
+            for recipient in users.keys() { // TODO cleanup, basically the same code as above
+                if let Some(addr) = users.get(recipient) {
+                    let res = addr.send(OutgoingMessage { gun_message: msg_str.clone() }).await; // TODO break on Closed error only
+                    if let Err(e) = res {
+                        error!("error sending outgoing msg to websocket actor: {}", e);
+                    }
+                }
+            }
+        }
+    }
+
     fn send_outgoing_msgs(node: &Node, users: &Users) {
         let mut rx = node.get_outgoing_msg_receiver();
         let users = users.clone();
         tokio::task::spawn(async move {
             loop {
                 if let Ok(message) = rx.recv().await {
-                    let users = users.read().await;
-                    if let Some(recipients) = message.to.clone() { // ELSE SEND TO EVERYONE
-                        for recipient in recipients {
-                            let message = message.clone();
-                            if let Some(addr) = users.get(&recipient) {
-                                let res = addr.send(OutgoingMessage { gun_message: message.msg }).await; // TODO break on Closed error only
-                                if let Err(e) = res {
-                                    error!("error sending outgoing msg to websocket actor: {}", e);
-                                }
-                            }
-                        }
-                    } else {
-                        for recipient in users.keys() { // TODO cleanup, basically the same code as above
-                            let message = message.clone();
-                            if let Some(addr) = users.get(recipient) {
-                                let res = addr.send(OutgoingMessage { gun_message: message.msg }).await; // TODO break on Closed error only
-                                if let Err(e) = res {
-                                    error!("error sending outgoing msg to websocket actor: {}", e);
-                                }
-                            }
-                        }
+                    match message {
+                        GunMessage::Get(msg) => { Self::send_outgoing_msg(msg.to_string(), msg.recipients, users.clone()).await; },
+                        GunMessage::Put(msg) => { Self::send_outgoing_msg(msg.to_string(), msg.recipients, users.clone()).await; },
+                        _ => {}
                     }
+
                 }
             }
         });
