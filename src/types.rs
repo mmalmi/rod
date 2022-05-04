@@ -8,7 +8,6 @@ use std::convert::TryFrom;
 
 /// Value types supported by gun.
 #[derive(Clone, Serialize, Deserialize, Debug)]
-#[serde(untagged)]
 pub enum GunValue {
     Null,
     Bit(bool),

@@ -8,6 +8,7 @@ use std::sync::{
 use crate::utils::random_string;
 use crate::message::{Message, Put, Get};
 use crate::types::*;
+use crate::adapters::SledStorage;
 use crate::adapters::MemoryStorage;
 use crate::adapters::WebsocketServer;
 use crate::adapters::WebsocketClient;
@@ -31,7 +32,11 @@ static SEEN_MSGS_MAX_SIZE: usize = 10000;
 pub struct NodeConfig {
     /// [tokio::sync::broadcast] channel size for outgoing network messages. Smaller value may slightly reduce memory usage, but lose outgoing messages when an adapter is lagging. Default: 10.
     pub rust_channel_size: usize,
-    /// Enable in-memory storage? Default: true
+    /// Enable sled.rs storage (disk + memory cache)? Default: true
+    pub sled_storage: bool,
+    /// Sled.rs config
+    pub sled_config: sled::Config,
+    /// Enable in-memory storage? Default: false
     pub memory_storage: bool,
     /// Enable multicast? Default: false
     pub multicast: bool, // should we have (adapters: Vector<String>) instead, so you can be sure there's no unwanted sync happening?
@@ -60,7 +65,9 @@ impl Default for NodeConfig {
     fn default() -> Self {
         NodeConfig {
             rust_channel_size: 1000,
-            memory_storage: true,
+            sled_storage: true,
+            sled_config: sled::Config::new().path("sled_db"),
+            memory_storage: false,
             multicast: false,
             outgoing_websocket_peers: Vec::new(),
             websocket_server: true,
@@ -161,6 +168,10 @@ impl Node {
         if config.websocket_server {
             let server = WebsocketServer::new(node.clone());
             node.adapters.write().unwrap().insert("ws_server".to_string(), Box::new(server));
+        }
+        if config.sled_storage {
+            let memory_storage = SledStorage::new(node.clone());
+            node.adapters.write().unwrap().insert("memory_storage".to_string(), Box::new(memory_storage));
         }
         if config.memory_storage {
             let memory_storage = MemoryStorage::new(node.clone());
@@ -391,7 +402,6 @@ impl Node {
         }
         self.seen_messages.write().unwrap().insert(id.clone());
 
-        let s: String = msg_str.chars().take(300).collect();
         return false;
     }
 
@@ -459,14 +469,22 @@ mod tests {
     #[test]
     fn it_doesnt_error() {
         //setup();
-        let mut gun = Node::new();
+        let mut gun = Node::new_with_config(NodeConfig {
+            memory_storage: true,
+            sled_storage: false,
+            ..NodeConfig::default()
+        });
         let _ = gun.get("Meneldor"); // Pick Tolkien names from https://www.behindthename.com/namesakes/list/tolkien/alpha
     }
 
     #[tokio::test]
     async fn first_get_then_put() {
         setup();
-        let mut gun = Node::new();
+        let mut gun = Node::new_with_config(NodeConfig {
+            memory_storage: true,
+            sled_storage: false,
+            ..NodeConfig::default()
+        });
         let mut node = gun.get("Anborn");
         let mut sub = node.on();
         node.put("Ancalagon".into());
@@ -478,7 +496,11 @@ mod tests {
     #[tokio::test]
     async fn first_put_then_get() {
         //setup();
-        let mut gun = Node::new();
+        let mut gun = Node::new_with_config(NodeConfig {
+            memory_storage: true,
+            sled_storage: false,
+            ..NodeConfig::default()
+        });
         let mut node = gun.get("Finglas");
         node.put("Fingolfin".into());
         let mut sub = node.on();
@@ -491,12 +513,16 @@ mod tests {
     async fn connect_and_sync_over_websocket() {
         setup();
         let mut node1 = Node::new_with_config(NodeConfig {
+            memory_storage: true,
+            sled_storage: false,
             websocket_server: true,
             multicast: false,
             stats: false,
             ..NodeConfig::default()
         });
         let mut node2 = Node::new_with_config(NodeConfig {
+            memory_storage: true,
+            sled_storage: false,
             websocket_server: false,
             multicast: false,
             stats: false,
