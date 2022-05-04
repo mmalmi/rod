@@ -220,27 +220,30 @@ impl WebsocketServer {
         server.bind(url).unwrap().run()
     }
 
-    async fn send_outgoing_msg(msg_str: String, recipients: Option<HashSet<String>>, users: Users) {
+    async fn send_msg_to(msg_str: &String, recipient: &String, users: &Users) {
         let users = users.read().await;
-        if let Some(recipients) = recipients { // ELSE SEND TO EVERYONE
-            for recipient in recipients {
-                if let Some(addr) = users.get(&recipient) {
-                    let res = addr.send(OutgoingMessage { gun_message: msg_str.clone() }).await; // TODO break on Closed error only
-                    if let Err(e) = res {
-                        error!("error sending outgoing msg to websocket actor: {}", e);
-                    }
-                }
-            }
-        } else {
-            for recipient in users.keys() { // TODO cleanup, basically the same code as above
-                if let Some(addr) = users.get(recipient) {
-                    let res = addr.send(OutgoingMessage { gun_message: msg_str.clone() }).await; // TODO break on Closed error only
-                    if let Err(e) = res {
-                        error!("error sending outgoing msg to websocket actor: {}", e);
-                    }
-                }
+        if let Some(addr) = users.get(recipient) {
+            let res = addr.send(OutgoingMessage { gun_message: msg_str.clone() }).await; // TODO break on Closed error only
+            if let Err(e) = res {
+                error!("error sending outgoing msg to websocket actor: {}", e);
             }
         }
+    }
+
+    async fn send_outgoing_msg(msg_str: String, recipients: Option<HashSet<String>>, users: &Users) {
+        match recipients {
+            Some(recipients) => {
+                debug!("sending message to recipients: {:?}", recipients);
+                for recipient in recipients {
+                    Self::send_msg_to(&msg_str, &recipient, users).await;
+                }
+            },
+            _ => {
+                for recipient in users.read().await.keys() { // TODO cleanup, basically the same code as above
+                    Self::send_msg_to(&msg_str, recipient, users).await;
+                }
+            }
+        };
     }
 
     fn send_outgoing_msgs(node: &Node, users: &Users) {
@@ -250,8 +253,8 @@ impl WebsocketServer {
             loop {
                 if let Ok(message) = rx.recv().await {
                     match message {
-                        GunMessage::Get(msg) => { Self::send_outgoing_msg(msg.to_string(), msg.recipients, users.clone()).await; },
-                        GunMessage::Put(msg) => { Self::send_outgoing_msg(msg.to_string(), msg.recipients, users.clone()).await; },
+                        GunMessage::Get(msg) => { Self::send_outgoing_msg(msg.to_string(), msg.recipients, &users).await; },
+                        GunMessage::Put(msg) => { Self::send_outgoing_msg(msg.to_string(), msg.recipients, &users).await; },
                         _ => {}
                     }
 

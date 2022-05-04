@@ -338,6 +338,8 @@ impl Node {
         if self.is_message_seen(msg.id.clone(), msg.to_string()) {
             return;
         }
+        let seen_get_message = SeenGetMessage { from: msg.from.clone(), last_reply_checksum: None };
+        self.seen_get_messages.write().unwrap().insert(msg.id.clone(), seen_get_message);
         let topic = msg.node_id.split("/").next().unwrap_or("");
         debug!("{} subscribed to {}", msg.from, topic);
         self.subscribers_by_topic.write().unwrap().entry(topic.to_string())
@@ -352,28 +354,30 @@ impl Node {
             return;
         }
         let mut recipients = HashSet::<String>::new();
-        let in_response_to = msg.in_response_to.clone();
-        if let Some(in_response_to) = in_response_to {
-            let in_response_to = in_response_to.to_string();
-            if let Some(seen_get_message) = self.seen_get_messages.write().unwrap().get_mut(&in_response_to) {
-                if msg.checksum != None && msg.checksum == seen_get_message.last_reply_checksum {
-                    debug!("same reply already sent");
-                    return;
-                } // failing these conditions, should we still send the ack to someone?
-                seen_get_message.last_reply_checksum = msg.checksum.clone();
-                recipients.insert(seen_get_message.from.clone());
-            }
-        } else {
-            for node_id in msg.updated_nodes.keys() {
-                let topic = node_id.split("/").next().unwrap_or("");
-                if let Some(subscribers) = self.subscribers_by_topic.read().unwrap().get(topic) {
-                    recipients.extend(subscribers.clone());
+
+        match &msg.in_response_to {
+            Some(in_response_to) => {
+                if let Some(seen_get_message) = self.seen_get_messages.write().unwrap().get_mut(in_response_to) {
+                    if msg.checksum != None && msg.checksum == seen_get_message.last_reply_checksum {
+                        debug!("same reply already sent");
+                        return;
+                    } // failing these conditions, should we still send the ack to someone?
+                    seen_get_message.last_reply_checksum = msg.checksum.clone();
+                    recipients.insert(seen_get_message.from.clone());
                 }
-                debug!("getting subscribers for topic {}: {:?}", topic, recipients);
+            },
+            _ => {
+                for node_id in msg.updated_nodes.keys() {
+                    let topic = node_id.split("/").next().unwrap_or("");
+                    if let Some(subscribers) = self.subscribers_by_topic.read().unwrap().get(topic) {
+                        recipients.extend(subscribers.clone());
+                    }
+                    debug!("getting subscribers for topic {}: {:?}", topic, recipients);
+                }
             }
-        }
+        };
         let mut msg = msg.clone();
-        msg.recipients = None; // Some(recipients);
+        msg.recipients = Some(recipients);
         let id = msg.id.clone();
         self.outgoing_message(Message::Put(msg), id);
     }

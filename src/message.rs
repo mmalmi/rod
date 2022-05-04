@@ -84,6 +84,14 @@ impl Put {
             "#": self.id.to_string(),
         });
 
+        if let Some(in_response_to) = &self.in_response_to {
+            json["@"] = json!(in_response_to);
+        }
+
+        if let Some(checksum) = &self.checksum {
+            json["##"] = json!(checksum);
+        }
+
         for (node_id, children) in self.updated_nodes.iter() {
             let node = &mut json["put"][node_id];
             node["_"] = json!({
@@ -117,9 +125,20 @@ impl Message {
     }
 
     fn from_put_obj(json: &SerdeJsonValue, json_str: String, msg_id: String, from: String) -> Result<Self, &'static str> {
-        let obj = match json.as_object() {
+        let obj = match json.get("put").unwrap().as_object() {
             Some(obj) => obj,
             _ => { return Err("invalid message: msg.put was not an object"); }
+        };
+        let in_response_to = match json.get("@") {
+            Some(in_response_to) => match in_response_to.as_str() {
+                Some(in_response_to) => Some(in_response_to.to_string()),
+                _ => { return Err("message @ field was not a string"); }
+            },
+            _ => None
+        };
+        let checksum = match json.get("##") {
+            Some(checksum) => Some(checksum.to_string()),
+            _ => None
         };
         let mut updated_nodes = BTreeMap::<String, Children>::new();
         for (node_id, node_data) in obj.iter() {
@@ -154,18 +173,26 @@ impl Message {
             id: msg_id.to_string(),
             from,
             recipients: None,
-            in_response_to: None, // TODO
+            in_response_to, // TODO
             updated_nodes,
-            checksum: None,
+            checksum,
             json_str: Some(json_str)
         };
         Ok(Message::Put(put))
     }
 
     fn from_get_obj(json: &SerdeJsonValue, json_str: String, msg_id: String, from: String) -> Result<Self, &'static str> {
-        let node_id = match json["#"].as_str() {
+        let get = json.get("get").unwrap();
+        let node_id = match get["#"].as_str() {
             Some(str) => str,
             _ => { return Err("no node id (#) found in get message"); }
+        };
+        let child_key = match get.get(".") {
+            Some(child_key) => match child_key.as_str() {
+                Some(child_key) => Some(child_key.to_string()),
+                _ => { return Err("get child_key . was not a string") }
+            },
+            _ => None
         };
         debug!("get node_id {}", node_id);
         let msg_id = msg_id.replace("\"", "");
@@ -174,7 +201,7 @@ impl Message {
             from,
             recipients: None,
             node_id: node_id.to_string(),
-            child_key: None,
+            child_key,
             json_str: Some(json_str)
         };
         Ok(Message::Get(get))
@@ -195,10 +222,10 @@ impl Message {
         if !msg_id.chars().all(char::is_alphanumeric) {
             return Err("msg_id must be alphanumeric");
         }
-        if let Some(put) = obj.get("put") {
-            Self::from_put_obj(put, json_str, msg_id, from)
-        } else if let Some(get) = obj.get("get") {
-            Self::from_get_obj(get, json_str, msg_id, from)
+        if obj.contains_key("put") {
+            Self::from_put_obj(json, json_str, msg_id, from)
+        } else if obj.contains_key("get") {
+            Self::from_get_obj(json, json_str, msg_id, from)
         } else if let Some(_dam) = obj.get("dam") {
             Ok(Message::Hi { from: msg_id })
         } else {
