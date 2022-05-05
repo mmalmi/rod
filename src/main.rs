@@ -63,6 +63,20 @@ async fn main() {
             .help("Enable multicast sync?")
             .default_value("false")
             .takes_value(true))
+        .arg(Arg::with_name("memory-storage")
+            .long("memory-storage")
+            .env("MEMORY_STORAGE")
+            .value_name("BOOL")
+            .help("In-memory storage")
+            .default_value("false")
+            .takes_value(true))
+        .arg(Arg::with_name("sled-storage")
+            .long("multicast")
+            .env("SLED_STORAGE")
+            .value_name("BOOL")
+            .help("Sled storage (disk+mem)")
+            .default_value("true")
+            .takes_value(true))
         .arg(Arg::with_name("stats")
             .long("stats")
             .env("STATS")
@@ -103,6 +117,8 @@ async fn main() {
             rust_channel_size,
             websocket_server,
             websocket_server_port,
+            sled_storage: matches.value_of("sled-storage").unwrap() != "false",
+            memory_storage: matches.value_of("memory-storage").unwrap() == "true",
             multicast: matches.value_of("multicast").unwrap() == "true",
             cert_path: matches.value_of("cert-path").map(|s| s.to_string()),
             key_path: matches.value_of("key-path").map(|s| s.to_string()),

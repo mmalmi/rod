@@ -170,8 +170,8 @@ impl Node {
             node.adapters.write().unwrap().insert("ws_server".to_string(), Box::new(server));
         }
         if config.sled_storage {
-            let memory_storage = SledStorage::new(node.clone());
-            node.adapters.write().unwrap().insert("memory_storage".to_string(), Box::new(memory_storage));
+            let sled_storage = SledStorage::new(node.clone());
+            node.adapters.write().unwrap().insert("sled_storage".to_string(), Box::new(sled_storage));
         }
         if config.memory_storage {
             let memory_storage = MemoryStorage::new(node.clone());
