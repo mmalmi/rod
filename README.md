@@ -46,7 +46,7 @@ if let GunValue::Text(str) = sub.recv().await.unwrap() {
 - [x] TLS support (env CERT_PATH and KEY_PATH)
 - [x] Advanced deduplication of sync messages
 - [x] Publish & subscribe
-- [ ] Disk storage
+- [x] Disk storage ([sled.rs](https://sled.rs))
 - [ ] SEA (verification of signed data)
 
 ### Issues
