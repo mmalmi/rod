@@ -4,12 +4,14 @@ use std::collections::{HashSet, BTreeMap};
 use crate::types::*;
 use log::{debug, error};
 use std::convert::TryFrom;
-
+use actix::Addr;
+use crate::adapters::websocket_server::MyWs;
 
 #[derive(Clone, Debug)]
 pub struct Get {
     pub id: String,
     pub from: String,
+    pub from_addr: Option<Addr<MyWs>>,
     pub recipients: Option<HashSet<String>>,
     pub node_id: String,
     pub child_key: Option<String>,
@@ -20,6 +22,7 @@ impl Get {
         Self {
             id: random_string(8),
             from,
+            from_addr: None,
             recipients: None,
             node_id,
             child_key,
@@ -199,6 +202,7 @@ impl Message {
         let get = Get {
             id: msg_id,
             from,
+            from_addr: None,
             recipients: None,
             node_id: node_id.to_string(),
             child_key,

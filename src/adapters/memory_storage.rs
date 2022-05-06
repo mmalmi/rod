@@ -10,6 +10,8 @@ use log::{debug, error};
 use std::sync::{Arc, RwLock};
 use tokio::time::{sleep, Duration};
 
+use crate::adapters::websocket_server::OutgoingMessage;
+
 pub struct MemoryStorage {
     id: String,
     node: Node,
@@ -60,8 +62,13 @@ impl MemoryStorage {
             let mut recipients = HashSet::new();
             recipients.insert(msg.from.clone());
             let put = Put::new(reply_with_nodes, Some(msg.id.clone()));
-            if let Err(e) = node.get_incoming_msg_sender().try_send(Message::Put(put)) {
-                error!("failed to send incoming message to node: {}", e);
+
+            if let Some(addr) = msg.from_addr {
+                addr.send(OutgoingMessage { str: put.to_string() });
+            } else {
+                if let Err(e) = node.get_incoming_msg_sender().try_send(Message::Put(put)) {
+                    error!("failed to send incoming message to node: {}", e);
+                }
             }
         } else {
             debug!("have not {}", msg.node_id);

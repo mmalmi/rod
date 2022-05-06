@@ -41,7 +41,7 @@ where
 }
 
 /// Define HTTP actor
-struct MyWs {
+pub struct MyWs {
     node: Node,
     id: String,
     users: Users,
@@ -61,8 +61,8 @@ impl MyWs {
     }
 }
 
-struct OutgoingMessage {
-    gun_message: String
+pub struct OutgoingMessage {
+    pub str: String
 }
 
 impl actix::Message for OutgoingMessage {
@@ -99,8 +99,8 @@ impl Handler<OutgoingMessage> for MyWs {
     type Result = ();
 
     fn handle(&mut self, msg: OutgoingMessage, ctx: &mut Self::Context) {
-        debug!("out {}", msg.gun_message);
-        ctx.text(msg.gun_message);
+        debug!("out {}", msg.str);
+        ctx.text(msg.str);
     }
 }
 
@@ -122,7 +122,14 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for MyWs {
                 match GunMessage::try_from(&text.to_string(), self.id.clone()) {
                     Ok(msgs) => {
                         for msg in msgs.into_iter() {
-                            if let Err(e) = self.incoming_msg_sender.try_send(msg) {
+                            let m = match msg {
+                                GunMessage::Get(mut get) => {
+                                    get.from_addr = Some(ctx.address());
+                                    GunMessage::Get(get)
+                                },
+                                _ => msg
+                            };
+                            if let Err(e) = self.incoming_msg_sender.try_send(m) {
                                 error!("error sending incoming message to node: {}", e);
                             }
                         }
@@ -223,7 +230,7 @@ impl WebsocketServer {
     async fn send_msg_to(msg_str: &String, recipient: &String, users: &Users) {
         let users = users.read().await;
         if let Some(addr) = users.get(recipient) {
-            let res = addr.send(OutgoingMessage { gun_message: msg_str.clone() }).await; // TODO break on Closed error only
+            let res = addr.send(OutgoingMessage { str: msg_str.clone() }).await; // TODO break on Closed error only
             if let Err(e) = res {
                 error!("error sending outgoing msg to websocket actor: {}", e);
             }

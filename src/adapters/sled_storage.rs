@@ -10,6 +10,8 @@ use log::{debug, error};
 use std::sync::{Arc, RwLock};
 use sled;
 
+use crate::adapters::websocket_server::OutgoingMessage;
+
 macro_rules! unwrap_or_return {
     ( $e:expr ) => {
         match $e {
@@ -49,12 +51,12 @@ impl SledStorage {
         */
     }
 
-    fn handle_get(msg: Get, my_id: String, store: sled::Db, node: Node) {
-        if msg.from == my_id {
+    fn handle_get(msg: &Get, my_id: &String, store: &sled::Db, node: &Node) {
+        if &msg.from == my_id {
             return;
         }
 
-        let res = unwrap_or_return!(store.get(&msg.node_id));
+        let res = unwrap_or_return!(store.get(&msg.node_id.clone()));
         if res.is_none() {
             debug!("have not {}", msg.node_id); return;
         }
@@ -87,13 +89,18 @@ impl SledStorage {
         let mut recipients = HashSet::new();
         recipients.insert(msg.from.clone());
         let put = Put::new(reply_with_nodes, Some(msg.id.clone()));
-        if let Err(e) = node.get_incoming_msg_sender().try_send(Message::Put(put)) {
-            error!("failed to send incoming message to node: {}", e);
+
+        if let Some(addr) = &msg.from_addr {
+            addr.try_send(OutgoingMessage { str: put.to_string() });
+        } else {
+            if let Err(e) = node.get_incoming_msg_sender().try_send(Message::Put(put)) {
+                error!("failed to send incoming message to node: {}", e);
+            }
         }
     }
 
-    fn handle_put(msg: Put, my_id: String, store: sled::Db) {
-        if msg.from == my_id {
+    fn handle_put(msg: &Put, my_id: &String, store: &sled::Db) {
+        if msg.from == *my_id {
             return;
         }
 
@@ -153,8 +160,8 @@ impl NetworkAdapter for SledStorage {
             loop {
                 if let Ok(message) = rx.recv().await {
                     match message {
-                        Message::Get(get) => Self::handle_get(get.clone(), my_id.clone(), store.clone(), node.clone()),
-                        Message::Put(put) => Self::handle_put(put.clone(), my_id.clone(), store.clone()),
+                        Message::Get(get) => Self::handle_get(&get, &my_id, &store, &node),
+                        Message::Put(put) => Self::handle_put(&put, &my_id, &store),
                         _ => {}
                     }
                 }
