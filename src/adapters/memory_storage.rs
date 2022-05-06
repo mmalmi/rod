@@ -37,16 +37,16 @@ impl MemoryStorage {
         });
     }
 
-    fn handle_get(msg: Get, my_id: String, store: Arc<RwLock<HashMap<String, Children>>>, node: Node) {
-        if msg.from == my_id {
+    fn handle_get(msg: &Get, my_id: &String, store: Arc<RwLock<HashMap<String, Children>>>, node: &Node) {
+        if &msg.from == my_id {
             return;
         }
 
         if let Some(children) = store.read().unwrap().get(&msg.node_id).cloned() {
             debug!("have {}: {:?}", msg.node_id, children);
-            let reply_with_children = match msg.child_key {
+            let reply_with_children = match &msg.child_key {
                 Some(child_key) => { // reply with specific child if it's found
-                    match children.get(&child_key) {
+                    match children.get(child_key) {
                         Some(child_val) => {
                             let mut r = BTreeMap::new();
                             r.insert(child_key.clone(), child_val.clone());
@@ -63,7 +63,7 @@ impl MemoryStorage {
             recipients.insert(msg.from.clone());
             let put = Put::new(reply_with_nodes, Some(msg.id.clone()));
 
-            if let Some(addr) = msg.from_addr {
+            if let Some(addr) = &msg.from_addr {
                 addr.send(OutgoingMessage { str: put.to_string() });
             } else {
                 if let Err(e) = node.get_incoming_msg_sender().try_send(Message::Put(put)) {
@@ -75,8 +75,8 @@ impl MemoryStorage {
         }
     }
 
-    fn handle_put(msg: Put, my_id: String, store: Arc<RwLock<HashMap<String, Children>>>) {
-        if msg.from == my_id {
+    fn handle_put(msg: &Put, my_id: &String, store: Arc<RwLock<HashMap<String, Children>>>) {
+        if &msg.from == my_id {
             return;
         }
 
@@ -125,8 +125,8 @@ impl NetworkAdapter for MemoryStorage {
             loop {
                 if let Ok(message) = rx.recv().await {
                     match message {
-                        Message::Get(get) => Self::handle_get(get.clone(), my_id.clone(), store.clone(), node.clone()),
-                        Message::Put(put) => Self::handle_put(put.clone(), my_id.clone(), store.clone()),
+                        Message::Get(get) => Self::handle_get(&get, &my_id, store.clone(), &node),
+                        Message::Put(put) => Self::handle_put(&put, &my_id, store.clone()),
                         _ => {}
                     }
                 }

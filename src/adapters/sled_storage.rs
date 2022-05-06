@@ -32,25 +32,6 @@ pub struct SledStorage {
 }
 
 impl SledStorage {
-    fn update_stats(&self) {
-        let peer_id = self.node.get_peer_id();
-        let mut stats = self.node.clone().get("node_stats").get(&peer_id);
-        let store = self.store.clone();
-        let graph_size_bytes = self.graph_size_bytes.clone();
-        /* TODO more performant db size counter then len()
-        tokio::task::spawn(async move {
-            loop {
-                let count = store.read().unwrap().len().to_string();
-                let size = *graph_size_bytes.read().unwrap();
-                let size = format!("{}B", size_format::SizeFormatterBinary::new(size as u64).to_string());
-                stats.get("graph_node_count").put(count.into());
-                stats.get("graph_size_bytes").put(size.into());
-                sleep(Duration::from_millis(1000)).await;
-            }
-        });
-        */
-    }
-
     fn handle_get(msg: &Get, my_id: &String, store: &sled::Db, node: &Node) {
         if &msg.from == my_id {
             return;
@@ -148,12 +129,6 @@ impl NetworkAdapter for SledStorage {
         let store = self.store.clone();
         let my_id = self.id.clone();
         let node = self.node.clone();
-
-        /*
-        if node.config.read().unwrap().stats {
-            self.update_stats();
-        }
-         */
 
         let mut rx = node.get_outgoing_msg_receiver();
         tokio::task::spawn(async move {
