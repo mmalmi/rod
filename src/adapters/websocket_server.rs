@@ -230,7 +230,7 @@ impl WebsocketServer {
     async fn send_msg_to(msg_str: &String, recipient: &String, users: &Users) {
         let users = users.read().await;
         if let Some(addr) = users.get(recipient) {
-            let res = addr.send(OutgoingMessage { str: msg_str.clone() }).await; // TODO break on Closed error only
+            let res = addr.try_send(OutgoingMessage { str: msg_str.clone() }); // TODO break on Closed error only
             if let Err(e) = res {
                 error!("error sending outgoing msg to websocket actor: {}", e);
             }
@@ -241,7 +241,7 @@ impl WebsocketServer {
         match recipients {
             Some(recipients) => {
                 debug!("sending message to recipients: {:?}", recipients);
-                for recipient in recipients {
+                for recipient in recipients.iter() {
                     Self::send_msg_to(&msg_str, &recipient, users).await;
                 }
             },

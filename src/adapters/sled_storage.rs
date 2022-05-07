@@ -85,7 +85,7 @@ impl SledStorage {
             return;
         }
 
-        for (node_id, update_data) in msg.updated_nodes.iter() {
+        for (node_id, update_data) in msg.updated_nodes.iter().rev() {
             debug!("saving k-v {}: {:?}", node_id, update_data);
             // TODO use sled::Tree instead of Children
 

@@ -64,7 +64,7 @@ impl MemoryStorage {
             let put = Put::new(reply_with_nodes, Some(msg.id.clone()));
 
             if let Some(addr) = &msg.from_addr {
-                addr.send(OutgoingMessage { str: put.to_string() });
+                addr.try_send(OutgoingMessage { str: put.to_string() });
             } else {
                 if let Err(e) = node.get_incoming_msg_sender().try_send(Message::Put(put)) {
                     error!("failed to send incoming message to node: {}", e);
@@ -80,7 +80,7 @@ impl MemoryStorage {
             return;
         }
 
-        for (node_id, update_data) in msg.updated_nodes.iter() {
+        for (node_id, update_data) in msg.updated_nodes.iter().rev() { // return in reverse
             debug!("saving k-v {}: {:?}", node_id, update_data);
             let mut write = store.write().unwrap();
             if let Some(children) = write.get_mut(node_id) {

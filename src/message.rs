@@ -176,7 +176,7 @@ impl Message {
             id: msg_id.to_string(),
             from,
             recipients: None,
-            in_response_to, // TODO
+            in_response_to,
             updated_nodes,
             checksum,
             json_str: Some(json_str)
@@ -185,6 +185,14 @@ impl Message {
     }
 
     fn from_get_obj(json: &SerdeJsonValue, json_str: String, msg_id: String, from: String) -> Result<Self, &'static str> {
+        /* TODO: other types of child_key selectors than equality.
+
+        node.get({'.': {'<': cursor, '-': true}, '%': 20 * 1000}).once().map().on((value, key) => { ...
+
+        '*' wildcard selector
+
+         */
+
         let get = json.get("get").unwrap();
         let node_id = match get["#"].as_str() {
             Some(str) => str,
