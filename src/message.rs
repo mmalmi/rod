@@ -241,7 +241,6 @@ impl Message {
         } else if let Some(_dam) = obj.get("dam") {
             Ok(Message::Hi { from: msg_id })
         } else {
-            error!("unrecognized message: {}", json_str);
             Err("Unrecognized message")
         }
     }
