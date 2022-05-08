@@ -21,7 +21,7 @@ pub struct Addr {
     pub sender: Sender<Message>
 }
 impl Addr {
-    fn new(sender: Sender<Message>) -> Self {
+    pub fn new(sender: Sender<Message>) -> Self {
         Self {
             id: random_string(32),
             sender

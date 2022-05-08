@@ -173,7 +173,7 @@ impl Node {
             map_sender: broadcast::channel::<(String, GunValue)>(config.rust_channel_size).0,
             uid: Arc::new(RwLock::new(new_child_uid)),
             router: self.router.clone(),
-            addr: Arc::new(RwLock::new(Addr:new()))
+            addr: Arc::new(RwLock::new(Addr::new()))
         };
         self.children.write().unwrap().insert(key, node.clone());
         node

@@ -7,4 +7,4 @@ pub use memory_storage::MemoryStorage;
 pub use sled_storage::SledStorage;
 pub use multicast::Multicast;
 pub use websocket_server::{MyWs, WebsocketServer, OutgoingMessage};
-pub use websocket_client::WebsocketClient;
+pub use websocket_client::OutgoingWebsocketManager;

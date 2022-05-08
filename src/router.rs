@@ -1,11 +1,8 @@
 use crate::message::{Message, Put, Get};
-use crate::actor::Actor;
+use crate::actor::{Actor, Addr};
 use crate::{Node, Config};
-use crate::adapters::SledStorage;
-use crate::adapters::MemoryStorage;
-use crate::adapters::WebsocketServer;
-use crate::adapters::WebsocketClient;
-use crate::adapters::Multicast;
+use crate::utils::{BoundedHashSet, BoundedHashMap};
+use crate::adapters::{SledStorage, MemoryStorage, WebsocketServer, OutgoingWebsocketManager, Multicast};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 use sysinfo::{ProcessorExt, System, SystemExt};
@@ -35,38 +32,39 @@ pub struct Router {
 #[async_trait]
 impl Actor for Router {
     fn new(receiver: Receiver<Message>, node: Node) -> Self {
+        let config = node.config.read().unwrap().clone();
         let mut adapters = HashMap::new();
         let mut adapter_addrs = HashSet::new();
         if config.multicast {
             let (sender, receiver_) = channel::<Message>(config.rust_channel_size);
             let multicast = Multicast::new(receiver_, node.clone());
             adapters.insert("multicast".to_string(), Box::new(multicast));
-            adapter_addrs.insert(Addr:new(sender));
+            adapter_addrs.insert(Addr::new(sender));
         }
         if config.websocket_server {
             let (sender, receiver_) = channel::<Message>(config.rust_channel_size);
             let server = WebsocketServer::new(receiver_, node.clone());
             adapters.insert("ws_server".to_string(), Box::new(server));
-            adapter_addrs.insert(Addr:new(sender));
+            adapter_addrs.insert(Addr::new(sender));
         }
         if config.sled_storage {
             let (sender, receiver_) = channel::<Message>(config.rust_channel_size);
             let sled_storage = SledStorage::new(receiver_, node.clone());
             adapters.insert("sled_storage".to_string(), Box::new(sled_storage));
-            adapter_addrs.insert(Addr:new(sender));
+            adapter_addrs.insert(Addr::new(sender));
         }
         if config.memory_storage {
             let (sender, receiver_) = channel::<Message>(config.rust_channel_size);
             let memory_storage = MemoryStorage::new(receiver_, node.clone());
             adapters.insert("memory_storage".to_string(), Box::new(memory_storage));
-            adapter_addrs.insert(Addr:new(sender));
+            adapter_addrs.insert(Addr::new(sender));
         }
-        for peer in config.outgoing_websocket_peers {
+        if config.outgoing_websocket_peers.len() > 0 {
             let (sender, receiver) = channel::<Message>(config.rust_channel_size);
-            let client = WebsocketClient::new(receiver, node.clone());
-            adapters.insert("ws_client".to_string(), Box::new(client));
+            let client = OutgoingWebsocketManager::new(receiver, node.clone());
+            adapters.insert("ws_clients".to_string(), Box::new(client));
+            adapter_addrs.insert(Addr::new(sender));
         }
-        adapter_addrs.insert(Addr:new(sender));
 
         Self {
             node,
@@ -163,21 +161,20 @@ impl Router {
                         return;
                     } // failing these conditions, should we still send the ack to someone?
                     seen_get_message.last_reply_checksum = put.checksum.clone();
-                    recipients.insert(seen_get_message.from.clone());
+                    seen_get_message.from.sender.try_send(Message::Put(put));
                 }
             },
             _ => {
                 for node_id in put.updated_nodes.keys() {
                     let topic = node_id.split("/").next().unwrap_or("");
                     if let Some(subscribers) = self.subscribers_by_topic.get(topic) {
-                        recipients.extend(subscribers.clone());
+                        for addr in recipients {
+                            addr.sender.try_send(Message::Put(put))
+                        }
                     }
-                    debug!("getting subscribers for topic {}: {:?}", topic, recipients);
                 }
             }
         };
-        let mut put = put.clone();
-        self.send(Message::Put(put));
     }
 
     fn is_message_seen(&mut self, id: &String) -> bool {

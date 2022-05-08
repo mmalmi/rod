@@ -9,6 +9,7 @@ use async_trait::async_trait;
 use log::{debug};
 use std::sync::{Arc, RwLock};
 use tokio::time::{sleep, Duration};
+use tokio::sync::mpsc::Receiver;
 
 pub struct MemoryStorage {
     id: String,
@@ -36,8 +37,8 @@ impl MemoryStorage {
         });
     }
 
-    fn handle_get(msg: &Get, my_id: &String, store: Arc<RwLock<HashMap<String, Children>>>, node: &Node) {
-        if let Some(children) = store.read().unwrap().get(&msg.node_id).cloned() {
+    fn handle_get(&self, msg: Get) {
+        if let Some(children) = self.store.read().unwrap().get(&msg.node_id).cloned() {
             debug!("have {}: {:?}", msg.node_id, children);
             let reply_with_children = match &msg.child_key {
                 Some(child_key) => { // reply with specific child if it's found
@@ -63,10 +64,10 @@ impl MemoryStorage {
         }
     }
 
-    fn handle_put(msg: &Put, my_id: &String, store: Arc<RwLock<HashMap<String, Children>>>) {
+    fn handle_put(&self, msg: Put) {
         for (node_id, update_data) in msg.updated_nodes.iter().rev() { // return in reverse
             debug!("saving k-v {}: {:?}", node_id, update_data);
-            let mut write = store.write().unwrap();
+            let mut write = self.store.write().unwrap();
             if let Some(children) = write.get_mut(node_id) {
                 for (child_id, child_data) in update_data {
                     if let Some(existing) = children.get(child_id) {
@@ -97,23 +98,17 @@ impl Actor for MemoryStorage {
     }
 
     async fn start(&self) {
-        let store = self.store.clone();
-        let my_id = self.id.clone();
-        let node = self.node.clone();
-
         if node.config.read().unwrap().stats {
             self.update_stats();
         }
 
-        tokio::task::spawn(async move {
-            while let Some(message) = self.receiver.recv().await {
-                match message {
-                    Message::Get(get) => Self::handle_get(&get, &my_id, store.clone(), &node),
-                    Message::Put(put) => Self::handle_put(&put, &my_id, store.clone()),
-                    _ => {}
-                }
+        while let Some(message) = self.receiver.recv().await {
+            match message {
+                Message::Get(get) => self.handle_get(get),
+                Message::Put(put) => self.handle_put(put),
+                _ => {}
             }
-        });
+        }
     }
 }
 
