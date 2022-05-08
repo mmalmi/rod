@@ -1,20 +1,12 @@
 use serde::{Serialize, Deserialize};
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::BTreeMap;
 use serde_json::{json, Value as SerdeJsonValue};
 use std::convert::TryFrom;
 
-/// Value types supported by gun.
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub enum GunValue {
-    Null,
-    Bit(bool),
-    Number(f64),
-    Text(String),
-    Link(String),
-}
-
+/// Branch node
 pub type Children = BTreeMap<String, NodeData>;
 
+/// Data in a leaf node
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct NodeData {
     pub value: GunValue,
@@ -28,6 +20,16 @@ impl NodeData {
             updated_at: 0.0
         }
     }
+}
+
+/// Value types supported by gun.
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub enum GunValue {
+    Null,
+    Bit(bool),
+    Number(f64),
+    Text(String),
+    Link(String),
 }
 
 impl GunValue {
@@ -98,84 +100,5 @@ impl From<&str> for GunValue {
 impl From<String> for GunValue {
     fn from(s: String) -> GunValue {
         GunValue::Text(s)
-    }
-}
-
-/// When full, every insert pushes out the oldest entry in the set.
-///
-/// Used to record last seen message IDs.
-pub struct BoundedHashSet {
-    set: HashSet<String>,
-    queue: VecDeque<String>,
-    max_entries: usize
-}
-
-impl BoundedHashSet {
-    pub fn new(max_entries: usize) -> Self {
-        BoundedHashSet {
-            set: HashSet::new(),
-            queue: VecDeque::new(),
-            max_entries
-        }
-    }
-
-    pub fn insert(&mut self, s: String) {
-        if self.set.contains(&s) {
-            return;
-        }
-        if self.queue.len() >= self.max_entries {
-            if let Some(removed) = self.queue.pop_back() {
-                self.set.remove(&removed);
-            }
-        }
-        self.queue.push_front(s.clone());
-        self.set.insert(s);
-    }
-
-    pub fn contains(&self, s: &str) -> bool {
-        return self.set.contains(s);
-    }
-}
-
-/// When full, every insert pushes out the oldest entry in the set.
-///
-/// Used to record last seen message IDs.
-pub struct BoundedHashMap<K, V> {
-    map: HashMap<K, V>,
-    queue: VecDeque<K>,
-    max_entries: usize
-}
-
-impl<K: Clone + std::hash::Hash + std::cmp::Eq, V> BoundedHashMap<K, V> {
-    pub fn new(max_entries: usize) -> Self {
-        BoundedHashMap {
-            map: HashMap::new(),
-            queue: VecDeque::new(),
-            max_entries
-        }
-    }
-
-    pub fn insert(&mut self, key: K, value: V) {
-        if self.queue.len() >= self.max_entries {
-            if let Some(removed) = self.queue.pop_back() {
-                self.map.remove(&removed);
-            }
-        }
-        if !self.map.contains_key(&key) {
-            self.queue.push_front(key.clone());
-        }
-        self.map.insert(key, value);
-    }
-
-    pub fn get(&self, key: &K) -> Option<&V> {
-        self.map.get(key)
-    }
-
-    pub fn get_mut(&mut self, key: &K) -> Option<&mut V> {
-        self.map.get_mut(key)
-    }
-
-    pub fn contains_key(&self, key: &K) -> bool {
-        return self.map.contains_key(key);
     }
 }

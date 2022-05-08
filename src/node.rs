@@ -79,8 +79,6 @@ pub struct Node {
     parents: Arc<RwLock<BTreeMap<String, Node>>>,
     on_sender: broadcast::Sender<GunValue>,
     map_sender: broadcast::Sender<(String, GunValue)>,
-    stop_signal_sender: broadcast::Sender<()>,
-    stop_signal_receiver: Arc<broadcast::Receiver<()>>,
     addr: Arc<RwLock<Option<Addr>>>,
     router: Arc<RwLock<Option<Addr>>>
 }
@@ -215,20 +213,16 @@ impl Node {
 
     /// Subscribe to the Node's value.
     pub fn on(&mut self) -> broadcast::Receiver<GunValue> {
-        if self.adapters.read().unwrap().len() > 0 {
-            let key;
-            if self.path.len() > 1 {
-                key = self.path.iter().nth(self.path.len() - 1).cloned();
-            } else {
-                key = None;
-            }
-            let get = Get::new(self.uid.read().unwrap().to_string(), key, self.get_peer_id().clone());
-            let id = get.id.clone();
-            self.outgoing_message(Message::Get(get), id);
+        let mut key;
+        if self.path.len() > 1 {
+            key = self.path.iter().nth(self.path.len() - 1).cloned();
+        } else {
+            key = None;
         }
+        let get = Get::new(self.addr.clone(), self.uid.read().unwrap().to_string(), key, self.get_peer_id().clone());
+        self.router.try_send(Message::Get(get));
         let sub = self.on_sender.subscribe();
         let uid = self.uid.read().unwrap().clone();
-        self.subscriptions_by_node_id.write().unwrap().entry(uid).or_insert_with(Vec::new).push(self.on_sender.clone());
         sub
     }
 
@@ -285,6 +279,10 @@ impl Node {
                 self.outgoing_message(Message::Put(put), id);
             }
         }
+    }
+
+    pub fn get_router_addr(&self) -> Option<Addr> {
+        self.router.read().unwrap().clone()
     }
 
     pub fn stop(&mut self) {

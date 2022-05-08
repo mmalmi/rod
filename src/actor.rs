@@ -7,8 +7,7 @@ use tokio::sync::mpsc::{Sender, Receiver};
 
 /// Syncs the gun Node with other Nodes over various transports like websocket or multicast.
 ///
-/// Actors should communicate with the Node using [Node::get_outgoing_msg_receiver] and
-/// [Node::incoming_message].
+/// Actors should relay messages to [Node::get_router_addr]
 #[async_trait]
 pub trait Actor {
     fn new(receiver: Receiver<Message>, node: Node) -> Self where Self: Sized;
@@ -18,7 +17,7 @@ pub trait Actor {
 
 struct Addr {
     id: String,
-    sender: Sender<Message>
+    pub sender: Sender<Message>
 }
 impl Addr {
     fn new(sender: Sender<Message>) -> Self {
@@ -26,14 +25,6 @@ impl Addr {
             id: random_string(32),
             sender
         }
-    }
-
-    async fn send(&self, msg: Message) {
-        self.sender.send(msg).await
-    }
-
-    fn try_send(&self, msg: Message) {
-        self.sender.try_send(msg)
     }
 }
 impl PartialEq for Addr {
