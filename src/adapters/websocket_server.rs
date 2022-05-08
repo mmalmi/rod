@@ -125,7 +125,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for MyWs {
                         for msg in msgs.into_iter() {
                             let m = match msg {
                                 GunMessage::Get(mut get) => {
-                                    get.from_addr = Some(ctx.address());
+                                    get.from = Some(ctx.address());
                                     GunMessage::Get(get)
                                 },
                                 _ => msg
@@ -154,14 +154,14 @@ struct AppState {
 type Users = Arc<RwLock<HashMap<String, Addr<MyWs>>>>;
 
 pub struct WebsocketServer {
-    receiver: Receiver<Message>,
+    receiver: Receiver<GunMessage>,
     node: Node,
     users: Users
 }
 
 #[async_trait]
 impl MyActor for WebsocketServer {
-    fn new(receiver: Receiver<Message>, node: Node) -> Self {
+    fn new(receiver: Receiver<GunMessage>, node: Node) -> Self {
         WebsocketServer {
             receiver,
             node,
@@ -178,7 +178,7 @@ impl MyActor for WebsocketServer {
 
         if node.config.read().unwrap().stats {
             tokio::task::spawn(async move {
-                loop {
+                loop { // TODO break
                     let users = users_clone.read().await;
                     node_clone.get("node_stats").get(&peer_id).get("websocket_server_connections").put(users.len().to_string().into());
                     sleep(tokio::time::Duration::from_millis(1000)).await;
@@ -186,7 +186,15 @@ impl MyActor for WebsocketServer {
             });
         }
 
-        Self::actix_start(node, users).await.unwrap();
+        while let Some(message) = self.receiver.recv().await { // TODO break when receiver dropped
+            match message {
+                GunMessage::Get(msg) => { self.broadcast(msg.to_string()).await; },
+                GunMessage::Put(msg) => { self.broadcast(msg.to_string()).await; },
+                _ => {}
+            }
+        }
+
+        Self::actix_start(node, users).await.unwrap(); // TODO close when receiver dropped
     }
 }
 
@@ -214,8 +222,6 @@ impl WebsocketServer {
                 .service(fs::Files::new("/", "assets/iris").index_file("index.html"))
         });
 
-        Self::send_outgoing_msgs(&node, &users);
-
         if let Some(cert_path) = &config.cert_path {
             if let Some(key_path) = &config.key_path {
                 let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls()).unwrap();
@@ -230,47 +236,12 @@ impl WebsocketServer {
         server.bind(url).unwrap().run()
     }
 
-    async fn send_msg_to(msg_str: &String, recipient: &String, users: &Users) {
-        let users = users.read().await;
-        if let Some(addr) = users.get(recipient) {
-            let res = addr.try_send(OutgoingMessage { str: msg_str.clone() }); // TODO break on Closed error only
-            if let Err(e) = res {
+    async fn broadcast(&self, msg_str: String) {
+        for recipient in self.users.read().await.keys() {
+            if let Err(e) = addr.try_send(OutgoingMessage { str: msg_str.clone() }) {
                 error!("error sending outgoing msg to websocket actor: {}", e);
             }
         }
-    }
-
-    async fn send_outgoing_msg(msg_str: String, recipients: Option<HashSet<String>>, users: &Users) {
-        match recipients {
-            Some(recipients) => {
-                debug!("sending message to recipients: {:?}", recipients);
-                for recipient in recipients.iter() {
-                    Self::send_msg_to(&msg_str, &recipient, users).await;
-                }
-            },
-            _ => {
-                for recipient in users.read().await.keys() { // TODO cleanup, basically the same code as above
-                    Self::send_msg_to(&msg_str, recipient, users).await;
-                }
-            }
-        };
-    }
-
-    fn send_outgoing_msgs(node: &Node, users: &Users) {
-        let mut rx = node.get_outgoing_msg_receiver();
-        let users = users.clone();
-        tokio::task::spawn(async move {
-            loop {
-                if let Ok(message) = rx.recv().await { // TODO break when tx dropped
-                    match message {
-                        GunMessage::Get(msg) => { Self::send_outgoing_msg(msg.to_string(), msg.recipients, &users).await; },
-                        GunMessage::Put(msg) => { Self::send_outgoing_msg(msg.to_string(), msg.recipients, &users).await; },
-                        _ => {}
-                    }
-
-                }
-            }
-        });
     }
 
     async fn peer_id(data: web::Data<AppState>) -> String {

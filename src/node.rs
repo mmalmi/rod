@@ -75,6 +75,7 @@ pub struct Node {
     pub config: Arc<RwLock<Config>>,
     uid: Arc<RwLock<String>>,
     path: Vec<String>,
+    peer_id: Arc<RwLock<String>>,
     children: Arc<RwLock<BTreeMap<String, Node>>>,
     parents: Arc<RwLock<BTreeMap<String, Node>>>,
     on_sender: broadcast::Sender<GunValue>,
@@ -112,12 +113,9 @@ impl Node {
     /// })
     /// ```
     pub fn new_with_config(config: Config) -> Self {
-        // Actix - needed or not? Maybe Node can be the System (entry point) of our Actor system?
-        let stop_signal_channel = broadcast::channel::<()>(1);
-        let outgoing_channel = broadcast::channel::<Message>(config.rust_channel_size);
-
-        let node = Self {
+        Self {
             path: vec![],
+            peer_id: Arc::new(RwLock::new(random_string(16))),
             uid: Arc::new(RwLock::new("".to_string())),
             config: Arc::new(RwLock::new(config.clone())),
             children: Arc::new(RwLock::new(BTreeMap::new())),
@@ -126,51 +124,25 @@ impl Node {
             map_sender: broadcast::channel::<(String, GunValue)>(config.rust_channel_size).0,
             addr: Arc::new(RwLock::new(None)), // set this to None when stopping
             router: Arc::new(RwLock::new(None)),
-        };
-        if config.multicast {
-            let multicast = Multicast::new(node.clone());
-            node.adapters.write().unwrap().insert("multicast".to_string(), Box::new(multicast));
         }
-        if config.websocket_server {
-            let server = WebsocketServer::new(node.clone());
-            node.adapters.write().unwrap().insert("ws_server".to_string(), Box::new(server));
-        }
-        if config.sled_storage {
-            let sled_storage = SledStorage::new(node.clone());
-            node.adapters.write().unwrap().insert("sled_storage".to_string(), Box::new(sled_storage));
-        }
-        if config.memory_storage {
-            let memory_storage = MemoryStorage::new(node.clone());
-            node.adapters.write().unwrap().insert("memory_storage".to_string(), Box::new(memory_storage));
-        }
-        let client = WebsocketClient::new(node.clone());
-        node.adapters.write().unwrap().insert("ws_client".to_string(), Box::new(client));
-        node
     }
 
-    /// Actors should use this to receive outbound messages.
-    pub fn get_outgoing_msg_receiver(&self) -> broadcast::Receiver<Message> {
-        self.outgoing_msg_sender.subscribe()
-    }
-
-    /// Actors should use this to relay inbound messages.
-    pub fn get_incoming_msg_sender(&self) -> mpsc::Sender<Message> {
-        self.incoming_msg_sender.read().unwrap().as_ref().unwrap().clone()
-    }
-
-    // relay to original requester or all subscribers
     fn handle_put(&mut self, msg: Put) {
-
+        // notify subscriptions
     }
 
     // should we start adapters on ::new()? in a new thread
     /// Starts [Actor]s that are enabled for this Node.
     pub async fn start(&mut self) {
+        // should we start Node right away on new()?
         let (incoming_tx, mut incoming_rx) = mpsc::channel::<Message>(self.config.read().unwrap().rust_channel_size);
-        let my_addr = Addr::new(incoming_tx);
-        let router = Router::new(self.clone());
-        self.router = router.start();
-        *self.addr.write().unwrap() = Some(addr);
+        *self.addr.write().unwrap() = Some(Addr::new(incoming_tx));
+
+        let (sender, receiver) = mpsc::channel::<Message>(self.config.read().unwrap().rust_channel_size);
+        let router = Router::new(receiver, self.clone());
+        *self.router.write().unwrap() = Some(Addr::new(sender));
+        tokio::spawn(async move { router.start().await });
+
         while let Some(msg) = incoming_rx.recv().await {
             debug!("incoming message");
             match msg {
@@ -193,6 +165,7 @@ impl Node {
         debug!("new_child_uid {}", new_child_uid);
         let node = Self {
             path,
+            peer_id: self.peer_id.clone(),
             config: self.config.clone(),
             children: Arc::new(RwLock::new(BTreeMap::new())),
             parents: Arc::new(RwLock::new(parents)),
@@ -219,7 +192,7 @@ impl Node {
         } else {
             key = None;
         }
-        let get = Get::new(self.addr.clone(), self.uid.read().unwrap().to_string(), key, self.get_peer_id().clone());
+        let get = Get::new(self.uid.read().unwrap().to_string(), key, self.addr.clone());
         self.router.try_send(Message::Get(get));
         let sub = self.on_sender.subscribe();
         let uid = self.uid.read().unwrap().clone();
@@ -258,26 +231,13 @@ impl Node {
         let updated_at: f64 = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis() as f64;
         let uid = self.uid.read().unwrap().clone();
         self.on_sender.send(value.clone()).ok();
-        if self.adapters.read().unwrap().len() > 0 {
-            // TODO: write the full chain of parents
-            for (parent_id, _parent) in self.parents.read().unwrap().iter() {
-                let mut children = Children::default();
 
-                children.insert(self.path.last().unwrap().clone(), NodeData { value: value.clone(), updated_at });
-                let mut put = Put::new_from_kv(parent_id.to_string(), children);
-                put.from = self.get_peer_id();
-                let recipients;
-                let topic = self.path.iter().next().unwrap();
-                debug!("getting subscribers for topic {}", topic);
-                if let Some(subscribers) = self.subscribers_by_topic.read().unwrap().get(topic) {
-                    recipients = subscribers.clone();
-                } else {
-                    recipients = HashSet::new();
-                }
-                put.recipients = Some(recipients);
-                let id = put.id.clone();
-                self.outgoing_message(Message::Put(put), id);
-            }
+        // TODO: write the full chain of parents
+        for (parent_id, _parent) in self.parents.read().unwrap().iter() {
+            let mut children = Children::default();
+            children.insert(self.path.last().unwrap().clone(), NodeData { value: value.clone(), updated_at });
+            let mut put = Put::new_from_kv(parent_id.to_string(), children);
+            self.router.sender.try_send(Message::Put(put));
         }
     }
 

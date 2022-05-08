@@ -111,7 +111,7 @@ async fn user_connected(mut node: Node, ws: WebSocketStream<tokio_tungstenite::M
 
     // Every time the user sends a message, broadcast it to
     // all other users...
-    let incoming_message_sender = node.get_incoming_msg_sender();
+    let router = node.get_router_addr();
     while let Some(result) = user_ws_rx.next().await {
         let msg = match result {
             Ok(msg) => msg,
@@ -128,7 +128,7 @@ async fn user_connected(mut node: Node, ws: WebSocketStream<tokio_tungstenite::M
                 match Message::try_from(s, my_id.clone()) {
                     Ok(msgs) => {
                         for msg in msgs.into_iter() {
-                            if let Err(e) = incoming_message_sender.try_send(msg) {
+                            if let Err(e) = router.sender.try_send(msg) {
                                 error!("failed to send incoming message to node: {}", e);
                             }
                         }

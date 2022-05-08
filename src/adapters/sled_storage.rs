@@ -32,19 +32,15 @@ pub struct SledStorage {
 }
 
 impl SledStorage {
-    fn handle_get(&self, msg: Get) {
-        if &msg.from == my_id {
-            return;
-        }
-
-        let res = unwrap_or_return!(self.store.get(&msg.node_id.clone()));
+    fn handle_get(&self, get: Get) {
+        let res = unwrap_or_return!(self.store.get(&get.node_id.clone()));
         if res.is_none() {
-            debug!("have not {}", msg.node_id); return;
+            debug!("have not {}", get.node_id); return;
         }
         let children = res.unwrap();
-        debug!("have {}: {:?}", msg.node_id, children);
-        let children = unwrap_or_return!(self.store.open_tree(&msg.node_id));
-        let reply_with_children = match &msg.child_key {
+        debug!("have {}: {:?}", get.node_id, children);
+        let children = unwrap_or_return!(self.store.open_tree(&get.node_id));
+        let reply_with_children = match &get.child_key {
             Some(child_key) => { // reply with specific child if it's found
                 let child_val = unwrap_or_return!(children.get(child_key));
                 if child_val.is_none() { debug!("requested child {} not found", child_key); return; }
@@ -66,26 +62,15 @@ impl SledStorage {
             }
         };
         let mut reply_with_nodes = BTreeMap::new();
-        reply_with_nodes.insert(msg.node_id.clone(), reply_with_children);
+        reply_with_nodes.insert(get.node_id.clone(), reply_with_children);
         let mut recipients = HashSet::new();
-        recipients.insert(msg.from.clone());
-        let put = Put::new(reply_with_nodes, Some(msg.id.clone()));
-
-        if let Some(addr) = &msg.from_addr {
-            addr.try_send(OutgoingMessage { str: put.to_string() });
-        } else {
-            if let Err(e) = self.node.get_router_addr().sender.try_send(Message::Put(put)) {
-                error!("failed to send incoming message to node: {}", e);
-            }
-        }
+        recipients.insert(get.from.clone());
+        let put = Put::new(reply_with_nodes, Some(get.id.clone()));
+        get.from.try_send(Message::Put(put));
     }
 
-    fn handle_put(&self, msg: Put) {
-        if msg.from == *my_id {
-            return;
-        }
-
-        for (node_id, update_data) in msg.updated_nodes.iter().rev() {
+    fn handle_put(&self, put: Put) {
+        for (node_id, update_data) in put.updated_nodes.iter().rev() {
             debug!("saving k-v {}: {:?}", node_id, update_data);
             // TODO use sled::Tree instead of Children
 

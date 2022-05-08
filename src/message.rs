@@ -4,25 +4,23 @@ use std::collections::{HashSet, BTreeMap};
 use crate::types::*;
 use log::{debug, error};
 use std::convert::TryFrom;
-use actix::Addr;
 use crate::adapters::websocket_server::MyWs;
+use crate::actor::Addr;
 
 #[derive(Clone, Debug)]
 pub struct Get {
     pub id: String,
-    pub from: String,
-    pub from_addr: Option<Addr<MyWs>>,
+    pub from: Addr,
     pub recipients: Option<HashSet<String>>,
     pub node_id: String,
     pub child_key: Option<String>,
     pub json_str: Option<String>
 }
 impl Get {
-    pub fn new(node_id: String, child_key: Option<String>, from: String) -> Self {
+    pub fn new(node_id: String, child_key: Option<String>, from: Addr) -> Self {
         Self {
             id: random_string(8),
             from,
-            from_addr: None,
             recipients: None,
             node_id,
             child_key,
@@ -51,7 +49,6 @@ impl Get {
 #[derive(Clone, Debug)]
 pub struct Put {
     pub id: String,
-    pub from: String,
     pub recipients: Option<HashSet<String>>,
     pub in_response_to: Option<String>,
     pub updated_nodes: BTreeMap<String, Children>,
@@ -62,7 +59,6 @@ impl Put {
     pub fn new(updated_nodes: BTreeMap<String, Children>, in_response_to: Option<String>) -> Self {
         Self {
             id: random_string(8),
-            from: "".to_string(),
             recipients: None,
             in_response_to,
             updated_nodes,
@@ -112,7 +108,7 @@ impl Put {
 }
 
 #[derive(Clone, Debug)]
-pub enum Message { // could consider structs for each enum variant (Message::Get(Get))
+pub enum Message { // TODO: NetworkMessage and InternalMessage
     Get(Get),
     Put(Put),
     Hi { from: String }
@@ -135,7 +131,7 @@ impl Message {
         }
     }
 
-    fn from_put_obj(json: &SerdeJsonValue, json_str: String, msg_id: String, from: String) -> Result<Self, &'static str> {
+    fn from_put_obj(json: &SerdeJsonValue, json_str: String, msg_id: String) -> Result<Self, &'static str> {
         let obj = match json.get("put").unwrap().as_object() {
             Some(obj) => obj,
             _ => { return Err("invalid message: msg.put was not an object"); }
@@ -182,7 +178,6 @@ impl Message {
         }
         let put = Put {
             id: msg_id.to_string(),
-            from,
             recipients: None,
             in_response_to,
             updated_nodes,
@@ -192,7 +187,7 @@ impl Message {
         Ok(Message::Put(put))
     }
 
-    fn from_get_obj(json: &SerdeJsonValue, json_str: String, msg_id: String, from: String) -> Result<Self, &'static str> {
+    fn from_get_obj(json: &SerdeJsonValue, json_str: String, msg_id: String, from: Addr) -> Result<Self, &'static str> {
         /* TODO: other types of child_key selectors than equality.
 
         node.get({'.': {'<': cursor, '-': true}, '%': 20 * 1000}).once().map().on((value, key) => { ...
@@ -218,7 +213,6 @@ impl Message {
         let get = Get {
             id: msg_id,
             from,
-            from_addr: None,
             recipients: None,
             node_id: node_id.to_string(),
             child_key,
@@ -227,7 +221,7 @@ impl Message {
         Ok(Message::Get(get))
     }
     
-    pub fn from_json_obj(json: &SerdeJsonValue, json_str: String, from: String) -> Result<Self, &'static str> {
+    pub fn from_json_obj(json: &SerdeJsonValue, json_str: String, from: Addr) -> Result<Self, &'static str> {
         let obj = match json.as_object() {
             Some(obj) => obj,
             _ => { return Err("not a json object"); }
@@ -243,7 +237,7 @@ impl Message {
             return Err("msg_id must be alphanumeric");
         }
         if obj.contains_key("put") {
-            Self::from_put_obj(json, json_str, msg_id, from)
+            Self::from_put_obj(json, json_str, msg_id)
         } else if obj.contains_key("get") {
             Self::from_get_obj(json, json_str, msg_id, from)
         } else if let Some(_dam) = obj.get("dam") {
@@ -253,7 +247,7 @@ impl Message {
         }
     }
 
-    pub fn try_from(s: &str, from: String) -> Result<Vec<Self>, &str> {
+    pub fn try_from(s: &str, from: Addr) -> Result<Vec<Self>, &str> {
         let json: SerdeJsonValue = match serde_json::from_str(s) {
             Ok(json) => json,
             Err(_) => { return Err("Failed to parse message as JSON"); }

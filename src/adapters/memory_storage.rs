@@ -15,6 +15,7 @@ use crate::adapters::websocket_server::OutgoingMessage;
 pub struct MemoryStorage {
     id: String,
     node: Node,
+    receiver: Receiver<Message>,
     graph_size_bytes: Arc<RwLock<usize>>,
     store: Arc<RwLock<HashMap<String, Children>>>,
 }
@@ -38,10 +39,6 @@ impl MemoryStorage {
     }
 
     fn handle_get(msg: &Get, my_id: &String, store: Arc<RwLock<HashMap<String, Children>>>, node: &Node) {
-        if &msg.from == my_id {
-            return;
-        }
-
         if let Some(children) = store.read().unwrap().get(&msg.node_id).cloned() {
             debug!("have {}: {:?}", msg.node_id, children);
             let reply_with_children = match &msg.child_key {
@@ -62,24 +59,13 @@ impl MemoryStorage {
             let mut recipients = HashSet::new();
             recipients.insert(msg.from.clone());
             let put = Put::new(reply_with_nodes, Some(msg.id.clone()));
-
-            if let Some(addr) = &msg.from_addr {
-                addr.try_send(OutgoingMessage { str: put.to_string() });
-            } else {
-                if let Err(e) = node.get_incoming_msg_sender().try_send(Message::Put(put)) {
-                    error!("failed to send incoming message to node: {}", e);
-                }
-            }
+            addr.try_send(Message::Put(put));
         } else {
             debug!("have not {}", msg.node_id);
         }
     }
 
     fn handle_put(msg: &Put, my_id: &String, store: Arc<RwLock<HashMap<String, Children>>>) {
-        if &msg.from == my_id {
-            return;
-        }
-
         for (node_id, update_data) in msg.updated_nodes.iter().rev() { // return in reverse
             debug!("saving k-v {}: {:?}", node_id, update_data);
             let mut write = store.write().unwrap();
@@ -102,9 +88,10 @@ impl MemoryStorage {
 
 #[async_trait]
 impl Actor for MemoryStorage {
-    fn new(node: Node) -> Self {
+    fn new(receiver: Receiver<Message>, node: Node) -> Self {
         MemoryStorage {
             id: "memory_storage".to_string(),
+            receiver,
             node,
             graph_size_bytes: Arc::new(RwLock::new(0)),
             store: Arc::new(RwLock::new(HashMap::new())), // If we don't want to store everything in memory, this needs to use something like Redis or LevelDB. Or have a FileSystem adapter for persistence and evict the least important stuff from memory when it's full.
@@ -120,15 +107,12 @@ impl Actor for MemoryStorage {
             self.update_stats();
         }
 
-        let mut rx = node.get_outgoing_msg_receiver();
         tokio::task::spawn(async move {
-            loop {
-                if let Ok(message) = rx.recv().await {
-                    match message {
-                        Message::Get(get) => Self::handle_get(&get, &my_id, store.clone(), &node),
-                        Message::Put(put) => Self::handle_put(&put, &my_id, store.clone()),
-                        _ => {}
-                    }
+            while let Some(message) = self.receiver.recv().await {
+                match message {
+                    Message::Get(get) => Self::handle_get(&get, &my_id, store.clone(), &node),
+                    Message::Put(put) => Self::handle_put(&put, &my_id, store.clone()),
+                    _ => {}
                 }
             }
         });
