@@ -1,4 +1,5 @@
 mod node;
+mod router;
 mod utils;
 mod adapters;
 mod message;

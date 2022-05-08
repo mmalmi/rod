@@ -6,6 +6,7 @@ use std::sync::{
     RwLock // TODO: could we use async RwLock? Would require some changes to the chaining api (.get()).
 };
 use crate::utils::random_string;
+use crate::router::Router;
 use crate::message::{Message, Put, Get};
 use crate::types::*;
 use crate::adapters::SledStorage;
@@ -17,8 +18,6 @@ use log::{debug, error};
 use tokio::time::{sleep, Duration};
 use tokio::sync::{broadcast, mpsc};
 use sysinfo::{ProcessorExt, System, SystemExt};
-
-static SEEN_MSGS_MAX_SIZE: usize = 10000;
 
 // TODO extract networking to struct Mesh
 // TODO proper automatic tests
@@ -80,33 +79,24 @@ impl Default for NodeConfig {
     }
 }
 
-// Confusing name? Node is both a graph node and a network node.
-/// A Graph Node that provides an API for graph traversal and publish-subscribe.
+/// A Graph Node that provides an API for graph traversal
 /// Sends, processes and relays Put & Get messages between storage and transport adapters.
 ///
 /// Supports graph synchronization over [NetworkAdapter]s (currently websocket and multicast).
 /// Disk storage adapter to be done.
 #[derive(Clone)]
 pub struct Node {
-    path: Vec<String>,
+    pub config: Arc<RwLock<NodeConfig>>,
     uid: Arc<RwLock<String>>,
+    path: Vec<String>,
     children: Arc<RwLock<BTreeMap<String, Node>>>,
     parents: Arc<RwLock<BTreeMap<String, Node>>>,
-    pub config: Arc<RwLock<NodeConfig>>,
     on_sender: broadcast::Sender<GunValue>,
     map_sender: broadcast::Sender<(String, GunValue)>,
-    adapters: NetworkAdapters,
-    seen_messages: Arc<RwLock<BoundedHashSet>>,
-    seen_get_messages: Arc<RwLock<BoundedHashMap<String, SeenGetMessage>>>,
-    subscribers_by_topic: Arc<RwLock<HashMap<String, HashSet<String>>>>,
-    peer_id: Arc<RwLock<String>>,
-    msg_counter: Arc<AtomicUsize>,
     stop_signal_sender: broadcast::Sender<()>,
     stop_signal_receiver: Arc<broadcast::Receiver<()>>,
-    outgoing_msg_sender: broadcast::Sender<Message>,
-    outgoing_msg_receiver: Arc<broadcast::Receiver<Message>>, // need to store 1 receiver instance so the channel doesn't get closed
-    incoming_msg_sender: Arc<RwLock<Option<mpsc::Sender<Message>>>>,
-    subscriptions_by_node_id: Arc<RwLock<HashMap<String, Vec<broadcast::Sender<GunValue>>>>>
+    addr: Arc<RwLock<Option<Addr>>>,
+    router: Arc<RwLock<Option<Addr>>>
 }
 
 impl Node {
@@ -138,8 +128,10 @@ impl Node {
     /// })
     /// ```
     pub fn new_with_config(config: NodeConfig) -> Self {
+        // Actix - needed or not? Maybe Node can be the System (entry point) of our Actor system?
         let stop_signal_channel = broadcast::channel::<()>(1);
         let outgoing_channel = broadcast::channel::<Message>(config.rust_channel_size);
+
         let node = Self {
             path: vec![],
             uid: Arc::new(RwLock::new("".to_string())),
@@ -148,18 +140,10 @@ impl Node {
             parents: Arc::new(RwLock::new(BTreeMap::new())),
             on_sender: broadcast::channel::<GunValue>(config.rust_channel_size).0,
             map_sender: broadcast::channel::<(String, GunValue)>(config.rust_channel_size).0,
-            adapters: NetworkAdapters::default(),
-            seen_messages: Arc::new(RwLock::new(BoundedHashSet::new(SEEN_MSGS_MAX_SIZE))),
-            seen_get_messages: Arc::new(RwLock::new(BoundedHashMap::new(SEEN_MSGS_MAX_SIZE))),
-            subscribers_by_topic: Arc::new(RwLock::new(HashMap::new())),
-            peer_id: Arc::new(RwLock::new(random_string(16))),
-            msg_counter: Arc::new(AtomicUsize::new(0)),
             stop_signal_sender: stop_signal_channel.0,
             stop_signal_receiver: Arc::new(stop_signal_channel.1),
-            outgoing_msg_sender: outgoing_channel.0,
-            outgoing_msg_receiver: Arc::new(outgoing_channel.1),
-            incoming_msg_sender: Arc::new(RwLock::new(None)),
-            subscriptions_by_node_id: Arc::new(RwLock::new(HashMap::new()))
+            addr: Arc::new(RwLock::new(None)), // set this to None when stopping
+            router: Arc::new(RwLock::new(None)),
         };
         if config.multicast {
             let multicast = Multicast::new(node.clone());
@@ -192,40 +176,66 @@ impl Node {
         self.incoming_msg_sender.read().unwrap().as_ref().unwrap().clone()
     }
 
-    fn update_stats(&self) {
-        let mut node = self.clone();
-        let peer_id = self.get_peer_id();
-        let mut stats = node.get("node_stats").get(&peer_id);
-        let start_time = Instant::now();
-        tokio::task::spawn(async move {
-            let mut sys = System::new_all();
-            loop {
-                sys.refresh_all();
-                stats.get("msgs_per_second").put(node.msg_counter.load(Ordering::Relaxed).into());
-                node.msg_counter.store(0, Ordering::Relaxed);
-                stats.get("total_memory").put(format!("{} MB", sys.total_memory() / 1000).into());
-                stats.get("used_memory").put(format!("{} MB", sys.used_memory() / 1000).into());
-                stats.get("cpu_usage").put(format!("{} %", sys.global_processor_info().cpu_usage() as u64).into());
-                let uptime_secs = start_time.elapsed().as_secs();
-                let uptime;
-                if uptime_secs <= 60 {
-                    uptime = format!("{} seconds", uptime_secs);
-                } else if uptime_secs <= 2 * 60 * 60 {
-                    uptime = format!("{} minutes", uptime_secs / 60);
-                } else {
-                    uptime = format!("{} hours", uptime_secs / 60 / 60);
+    // record subscription & relay
+    fn handle_get(&mut self, msg: Get) {
+        if !msg.id.chars().all(char::is_alphanumeric) {
+            error!("id {}", msg.id);
+        }
+        if self.is_message_seen(msg.id) {
+            return;
+        }
+        let seen_get_message = SeenGetMessage { from: msg.from.clone(), last_reply_checksum: None };
+        self.seen_get_messages.write().unwrap().insert(msg.id.clone(), seen_get_message);
+        let topic = msg.node_id.split("/").next().unwrap_or("");
+        debug!("{} subscribed to {}", msg.from, topic);
+        self.subscribers_by_topic.write().unwrap().entry(topic.to_string())
+            .or_insert_with(HashSet::new).insert(msg.from.clone());
+        let id = msg.id.clone();
+        self.send(Message::Get(msg), id);
+    }
+
+    // relay to original requester or all subscribers
+    fn handle_put(&mut self, msg: Put) {
+        if self.is_message_seen(msg.id) {
+            return;
+        }
+        let mut recipients = HashSet::<String>::new();
+
+        match &msg.in_response_to {
+            Some(in_response_to) => {
+                if let Some(seen_get_message) = self.seen_get_messages.write().unwrap().get_mut(in_response_to) {
+                    if msg.checksum != None && msg.checksum == seen_get_message.last_reply_checksum {
+                        debug!("same reply already sent");
+                        return;
+                    } // failing these conditions, should we still send the ack to someone?
+                    seen_get_message.last_reply_checksum = msg.checksum.clone();
+                    recipients.insert(seen_get_message.from.clone());
                 }
-                stats.get("process_uptime").put(uptime.into());
-                sleep(Duration::from_millis(1000)).await;
+            },
+            _ => {
+                for node_id in msg.updated_nodes.keys() {
+                    let topic = node_id.split("/").next().unwrap_or("");
+                    if let Some(subscribers) = self.subscribers_by_topic.read().unwrap().get(topic) {
+                        recipients.extend(subscribers.clone());
+                    }
+                    debug!("getting subscribers for topic {}: {:?}", topic, recipients);
+                }
             }
-        });
+        };
+        let mut msg = msg.clone();
+        msg.recipients = Some(recipients);
+        let id = msg.id.clone();
+        self.send(Message::Put(msg), id);
     }
 
     // should we start adapters on ::new()? in a new thread
     /// Starts [NetworkAdapter]s that are enabled for this Node.
-    pub async fn start_adapters(&mut self) {
+    pub async fn start(&mut self) {
         let (incoming_tx, mut incoming_rx) = mpsc::channel::<Message>(self.config.read().unwrap().rust_channel_size);
-        *self.incoming_msg_sender.write().unwrap() = Some(incoming_tx);
+        let my_addr = Addr::new(incoming_tx);
+        let router = Router::new_with_config(config.clone());
+        self.router = router.start();
+        *self.addr.write().unwrap() = Some(addr);
         let mut node = self.clone();
         tokio::task::spawn(async move {
             loop {
@@ -271,19 +281,10 @@ impl Node {
             parents: Arc::new(RwLock::new(parents)),
             on_sender: broadcast::channel::<GunValue>(config.rust_channel_size).0,
             map_sender: broadcast::channel::<(String, GunValue)>(config.rust_channel_size).0,
-            adapters: self.adapters.clone(),
-            seen_messages: self.seen_messages.clone(),
-            seen_get_messages: self.seen_get_messages.clone(),
-            subscribers_by_topic: self.subscribers_by_topic.clone(),
-            peer_id: self.peer_id.clone(),
-            msg_counter: self.msg_counter.clone(),
             stop_signal_sender: self.stop_signal_sender.clone(),
             stop_signal_receiver: self.stop_signal_receiver.clone(),
-            outgoing_msg_sender: self.outgoing_msg_sender.clone(),
-            outgoing_msg_receiver: self.outgoing_msg_receiver.clone(),
-            incoming_msg_sender: self.incoming_msg_sender.clone(),
             uid: Arc::new(RwLock::new(new_child_uid)),
-            subscriptions_by_node_id: self.subscriptions_by_node_id.clone()
+            router: self.router.clone()
         };
         self.children.write().unwrap().insert(key, node.clone());
         node
@@ -338,79 +339,6 @@ impl Node {
          */
         self.map_sender.subscribe()
         // TODO: send get messages to adapters!!
-    }
-
-    // record subscription & relay
-    fn handle_get(&mut self, msg: Get) {
-        if !msg.id.chars().all(char::is_alphanumeric) {
-            error!("id {}", msg.id);
-            panic!("msg_id must be alphanumeric");
-        }
-        if self.is_message_seen(msg.id.clone(), msg.to_string()) {
-            return;
-        }
-        let seen_get_message = SeenGetMessage { from: msg.from.clone(), last_reply_checksum: None };
-        self.seen_get_messages.write().unwrap().insert(msg.id.clone(), seen_get_message);
-        let topic = msg.node_id.split("/").next().unwrap_or("");
-        debug!("{} subscribed to {}", msg.from, topic);
-        self.subscribers_by_topic.write().unwrap().entry(topic.to_string())
-            .or_insert_with(HashSet::new).insert(msg.from.clone());
-        let id = msg.id.clone();
-        self.outgoing_message(Message::Get(msg), id);
-    }
-
-    // relay to original requester or all subscribers
-    fn handle_put(&mut self, msg: Put) {
-        if self.is_message_seen(msg.id.clone(), msg.to_string()) {
-            return;
-        }
-        let mut recipients = HashSet::<String>::new();
-
-        match &msg.in_response_to {
-            Some(in_response_to) => {
-                if let Some(seen_get_message) = self.seen_get_messages.write().unwrap().get_mut(in_response_to) {
-                    if msg.checksum != None && msg.checksum == seen_get_message.last_reply_checksum {
-                        debug!("same reply already sent");
-                        return;
-                    } // failing these conditions, should we still send the ack to someone?
-                    seen_get_message.last_reply_checksum = msg.checksum.clone();
-                    recipients.insert(seen_get_message.from.clone());
-                }
-            },
-            _ => {
-                for node_id in msg.updated_nodes.keys() {
-                    let topic = node_id.split("/").next().unwrap_or("");
-                    if let Some(subscribers) = self.subscribers_by_topic.read().unwrap().get(topic) {
-                        recipients.extend(subscribers.clone());
-                    }
-                    debug!("getting subscribers for topic {}: {:?}", topic, recipients);
-                }
-            }
-        };
-        let mut msg = msg.clone();
-        msg.recipients = Some(recipients);
-        let id = msg.id.clone();
-        self.outgoing_message(Message::Put(msg), id);
-    }
-
-    fn is_message_seen(&mut self, id: String, msg_str: String) -> bool {
-        self.msg_counter.fetch_add(1, Ordering::Relaxed);
-
-        if self.seen_messages.read().unwrap().contains(&id) {
-            debug!("already seen message {}", &id);
-            return true;
-        }
-        self.seen_messages.write().unwrap().insert(id.clone());
-
-        return false;
-    }
-
-    fn outgoing_message(&self, msg: Message, msg_id: String) {
-        debug!("[{}] msg out {:?}", &self.get_peer_id()[..4], msg);
-        self.seen_messages.write().unwrap().insert(msg_id); // TODO: doesn't seem to work, at least on multicast
-        if let Err(e) = self.outgoing_msg_sender.send(msg) {
-            error!("failed to send outgoing message from node: {}", e);
-        };
     }
 
     /// Set a GunValue for the Node.

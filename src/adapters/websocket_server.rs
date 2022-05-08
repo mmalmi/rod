@@ -153,14 +153,16 @@ struct AppState {
 type Users = Arc<RwLock<HashMap<String, Addr<MyWs>>>>;
 
 pub struct WebsocketServer {
+    receiver: Receiver<Message>,
     node: Node,
     users: Users
 }
 
 #[async_trait]
 impl NetworkAdapter for WebsocketServer {
-    fn new(node: Node) -> Self {
+    fn new(receiver: Receiver<Message>, node: Node) -> Self {
         WebsocketServer {
+            receiver,
             node,
             users: Users::default()
         }

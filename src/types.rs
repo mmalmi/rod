@@ -117,8 +117,8 @@ impl From<String> for GunValue {
 /// NetworkAdapters should communicate with the Node using [Node::get_outgoing_msg_receiver] and
 /// [Node::incoming_message].
 #[async_trait]
-pub trait NetworkAdapter {
-    fn new(node: Node) -> Self where Self: Sized;
+pub trait NetworkAdapter { // TODO: rename to Actor
+    fn new(receiver: Receiver<Message>, node: Node) -> Self where Self: Sized;
     /// This is called on node.start_adapters()
     async fn start(&self);
 }
@@ -201,9 +201,3 @@ impl<K: Clone + std::hash::Hash + std::cmp::Eq, V> BoundedHashMap<K, V> {
         return self.map.contains_key(key);
     }
 }
-
-// Nodes need to be cloneable so that each instance points to the same data in the graph.
-// But can we somehow wrap Node itself into Arc<RwLock<>> instead of wrapping all its properties?
-// Arc<RwLock<NodeInner>> pattern?
-// The code is not pretty with all these Arc-RwLock read/write().unwraps().
-pub(crate) type NetworkAdapters = Arc<RwLock<HashMap<String, Box<dyn NetworkAdapter + Send + Sync>>>>;

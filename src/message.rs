@@ -127,6 +127,14 @@ impl Message {
         }
     }
 
+    pub fn get_id(&self) -> String {
+        match self {
+            Message::Get(get) => get.id,
+            Message::Put(put) => put.id,
+            Message::Hi { from } => from.to_string()
+        }
+    }
+
     fn from_put_obj(json: &SerdeJsonValue, json_str: String, msg_id: String, from: String) -> Result<Self, &'static str> {
         let obj = match json.get("put").unwrap().as_object() {
             Some(obj) => obj,
