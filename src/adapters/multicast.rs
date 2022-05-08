@@ -2,7 +2,7 @@ use multicast_socket::MulticastSocket;
 use std::net::{SocketAddrV4};
 
 use crate::message::Message;
-use crate::types::NetworkAdapter;
+use crate::actor::Actor;
 use crate::Node;
 use async_trait::async_trait;
 use log::{debug, error};
@@ -15,7 +15,7 @@ pub struct Multicast {
 }
 
 #[async_trait]
-impl NetworkAdapter for Multicast {
+impl Actor for Multicast {
     fn new(node: Node) -> Self {
         let socket_addr = SocketAddrV4::new([233, 255, 255, 255].into(), 7654);
         let socket = MulticastSocket::all_interfaces(socket_addr)

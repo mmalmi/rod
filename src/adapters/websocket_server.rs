@@ -13,7 +13,7 @@ use futures::Stream;
 use std::collections::{HashMap, HashSet};
 use async_trait::async_trait;
 use crate::message::Message as GunMessage;
-use crate::types::NetworkAdapter;
+use crate::actor::Actor as MyActor;
 use crate::Node;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -21,6 +21,7 @@ use std::time::{Instant, Duration};
 use tokio::sync::RwLock;
 use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
 
+use tokio::sync::mpsc::{Sender, Receiver};
 use tokio::time::sleep;
 
 use log::{debug, error};
@@ -159,7 +160,7 @@ pub struct WebsocketServer {
 }
 
 #[async_trait]
-impl NetworkAdapter for WebsocketServer {
+impl MyActor for WebsocketServer {
     fn new(receiver: Receiver<Message>, node: Node) -> Self {
         WebsocketServer {
             receiver,
@@ -260,7 +261,7 @@ impl WebsocketServer {
         let users = users.clone();
         tokio::task::spawn(async move {
             loop {
-                if let Ok(message) = rx.recv().await {
+                if let Ok(message) = rx.recv().await { // TODO break when tx dropped
                     match message {
                         GunMessage::Get(msg) => { Self::send_outgoing_msg(msg.to_string(), msg.recipients, &users).await; },
                         GunMessage::Put(msg) => { Self::send_outgoing_msg(msg.to_string(), msg.recipients, &users).await; },

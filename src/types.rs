@@ -1,8 +1,5 @@
 use serde::{Serialize, Deserialize};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
-use std::sync::{Arc, RwLock};
-use crate::Node;
-use async_trait::async_trait;
 use serde_json::{json, Value as SerdeJsonValue};
 use std::convert::TryFrom;
 
@@ -102,25 +99,6 @@ impl From<String> for GunValue {
     fn from(s: String) -> GunValue {
         GunValue::Text(s)
     }
-}
-
-// This could actually be renamed to "Plugin" or "SyncAdapter"?
-// After all, there's nothing networking-specific in this trait.
-// Could be used for disk storage as well.
-// -
-// Adapters should probably use channels for communicating with the node, rather than calling Node::incoming_message?
-// Faster if all incoming messages are handled by one task, instead of many tasks interrupting each other with RwLocks?
-// -
-// Can we get rid of async_trait?
-/// Syncs the gun Node with other Nodes over various transports like websocket or multicast.
-///
-/// NetworkAdapters should communicate with the Node using [Node::get_outgoing_msg_receiver] and
-/// [Node::incoming_message].
-#[async_trait]
-pub trait NetworkAdapter { // TODO: rename to Actor
-    fn new(receiver: Receiver<Message>, node: Node) -> Self where Self: Sized;
-    /// This is called on node.start_adapters()
-    async fn start(&self);
 }
 
 /// When full, every insert pushes out the oldest entry in the set.

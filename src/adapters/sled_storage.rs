@@ -1,7 +1,7 @@
-use std::collections::{HashMap, HashSet, BTreeMap};
+use std::collections::{HashSet, BTreeMap};
 
 use crate::message::{Message, Put, Get};
-use crate::types::NetworkAdapter;
+use crate::actor::Actor;
 use crate::Node;
 use crate::types::*;
 
@@ -114,7 +114,7 @@ impl SledStorage {
 }
 
 #[async_trait]
-impl NetworkAdapter for SledStorage {
+impl Actor for SledStorage {
     fn new(node: Node) -> Self {
         let store = node.config.read().unwrap().sled_config.open().unwrap();
         SledStorage {

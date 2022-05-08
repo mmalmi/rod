@@ -1,23 +1,14 @@
-use std::collections::{BTreeMap, HashSet, HashMap};
-use std::time::{SystemTime, Instant};
+use std::collections::{BTreeMap, HashSet};
 use std::sync::{
-    atomic::{AtomicUsize, Ordering},
     Arc,
     RwLock // TODO: could we use async RwLock? Would require some changes to the chaining api (.get()).
 };
-use crate::utils::random_string;
+use std::time::SystemTime;
 use crate::router::Router;
 use crate::message::{Message, Put, Get};
 use crate::types::*;
-use crate::adapters::SledStorage;
-use crate::adapters::MemoryStorage;
-use crate::adapters::WebsocketServer;
-use crate::adapters::WebsocketClient;
-use crate::adapters::Multicast;
-use log::{debug, error};
-use tokio::time::{sleep, Duration};
+//use log::{debug, error};
 use tokio::sync::{broadcast, mpsc};
-use sysinfo::{ProcessorExt, System, SystemExt};
 
 // TODO extract networking to struct Mesh
 // TODO proper automatic tests
@@ -28,7 +19,7 @@ use sysinfo::{ProcessorExt, System, SystemExt};
 // TODO: separate configs for each adapter?
 /// [Node] configuration object.
 #[derive(Clone)]
-pub struct NodeConfig {
+pub struct Config {
     /// [tokio::sync::broadcast] channel size for outgoing network messages. Smaller value may slightly reduce memory usage, but lose outgoing messages when an adapter is lagging. Default: 10.
     pub rust_channel_size: usize,
     /// Enable sled.rs storage (disk + memory cache)? Default: true
@@ -55,14 +46,9 @@ pub struct NodeConfig {
     pub stats: bool,
 }
 
-struct SeenGetMessage {
-    from: String,
-    last_reply_checksum: Option<String>,
-}
-
-impl Default for NodeConfig {
+impl Default for Config {
     fn default() -> Self {
-        NodeConfig {
+        Config {
             rust_channel_size: 1000,
             sled_storage: true,
             sled_config: sled::Config::new().path("sled_db"),
@@ -82,11 +68,11 @@ impl Default for NodeConfig {
 /// A Graph Node that provides an API for graph traversal
 /// Sends, processes and relays Put & Get messages between storage and transport adapters.
 ///
-/// Supports graph synchronization over [NetworkAdapter]s (currently websocket and multicast).
+/// Supports graph synchronization over [Actor]s (currently websocket and multicast).
 /// Disk storage adapter to be done.
 #[derive(Clone)]
 pub struct Node {
-    pub config: Arc<RwLock<NodeConfig>>,
+    pub config: Arc<RwLock<Config>>,
     uid: Arc<RwLock<String>>,
     path: Vec<String>,
     children: Arc<RwLock<BTreeMap<String, Node>>>,
@@ -102,7 +88,7 @@ pub struct Node {
 impl Node {
     /// Create a new root-level Node using default configuration.
     pub fn new() -> Self {
-        Self::new_with_config(NodeConfig::default())
+        Self::new_with_config(Config::default())
     }
 
     /// Create a new root-level Node using custom configuration.
@@ -112,12 +98,12 @@ impl Node {
     /// ```
     /// tokio_test::block_on(async {
     ///
-    ///     use gundb::{Node, NodeConfig};
+    ///     use gundb::{Node, Config};
     ///     use gundb::types::GunValue;
     ///
-    ///     let mut db = Node::new_with_config(NodeConfig {
+    ///     let mut db = Node::new_with_config(Config {
     ///         outgoing_websocket_peers: vec!["wss://some-server-to-sync.with/gun".to_string()],
-    ///         ..NodeConfig::default()
+    ///         ..Config::default()
     ///     });
     ///     let mut sub = db.get("greeting").on();
     ///     db.get("greeting").put("Hello World!".into());
@@ -127,7 +113,7 @@ impl Node {
     ///
     /// })
     /// ```
-    pub fn new_with_config(config: NodeConfig) -> Self {
+    pub fn new_with_config(config: Config) -> Self {
         // Actix - needed or not? Maybe Node can be the System (entry point) of our Actor system?
         let stop_signal_channel = broadcast::channel::<()>(1);
         let outgoing_channel = broadcast::channel::<Message>(config.rust_channel_size);
@@ -140,8 +126,6 @@ impl Node {
             parents: Arc::new(RwLock::new(BTreeMap::new())),
             on_sender: broadcast::channel::<GunValue>(config.rust_channel_size).0,
             map_sender: broadcast::channel::<(String, GunValue)>(config.rust_channel_size).0,
-            stop_signal_sender: stop_signal_channel.0,
-            stop_signal_receiver: Arc::new(stop_signal_channel.1),
             addr: Arc::new(RwLock::new(None)), // set this to None when stopping
             router: Arc::new(RwLock::new(None)),
         };
@@ -166,102 +150,37 @@ impl Node {
         node
     }
 
-    /// NetworkAdapters should use this to receive outbound messages.
+    /// Actors should use this to receive outbound messages.
     pub fn get_outgoing_msg_receiver(&self) -> broadcast::Receiver<Message> {
         self.outgoing_msg_sender.subscribe()
     }
 
-    /// NetworkAdapters should use this to relay inbound messages.
+    /// Actors should use this to relay inbound messages.
     pub fn get_incoming_msg_sender(&self) -> mpsc::Sender<Message> {
         self.incoming_msg_sender.read().unwrap().as_ref().unwrap().clone()
     }
 
-    // record subscription & relay
-    fn handle_get(&mut self, msg: Get) {
-        if !msg.id.chars().all(char::is_alphanumeric) {
-            error!("id {}", msg.id);
-        }
-        if self.is_message_seen(msg.id) {
-            return;
-        }
-        let seen_get_message = SeenGetMessage { from: msg.from.clone(), last_reply_checksum: None };
-        self.seen_get_messages.write().unwrap().insert(msg.id.clone(), seen_get_message);
-        let topic = msg.node_id.split("/").next().unwrap_or("");
-        debug!("{} subscribed to {}", msg.from, topic);
-        self.subscribers_by_topic.write().unwrap().entry(topic.to_string())
-            .or_insert_with(HashSet::new).insert(msg.from.clone());
-        let id = msg.id.clone();
-        self.send(Message::Get(msg), id);
-    }
-
     // relay to original requester or all subscribers
     fn handle_put(&mut self, msg: Put) {
-        if self.is_message_seen(msg.id) {
-            return;
-        }
-        let mut recipients = HashSet::<String>::new();
 
-        match &msg.in_response_to {
-            Some(in_response_to) => {
-                if let Some(seen_get_message) = self.seen_get_messages.write().unwrap().get_mut(in_response_to) {
-                    if msg.checksum != None && msg.checksum == seen_get_message.last_reply_checksum {
-                        debug!("same reply already sent");
-                        return;
-                    } // failing these conditions, should we still send the ack to someone?
-                    seen_get_message.last_reply_checksum = msg.checksum.clone();
-                    recipients.insert(seen_get_message.from.clone());
-                }
-            },
-            _ => {
-                for node_id in msg.updated_nodes.keys() {
-                    let topic = node_id.split("/").next().unwrap_or("");
-                    if let Some(subscribers) = self.subscribers_by_topic.read().unwrap().get(topic) {
-                        recipients.extend(subscribers.clone());
-                    }
-                    debug!("getting subscribers for topic {}: {:?}", topic, recipients);
-                }
-            }
-        };
-        let mut msg = msg.clone();
-        msg.recipients = Some(recipients);
-        let id = msg.id.clone();
-        self.send(Message::Put(msg), id);
     }
 
     // should we start adapters on ::new()? in a new thread
-    /// Starts [NetworkAdapter]s that are enabled for this Node.
+    /// Starts [Actor]s that are enabled for this Node.
     pub async fn start(&mut self) {
         let (incoming_tx, mut incoming_rx) = mpsc::channel::<Message>(self.config.read().unwrap().rust_channel_size);
         let my_addr = Addr::new(incoming_tx);
-        let router = Router::new_with_config(config.clone());
+        let router = Router::new(self.clone());
         self.router = router.start();
         *self.addr.write().unwrap() = Some(addr);
-        let mut node = self.clone();
-        tokio::task::spawn(async move {
-            loop {
-                if let Some(msg) = incoming_rx.recv().await {
-                    debug!("incoming message");
-                    match msg {
-                        Message::Put(put) => node.handle_put(put),
-                        Message::Get(get) => node.handle_get(get),
-                        _ => {}
-                    }
-                }
+        while let Some(msg) = incoming_rx.recv().await {
+            debug!("incoming message");
+            match msg {
+                Message::Put(put) => self.handle_put(put),
+                Message::Get(get) => self.handle_get(get),
+                _ => {}
             }
-        });
-
-        let adapters = self.adapters.read().unwrap();
-        let mut futures = Vec::new();
-        for adapter in adapters.values() {
-            futures.push(adapter.start()); // adapters must be non-blocking: use async functions or spawn_blocking
         }
-        if self.config.read().unwrap().stats {
-            self.update_stats();
-        }
-
-        let joined = futures::future::join_all(futures);
-
-        futures::future::select(joined, Box::pin(self.stop_signal_sender.subscribe().recv())).await;
     }
 
     fn new_child(&self, key: String) -> Node {
@@ -281,10 +200,9 @@ impl Node {
             parents: Arc::new(RwLock::new(parents)),
             on_sender: broadcast::channel::<GunValue>(config.rust_channel_size).0,
             map_sender: broadcast::channel::<(String, GunValue)>(config.rust_channel_size).0,
-            stop_signal_sender: self.stop_signal_sender.clone(),
-            stop_signal_receiver: self.stop_signal_receiver.clone(),
             uid: Arc::new(RwLock::new(new_child_uid)),
-            router: self.router.clone()
+            router: self.router.clone(),
+            addr: Arc::new(RwLock::new(Addr:new()))
         };
         self.children.write().unwrap().insert(key, node.clone());
         node
@@ -369,19 +287,18 @@ impl Node {
         }
     }
 
-    /// Stop any running adapters
     pub fn stop(&mut self) {
-        let _ = self.stop_signal_sender.send(());
+        *self.addr.write().unwrap() = None; // Dropping the Node's Addr should stop the Message listener thread
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{Node, NodeConfig};
+    use crate::{Node, Config};
     use crate::types::GunValue;
     use tokio::time::{sleep, Duration};
     use std::sync::Once;
-    use log::{debug};
+    //use log::{debug};
 
     static INIT: Once = Once::new();
 
@@ -397,10 +314,10 @@ mod tests {
     #[test]
     fn it_doesnt_error() {
         //setup();
-        let mut gun = Node::new_with_config(NodeConfig {
+        let mut gun = Node::new_with_config(Config {
             memory_storage: true,
             sled_storage: false,
-            ..NodeConfig::default()
+            ..Config::default()
         });
         let _ = gun.get("Meneldor"); // Pick Tolkien names from https://www.behindthename.com/namesakes/list/tolkien/alpha
     }
@@ -408,10 +325,10 @@ mod tests {
     #[tokio::test]
     async fn first_get_then_put() {
         setup();
-        let mut gun = Node::new_with_config(NodeConfig {
+        let mut gun = Node::new_with_config(Config {
             memory_storage: true,
             sled_storage: false,
-            ..NodeConfig::default()
+            ..Config::default()
         });
         let mut node = gun.get("Anborn");
         let mut sub = node.on();
@@ -424,10 +341,10 @@ mod tests {
     #[tokio::test]
     async fn first_put_then_get() {
         //setup();
-        let mut gun = Node::new_with_config(NodeConfig {
+        let mut gun = Node::new_with_config(Config {
             memory_storage: true,
             sled_storage: false,
-            ..NodeConfig::default()
+            ..Config::default()
         });
         let mut node = gun.get("Finglas");
         node.put("Fingolfin".into());
@@ -440,22 +357,22 @@ mod tests {
     #[tokio::test]
     async fn connect_and_sync_over_websocket() {
         setup();
-        let mut node1 = Node::new_with_config(NodeConfig {
+        let mut node1 = Node::new_with_config(Config {
             memory_storage: true,
             sled_storage: false,
             websocket_server: true,
             multicast: false,
             stats: false,
-            ..NodeConfig::default()
+            ..Config::default()
         });
-        let mut node2 = Node::new_with_config(NodeConfig {
+        let mut node2 = Node::new_with_config(Config {
             memory_storage: true,
             sled_storage: false,
             websocket_server: false,
             multicast: false,
             stats: false,
             outgoing_websocket_peers: vec!["ws://localhost:4944/gun".to_string()],
-            ..NodeConfig::default()
+            ..Config::default()
         });
         async fn tst(mut node1: Node, mut node2: Node) {
             sleep(Duration::from_millis(1000)).await;
@@ -480,23 +397,23 @@ mod tests {
         }
         let node1_clone = node1.clone();
         let node2_clone = node2.clone();
-        tokio::join!(node1.start_adapters(), node2.start_adapters(), tst(node1_clone, node2_clone));
+        tokio::join!(node1.start(), node2.start(), tst(node1_clone, node2_clone));
     }
 
     /*
     #[tokio::test]
     async fn sync_over_multicast() {
-        let mut node1 = Node::new_with_config(NodeConfig {
+        let mut node1 = Node::new_with_config(Config {
             websocket_server: false,
             multicast: true,
             stats: false,
-            ..NodeConfig::default()
+            ..Config::default()
         });
-        let mut node2 = Node::new_with_config(NodeConfig {
+        let mut node2 = Node::new_with_config(Config {
             websocket_server: false,
             multicast: true,
             stats: false,
-            ..NodeConfig::default()
+            ..Config::default()
         });
         async fn tst(mut node1: Node, mut node2: Node) {
             sleep(Duration::from_millis(1000)).await;
@@ -521,7 +438,7 @@ mod tests {
         }
         let node1_clone = node1.clone();
         let node2_clone = node2.clone();
-        tokio::join!(node1.start_adapters(), node2.start_adapters(), tst(node1_clone, node2_clone));
+        tokio::join!(node1.start(), node2.start(), tst(node1_clone, node2_clone));
     }*/
 
     /*

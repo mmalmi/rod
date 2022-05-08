@@ -9,7 +9,7 @@ use url::Url;
 use std::collections::HashMap;
 
 use crate::message::Message;
-use crate::types::NetworkAdapter;
+use crate::actor::Actor;
 use crate::Node;
 use async_trait::async_trait;
 use log::{debug, error};
@@ -33,7 +33,7 @@ pub struct WebsocketClient {
 }
 
 #[async_trait]
-impl NetworkAdapter for WebsocketClient {
+impl Actor for WebsocketClient {
     fn new(node: Node) -> Self {
         WebsocketClient {
             node,

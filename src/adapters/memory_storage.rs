@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet, BTreeMap};
 
 use crate::message::{Message, Put, Get};
-use crate::types::NetworkAdapter;
+use crate::actor::Actor;
 use crate::Node;
 use crate::types::*;
 
@@ -101,7 +101,7 @@ impl MemoryStorage {
 }
 
 #[async_trait]
-impl NetworkAdapter for MemoryStorage {
+impl Actor for MemoryStorage {
     fn new(node: Node) -> Self {
         MemoryStorage {
             id: "memory_storage".to_string(),
