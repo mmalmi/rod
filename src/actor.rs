@@ -12,7 +12,7 @@ use tokio::sync::mpsc::{Sender, Receiver};
 pub trait Actor {
     fn new(receiver: Receiver<Message>, node: Node) -> Self where Self: Sized;
     /// This is called on node.start_adapters()
-    async fn start(&self);
+    async fn start(&self); // receiver should be a param to this actually?
 }
 
 #[derive(Clone, Debug)]

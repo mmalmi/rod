@@ -7,9 +7,11 @@ use std::time::SystemTime;
 use crate::router::Router;
 use crate::message::{Message, Put, Get};
 use crate::types::*;
-use crate::actor::Actor;
-//use log::{debug, error};
-use tokio::sync::{broadcast, mpsc};
+use crate::actor::{Actor, Addr};
+use crate::utils::random_string;
+use log::{debug, error};
+use tokio::sync::broadcast;
+use tokio::sync::mpsc::{Sender, Receiver, Channel};
 
 // TODO extract networking to struct Mesh
 // TODO proper automatic tests
@@ -136,14 +138,18 @@ impl Node {
     /// Starts [Actor]s that are enabled for this Node.
     pub async fn start(&mut self) {
         // should we start Node right away on new()?
-        let (incoming_tx, mut incoming_rx) = mpsc::channel::<Message>(self.config.read().unwrap().rust_channel_size);
+        let (incoming_tx, mut incoming_rx) = channel::<Message>(self.config.read().unwrap().rust_channel_size);
         *self.addr.write().unwrap() = Some(Addr::new(incoming_tx));
 
-        let (sender, receiver) = mpsc::channel::<Message>(self.config.read().unwrap().rust_channel_size);
+        let (sender, receiver) = channel::<Message>(self.config.read().unwrap().rust_channel_size);
         let router = Router::new(receiver, self.clone());
         *self.router.write().unwrap() = Some(Addr::new(sender));
         tokio::spawn(async move { router.start().await });
 
+        self.listen(receiver).await
+    }
+
+    async fn listen(&self, receiver: Receiver<Message>) {
         while let Some(msg) = incoming_rx.recv().await {
             debug!("incoming message");
             match msg {
@@ -163,6 +169,7 @@ impl Node {
         path.push(key.clone());
         let new_child_uid = path.join("/");
         debug!("new_child_uid {}", new_child_uid);
+        let (sender, receiver) = channel::<Message>(config.rust_channel_size);
         let node = Self {
             path,
             peer_id: self.peer_id.clone(),
@@ -173,8 +180,9 @@ impl Node {
             map_sender: broadcast::channel::<(String, GunValue)>(config.rust_channel_size).0,
             uid: Arc::new(RwLock::new(new_child_uid)),
             router: self.router.clone(),
-            addr: Arc::new(RwLock::new(Addr::new()))
+            addr: Arc::new(RwLock::new(Addr::new(sender)))
         };
+        tokio::spawn(async move { node.listen(receiver).await });
         self.children.write().unwrap().insert(key, node.clone());
         node
     }

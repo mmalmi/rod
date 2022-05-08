@@ -9,6 +9,8 @@ use sysinfo::{ProcessorExt, System, SystemExt};
 use async_trait::async_trait;
 use tokio::time::{sleep, Duration};
 use tokio::sync::mpsc::{Receiver, channel};
+use std::collections::{HashMap, HashSet};
+use log::{debug, error};
 
 static SEEN_MSGS_MAX_SIZE: usize = 10000;
 
@@ -33,7 +35,7 @@ pub struct Router {
 impl Actor for Router {
     fn new(receiver: Receiver<Message>, node: Node) -> Self {
         let config = node.config.read().unwrap().clone();
-        let mut adapters = HashMap::new();
+        let mut adapters = HashMap::<String, Box<dyn Actor + Send + Sync>>::new();
         let mut adapter_addrs = HashSet::new();
         if config.multicast {
             let (sender, receiver_) = channel::<Message>(config.rust_channel_size);

@@ -34,14 +34,13 @@ impl Actor for OutgoingWebsocketManager { // TODO: support multiple outbound web
     async fn start(&self) {
         let config = self.node.config.read().unwrap().clone();
         for peer in config.outgoing_websocket_peers {
-            debug!("OutgoingWebsocketManager connecting to {}\n", peer);
             loop { // TODO don't reconnect if self.receiver is closed
                 let result = connect_async(
                     Url::parse(&peer).expect("Can't connect to URL"),
                 ).await;
                 if let Ok(tuple) = result {
                     let (socket, _) = tuple;
-                    debug!("outgoing websocket opened to {}", peer);
+                    debug!("outgoing websocket opened to {}", peer.to_string());
                     self.user_connected(socket).await;
                     let (sender, receiver) = channel::<Message>(config.rust_channel_size);
                     let client = WebsocketClient::new_with_socket(socket, receiver, self.node.clone());
@@ -92,7 +91,7 @@ impl Actor for WebsocketClient { // TODO: support multiple outbound websockets
 
         // Every time the user sends a message, broadcast it to
         // all other users...
-        let router = self.node.get_router_addr();
+        let router = self.node.get_router_addr().unwrap();
         while let Some(result) = user_ws_rx.next().await {
             let msg = match result {
                 Ok(msg) => msg,

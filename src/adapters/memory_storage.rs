@@ -98,7 +98,8 @@ impl Actor for MemoryStorage {
     }
 
     async fn start(&self) {
-        if node.config.read().unwrap().stats {
+        let config = self.node.config.read().unwrap().clone();
+        if config.stats {
             self.update_stats();
         }
 
