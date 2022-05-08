@@ -15,7 +15,8 @@ pub trait Actor {
     async fn start(&self);
 }
 
-struct Addr {
+#[derive(Clone, Debug)]
+pub struct Addr {
     id: String,
     pub sender: Sender<Message>
 }

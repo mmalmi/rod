@@ -1,5 +1,4 @@
 use crate::message::{Message, Put, Get};
-use crate::types::*;
 use crate::actor::Actor;
 use crate::{Node, Config};
 use crate::adapters::SledStorage;
@@ -12,7 +11,7 @@ use std::time::Instant;
 use sysinfo::{ProcessorExt, System, SystemExt};
 use async_trait::async_trait;
 use tokio::time::{sleep, Duration};
-use tokio::sync::mpsc;
+use tokio::sync::mpsc::{Receiver, channel};
 
 static SEEN_MSGS_MAX_SIZE: usize = 10000;
 
@@ -35,36 +34,38 @@ pub struct Router {
 
 #[async_trait]
 impl Actor for Router {
-    fn new(receiver: mpsc::Receiver<Message>, node: Node) -> Self {
+    fn new(receiver: Receiver<Message>, node: Node) -> Self {
         let mut adapters = HashMap::new();
         let mut adapter_addrs = HashSet::new();
         if config.multicast {
-            let (sender, receiver) = mpsc::channel::<Message>(config.rust_channel_size);
-            let multicast = Multicast::new(receiver, node.clone());
+            let (sender, receiver_) = channel::<Message>(config.rust_channel_size);
+            let multicast = Multicast::new(receiver_, node.clone());
             adapters.insert("multicast".to_string(), Box::new(multicast));
             adapter_addrs.insert(Addr:new(sender));
         }
         if config.websocket_server {
-            let (sender, receiver) = mpsc::channel::<Message>(config.rust_channel_size);
-            let server = WebsocketServer::new(receiver, node.clone());
+            let (sender, receiver_) = channel::<Message>(config.rust_channel_size);
+            let server = WebsocketServer::new(receiver_, node.clone());
             adapters.insert("ws_server".to_string(), Box::new(server));
             adapter_addrs.insert(Addr:new(sender));
         }
         if config.sled_storage {
-            let (sender, receiver) = mpsc::channel::<Message>(config.rust_channel_size);
-            let sled_storage = SledStorage::new(receiver, node.clone());
+            let (sender, receiver_) = channel::<Message>(config.rust_channel_size);
+            let sled_storage = SledStorage::new(receiver_, node.clone());
             adapters.insert("sled_storage".to_string(), Box::new(sled_storage));
             adapter_addrs.insert(Addr:new(sender));
         }
         if config.memory_storage {
-            let (sender, receiver) = mpsc::channel::<Message>(config.rust_channel_size);
-            let memory_storage = MemoryStorage::new(receiver, node.clone());
+            let (sender, receiver_) = channel::<Message>(config.rust_channel_size);
+            let memory_storage = MemoryStorage::new(receiver_, node.clone());
             adapters.insert("memory_storage".to_string(), Box::new(memory_storage));
             adapter_addrs.insert(Addr:new(sender));
         }
-        let (sender, receiver) = mpsc::channel::<Message>(config.rust_channel_size);
-        let client = WebsocketClient::new(receiver, node.clone());
-        adapters.insert("ws_client".to_string(), Box::new(client));
+        for peer in config.outgoing_websocket_peers {
+            let (sender, receiver) = channel::<Message>(config.rust_channel_size);
+            let client = WebsocketClient::new(receiver, node.clone());
+            adapters.insert("ws_client".to_string(), Box::new(client));
+        }
         adapter_addrs.insert(Addr:new(sender));
 
         Self {

@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use std::sync::{
     Arc,
     RwLock // TODO: could we use async RwLock? Would require some changes to the chaining api (.get()).
@@ -7,6 +7,7 @@ use std::time::SystemTime;
 use crate::router::Router;
 use crate::message::{Message, Put, Get};
 use crate::types::*;
+use crate::actor::Actor;
 //use log::{debug, error};
 use tokio::sync::{broadcast, mpsc};
 
@@ -147,7 +148,6 @@ impl Node {
             debug!("incoming message");
             match msg {
                 Message::Put(put) => self.handle_put(put),
-                Message::Get(get) => self.handle_get(get),
                 _ => {}
             }
         }

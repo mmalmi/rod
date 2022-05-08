@@ -10,10 +10,10 @@ use actix_http::ws::{Codec, Message, ProtocolError};
 use bytes::Bytes;
 use futures::Stream;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use async_trait::async_trait;
 use crate::message::Message as GunMessage;
-use crate::actor::Actor as MyActor;
+use crate::actor::{Actor as MyActor, Addr as MyAddr};
 use crate::Node;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -21,7 +21,7 @@ use std::time::{Instant, Duration};
 use tokio::sync::RwLock;
 use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
 
-use tokio::sync::mpsc::{Sender, Receiver};
+use tokio::sync::mpsc::Receiver;
 use tokio::time::sleep;
 
 use log::{debug, error};
@@ -46,7 +46,7 @@ pub struct MyWs {
     node: Node,
     id: String,
     users: Users,
-    incoming_msg_sender: tokio::sync::mpsc::Sender<GunMessage>,
+    router: MyAddr,
     heartbeat: Instant
 }
 
@@ -130,7 +130,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for MyWs {
                                 },
                                 _ => msg
                             };
-                            if let Err(e) = self.incoming_msg_sender.try_send(m) {
+                            if let Err(e) = self.router.sender.try_send(m) {
                                 error!("error sending incoming message to node: {}", e);
                             }
                         }
@@ -257,7 +257,7 @@ impl WebsocketServer {
             node: node.clone(),
             id,
             users,
-            incoming_msg_sender: node.get_incoming_msg_sender(),
+            router: node.get_router_addr(),
             heartbeat: Instant::now()
         };
 

@@ -6,11 +6,9 @@ use crate::Node;
 use crate::types::*;
 
 use async_trait::async_trait;
-use log::{debug, error};
+use log::{debug};
 use std::sync::{Arc, RwLock};
 use tokio::time::{sleep, Duration};
-
-use crate::adapters::websocket_server::OutgoingMessage;
 
 pub struct MemoryStorage {
     id: String,

@@ -2,9 +2,8 @@ use serde_json::{json, Value as SerdeJsonValue};
 use crate::utils::random_string;
 use std::collections::{HashSet, BTreeMap};
 use crate::types::*;
-use log::{debug, error};
+use log::{debug};
 use std::convert::TryFrom;
-use crate::adapters::websocket_server::MyWs;
 use crate::actor::Addr;
 
 #[derive(Clone, Debug)]

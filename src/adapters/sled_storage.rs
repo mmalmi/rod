@@ -10,8 +10,6 @@ use log::{debug, error};
 use tokio::sync::mpsc::Receiver;
 use sled;
 
-use crate::adapters::websocket_server::OutgoingMessage;
-
 macro_rules! unwrap_or_return {
     ( $e:expr ) => {
         match $e {
@@ -66,7 +64,7 @@ impl SledStorage {
         let mut recipients = HashSet::new();
         recipients.insert(get.from.clone());
         let put = Put::new(reply_with_nodes, Some(get.id.clone()));
-        get.from.try_send(Message::Put(put));
+        get.from.sender.try_send(Message::Put(put));
     }
 
     fn handle_put(&self, put: Put) {
