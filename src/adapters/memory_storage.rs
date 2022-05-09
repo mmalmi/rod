@@ -37,10 +37,10 @@ impl MemoryStorage {
         });
     }
 
-    fn handle_get(&self, msg: Get) {
-        if let Some(children) = self.store.read().unwrap().get(&msg.node_id).cloned() {
-            debug!("have {}: {:?}", msg.node_id, children);
-            let reply_with_children = match &msg.child_key {
+    fn handle_get(&self, get: Get) {
+        if let Some(children) = self.store.read().unwrap().get(&get.node_id).cloned() {
+            debug!("have {}: {:?}", get.node_id, children);
+            let reply_with_children = match &get.child_key {
                 Some(child_key) => { // reply with specific child if it's found
                     match children.get(child_key) {
                         Some(child_val) => {
@@ -54,18 +54,18 @@ impl MemoryStorage {
                 None => children.clone() // reply with all children of this node
             };
             let mut reply_with_nodes = BTreeMap::new();
-            reply_with_nodes.insert(msg.node_id.clone(), reply_with_children);
+            reply_with_nodes.insert(get.node_id.clone(), reply_with_children);
             let mut recipients = HashSet::new();
-            recipients.insert(msg.from.clone());
-            let put = Put::new(reply_with_nodes, Some(msg.id.clone()));
-            addr.try_send(Message::Put(put));
+            recipients.insert(get.from.clone());
+            let put = Put::new(reply_with_nodes, Some(get.id.clone()));
+            get.from.sender.try_send(Message::Put(put));
         } else {
-            debug!("have not {}", msg.node_id);
+            debug!("have not {}", get.node_id);
         }
     }
 
-    fn handle_put(&self, msg: Put) {
-        for (node_id, update_data) in msg.updated_nodes.iter().rev() { // return in reverse
+    fn handle_put(&self, put: Put) {
+        for (node_id, update_data) in put.updated_nodes.iter().rev() { // return in reverse
             debug!("saving k-v {}: {:?}", node_id, update_data);
             let mut write = self.store.write().unwrap();
             if let Some(children) = write.get_mut(node_id) {

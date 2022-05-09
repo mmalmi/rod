@@ -41,7 +41,6 @@ impl Actor for OutgoingWebsocketManager { // TODO: support multiple outbound web
                 if let Ok(tuple) = result {
                     let (socket, _) = tuple;
                     debug!("outgoing websocket opened to {}", peer.to_string());
-                    self.user_connected(socket).await;
                     let (sender, receiver) = channel::<Message>(config.rust_channel_size);
                     let client = WebsocketClient::new_with_socket(socket, receiver, self.node.clone());
                     self.clients.insert(peer.to_string(), Addr::new(sender));

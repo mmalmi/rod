@@ -125,7 +125,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for MyWs {
                         for msg in msgs.into_iter() {
                             let m = match msg {
                                 GunMessage::Get(mut get) => {
-                                    get.from = Some(ctx.address());
+                                    get.from = ctx.address();
                                     GunMessage::Get(get)
                                 },
                                 _ => msg
@@ -237,7 +237,7 @@ impl WebsocketServer {
     }
 
     async fn broadcast(&self, msg_str: String) {
-        for recipient in self.users.read().await.keys() {
+        for recipient in self.users.read().await.values() {
             if let Err(e) = recipient.try_send(OutgoingMessage { str: msg_str.clone() }) {
                 error!("error sending outgoing msg to websocket actor: {}", e);
             }
@@ -257,7 +257,7 @@ impl WebsocketServer {
             node: node.clone(),
             id,
             users,
-            router: node.get_router_addr(),
+            router: node.get_router_addr().unwrap(),
             heartbeat: Instant::now()
         };
 

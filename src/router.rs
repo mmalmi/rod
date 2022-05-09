@@ -26,7 +26,7 @@ pub struct Router {
     adapter_addrs: HashSet<Addr>,
     seen_messages: BoundedHashSet,
     seen_get_messages: BoundedHashMap<String, SeenGetMessage>,
-    subscribers_by_topic: HashMap<String, HashSet<String>>,
+    subscribers_by_topic: HashMap<String, HashSet<Addr>>,
     msg_counter: AtomicUsize,
     receiver: Receiver<Message>
 }
@@ -83,8 +83,8 @@ impl Actor for Router {
 
     /// Listen to incoming messages and start [Actor]s
     async fn start(&self) {
-        for adapter in self.adapters.values() {
-            tokio::spawn(async { adapter.start().await });
+        for adapter in self.adapters.into_values() {
+            tokio::spawn(async move { adapter.start().await });
         }
         if self.config.stats {
             self.update_stats();
@@ -170,8 +170,8 @@ impl Router {
                 for node_id in put.updated_nodes.keys() {
                     let topic = node_id.split("/").next().unwrap_or("");
                     if let Some(subscribers) = self.subscribers_by_topic.get(topic) {
-                        for addr in recipients {
-                            addr.sender.try_send(Message::Put(put))
+                        for addr in subscribers {
+                            addr.sender.try_send(Message::Put(put));
                         }
                     }
                 }
