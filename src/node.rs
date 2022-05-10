@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 use std::sync::{
     Arc,
-    Weak,
     RwLock // TODO: could we use async RwLock? Would require some changes to the chaining api (.get()).
 };
 use std::time::SystemTime;

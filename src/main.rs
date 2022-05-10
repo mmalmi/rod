@@ -2,8 +2,6 @@ extern crate clap;
 use clap::{Arg, App, SubCommand};
 use gundb::{Node, Config};
 use std::env;
-use tokio::runtime::Handle;
-use std::time::Duration;
 use ctrlc;
 
 #[tokio::main]

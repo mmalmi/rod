@@ -7,6 +7,7 @@ use crate::message::Message;
 use crate::utils::random_string;
 use tokio::sync::mpsc::{Sender, Receiver};
 use tokio::sync::oneshot;
+use log::{info};
 
 // TODO: stop signal. Or just call tokio runtime stop / abort? https://docs.rs/tokio/1.18.2/tokio/task/struct.JoinHandle.html#method.abort
 
@@ -17,7 +18,9 @@ use tokio::sync::oneshot;
 pub trait Actor: Send + Sync + 'static {
     /// This is called on node.start_adapters()
     async fn handle(&mut self, message: Message, context: &ActorContext);
-    async fn started(&mut self, context: &ActorContext);
+    async fn started(&mut self, _context: &ActorContext) {}
+    async fn stopping(&mut self, _context: &ActorContext) {}
+
 }
 impl dyn Actor {
     async fn run(&mut self, mut receiver: Receiver<Message>, mut stop_receiver: oneshot::Receiver<()>, context: ActorContext) {
@@ -38,8 +41,6 @@ impl dyn Actor {
         }
         self.stopping(&context).await;
     }
-    //async fn started(&self, _context: &ActorContext) {}
-    async fn stopping(&mut self, _context: &ActorContext) {}
 }
 
 /// Stuff that Actors need (cocaine not included)
