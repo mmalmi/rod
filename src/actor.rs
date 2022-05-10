@@ -61,11 +61,25 @@ impl ActorContext {
 }
 
 pub fn start_actor(mut actor: Box<dyn Actor>, parent_context: &ActorContext) -> Arc<Addr> {
-    let (sender, receiver) = tokio::sync::mpsc::channel::<Message>(10);
+    let (sender, receiver) = tokio::sync::mpsc::channel::<Message>(100);
     let (stop_sender, stop_receiver) = oneshot::channel();
     let addr = Arc::new(Addr::new(sender));
     let new_context = parent_context.new_with(Arc::downgrade(&addr), stop_sender);
     tokio::spawn(async move { actor.run(receiver, stop_receiver, new_context).await }); // ActorSystem with HashMap<Addr, Sender> that lets us call stop() on all actors?
+    addr
+}
+
+pub fn start_router(mut actor: Box<dyn Actor>, peer_id: String) -> Arc<Addr> {
+    let (sender, receiver) = tokio::sync::mpsc::channel::<Message>(100);
+    let (stop_sender, stop_receiver) = oneshot::channel();
+    let addr = Arc::new(Addr::new(sender));
+    let ctx = ActorContext {
+        addr: Arc::downgrade(&addr),
+        router: (*addr).clone(),
+        peer_id,
+        stop_signal: stop_sender
+    };
+    tokio::spawn(async move { actor.run(receiver, stop_receiver, ctx).await }); // ActorSystem with HashMap<Addr, Sender> that lets us call stop() on all actors?
     addr
 }
 

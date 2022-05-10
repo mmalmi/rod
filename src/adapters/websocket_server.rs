@@ -125,7 +125,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for MyWs {
                     Ok(msgs) => {
                         for msg in msgs.into_iter() {
                             if let Err(e) = self.router.sender.try_send(msg) {
-                                error!("error sending incoming message to node: {}", e);
+                                error!("error sending incoming message to router: {}", e);
                             }
                         }
                     },

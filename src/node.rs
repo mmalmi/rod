@@ -8,7 +8,7 @@ use std::time::SystemTime;
 use crate::router::Router;
 use crate::message::{Message, Put, Get};
 use crate::types::*;
-use crate::actor::{start_actor, Addr, ActorContext};
+use crate::actor::{start_router, Addr, ActorContext};
 use crate::utils::random_string;
 use log::{debug};
 use tokio::sync::broadcast;
@@ -142,16 +142,8 @@ impl Node {
         // should we start Node right away on new()?
         let (incoming_tx, incoming_rx) = channel::<Message>(self.config.read().unwrap().rust_channel_size);
         let addr = Addr::new(incoming_tx);
-
         let config = self.config.read().unwrap().clone();
-        let (stop_sender, stop_receiver) = oneshot::channel();
-        let context = ActorContext {
-            peer_id: self.get_peer_id(),
-            router: addr.clone(),
-            addr: Weak::new(),
-            stop_signal: stop_sender
-        };
-        let router = start_actor(Box::new(Router::new(config)), &context);
+        let router = start_router(Box::new(Router::new(config)), self.get_peer_id());
         *self.router.write().unwrap() = Some(router);
         *self.addr.write().unwrap() = Some(addr);
 

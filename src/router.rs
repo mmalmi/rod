@@ -183,7 +183,10 @@ impl Router {
             },
             Message::Put(ref put) => {
                 for (node_id, _updated_node) in put.updated_nodes.iter() {
-                    // TODO send Puts to subscribed Addrs
+                    // TODO send Puts to subscribed Addrs only
+                    for addr in self.adapter_addrs.iter() {
+                        addr.sender.try_send(msg.clone());
+                    }
                 }
             },
             _ => {}
