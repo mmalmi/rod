@@ -1,14 +1,14 @@
 use crate::message::{Message, Put, Get};
-use crate::actor::{Actor, Addr};
-use crate::{Node, Config};
+use crate::actor::{Actor, ActorContext, Addr, start_actor};
+use crate::{Config};
 use crate::utils::{BoundedHashSet, BoundedHashMap};
 use crate::adapters::{SledStorage, MemoryStorage, WebsocketServer, OutgoingWebsocketManager, Multicast};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Instant;
-use sysinfo::{ProcessorExt, System, SystemExt};
+use std::sync::Arc;
+//use std::time::Instant;
+//use sysinfo::{ProcessorExt, System, SystemExt};
+//use tokio::time::{sleep, Duration};
 use async_trait::async_trait;
-use tokio::time::{sleep, Duration};
-use tokio::sync::mpsc::{Receiver, channel};
 use std::collections::{HashMap, HashSet};
 use log::{debug, error};
 
@@ -20,91 +20,71 @@ struct SeenGetMessage {
 }
 
 pub struct Router {
-    node: Node,
     config: Config,
-    adapters: HashMap<String, Box<dyn Actor + Send + Sync>>,
-    adapter_addrs: HashSet<Addr>,
+    adapter_addrs: HashSet<Arc<Addr>>,
     seen_messages: BoundedHashSet,
     seen_get_messages: BoundedHashMap<String, SeenGetMessage>,
     subscribers_by_topic: HashMap<String, HashSet<Addr>>,
     msg_counter: AtomicUsize,
-    receiver: Receiver<Message>
 }
 
 #[async_trait]
 impl Actor for Router {
-    fn new(receiver: Receiver<Message>, node: Node) -> Self {
-        let config = node.config.read().unwrap().clone();
-        let mut adapters = HashMap::<String, Box<dyn Actor + Send + Sync>>::new();
-        let mut adapter_addrs = HashSet::new();
+    /// Listen to incoming messages and start [Actor]s
+    async fn started(&self, ctx: &ActorContext) {
+        let config = &self.config;
+        let adapter_addrs = &self.adapter_addrs;
         if config.multicast {
-            let (sender, receiver_) = channel::<Message>(config.rust_channel_size);
-            let multicast = Multicast::new(receiver_, node.clone());
-            adapters.insert("multicast".to_string(), Box::new(multicast));
-            adapter_addrs.insert(Addr::new(sender));
+            let addr = start_actor(Box::new(Multicast::new()), ctx);
+            adapter_addrs.insert(addr);
         }
         if config.websocket_server {
-            let (sender, receiver_) = channel::<Message>(config.rust_channel_size);
-            let server = WebsocketServer::new(receiver_, node.clone());
-            adapters.insert("ws_server".to_string(), Box::new(server));
-            adapter_addrs.insert(Addr::new(sender));
+            let addr = start_actor(Box::new(WebsocketServer::new(config.clone())), ctx);
+            adapter_addrs.insert(addr);
         }
         if config.sled_storage {
-            let (sender, receiver_) = channel::<Message>(config.rust_channel_size);
-            let sled_storage = SledStorage::new(receiver_, node.clone());
-            adapters.insert("sled_storage".to_string(), Box::new(sled_storage));
-            adapter_addrs.insert(Addr::new(sender));
+            let addr = start_actor(Box::new(SledStorage::new(config.clone())), ctx);
+            adapter_addrs.insert(addr);
         }
         if config.memory_storage {
-            let (sender, receiver_) = channel::<Message>(config.rust_channel_size);
-            let memory_storage = MemoryStorage::new(receiver_, node.clone());
-            adapters.insert("memory_storage".to_string(), Box::new(memory_storage));
-            adapter_addrs.insert(Addr::new(sender));
+            let addr = start_actor(Box::new(MemoryStorage::new(config.clone())), ctx);
+            adapter_addrs.insert(addr);
         }
         if config.outgoing_websocket_peers.len() > 0 {
-            let (sender, receiver) = channel::<Message>(config.rust_channel_size);
-            let client = OutgoingWebsocketManager::new(receiver, node.clone());
-            adapters.insert("ws_clients".to_string(), Box::new(client));
-            adapter_addrs.insert(Addr::new(sender));
+            let actor = OutgoingWebsocketManager::new(config.clone());
+            let addr = start_actor(Box::new(actor), ctx);
+            adapter_addrs.insert(addr);
         }
 
-        Self {
-            node,
-            config: node.config.read().unwrap().clone(),
-            adapters,
-            adapter_addrs,
-            seen_messages: BoundedHashSet::new(SEEN_MSGS_MAX_SIZE),
-            seen_get_messages: BoundedHashMap::new(SEEN_MSGS_MAX_SIZE),
-            subscribers_by_topic: HashMap::new(),
-            msg_counter: AtomicUsize::new(0),
-            receiver
-        }
-    }
-
-    /// Listen to incoming messages and start [Actor]s
-    async fn start(&self) {
-        for adapter in self.adapters.into_values() {
-            tokio::spawn(async move { adapter.start().await });
-        }
         if self.config.stats {
             self.update_stats();
         }
+    }
 
-        while let Some(msg) = self.receiver.recv().await {
-            debug!("incoming message");
-            match msg {
-                Message::Put(put) => self.handle_put(put),
-                Message::Get(get) => self.handle_get(get),
-                _ => {}
-            }
-        }
+    async fn handle(&self, msg: Message, ctx: &ActorContext) {
+        debug!("incoming message");
+        match msg {
+            Message::Put(put) => self.handle_put(put),
+            Message::Get(get) => self.handle_get(get),
+            _ => {}
+        };
     }
 }
 
 impl Router {
+    pub fn new(config: Config) -> Self {
+        Self {
+            config,
+            adapter_addrs: HashSet::new(),
+            seen_messages: BoundedHashSet::new(SEEN_MSGS_MAX_SIZE),
+            seen_get_messages: BoundedHashMap::new(SEEN_MSGS_MAX_SIZE),
+            subscribers_by_topic: HashMap::new(),
+            msg_counter: AtomicUsize::new(0),
+        }
+    }
+
     fn update_stats(&self) {
-        let node = self.node.clone();
-        let peer_id = node.get_peer_id();
+        /*
         let mut stats = node.get("node_stats").get(&peer_id);
         let start_time = Instant::now();
         let msg_counter = self.msg_counter;
@@ -130,6 +110,7 @@ impl Router {
                 sleep(Duration::from_millis(1000)).await;
             }
         });
+         */
     }
 
     // record subscription & relay

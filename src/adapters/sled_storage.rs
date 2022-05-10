@@ -1,13 +1,12 @@
 use std::collections::{HashSet, BTreeMap};
 
 use crate::message::{Message, Put, Get};
-use crate::actor::Actor;
-use crate::Node;
+use crate::actor::{Actor, ActorContext};
+use crate::Config;
 use crate::types::*;
 
 use async_trait::async_trait;
 use log::{debug, error};
-use tokio::sync::mpsc::Receiver;
 use sled;
 
 macro_rules! unwrap_or_return {
@@ -24,13 +23,21 @@ macro_rules! unwrap_or_return {
 
 pub struct SledStorage {
     id: String,
-    node: Node,
-    receiver: Receiver<Message>,
+    config: Config,
     store: sled::Db,
 }
 
 impl SledStorage {
-    fn handle_get(&self, get: Get) {
+    pub fn new(config: Config) -> Self {
+        let store = config.sled_config.open().unwrap();
+        SledStorage {
+            id: "memory_storage".to_string(),
+            config,
+            store, // If we don't want to store everything in memory, this needs to use something like Redis or LevelDB. Or have a FileSystem adapter for persistence and evict the least important stuff from memory when it's full.
+        }
+    }
+
+    fn handle_get(&self, get: Get, ctx: &ActorContext) {
         let res = unwrap_or_return!(self.store.get(&get.node_id.clone()));
         if res.is_none() {
             debug!("have not {}", get.node_id); return;
@@ -67,7 +74,7 @@ impl SledStorage {
         get.from.sender.try_send(Message::Put(put));
     }
 
-    fn handle_put(&self, put: Put) {
+    fn handle_put(&self, put: Put, ctx: &ActorContext) {
         for (node_id, update_data) in put.updated_nodes.iter().rev() {
             debug!("saving k-v {}: {:?}", node_id, update_data);
             // TODO use sled::Tree instead of Children
@@ -98,25 +105,15 @@ impl SledStorage {
 
 #[async_trait]
 impl Actor for SledStorage {
-    fn new(receiver: Receiver<Message>, node: Node) -> Self {
-        let store = node.config.read().unwrap().sled_config.open().unwrap();
-        SledStorage {
-            id: "memory_storage".to_string(),
-            receiver,
-            node,
-            store, // If we don't want to store everything in memory, this needs to use something like Redis or LevelDB. Or have a FileSystem adapter for persistence and evict the least important stuff from memory when it's full.
+    async fn handle(&self, message: Message, ctx: &ActorContext) {
+        match message {
+            Message::Get(get) => self.handle_get(get, ctx),
+            Message::Put(put) => self.handle_put(put, ctx),
+            _ => {}
         }
     }
 
-    async fn start(&self) {
-        while let Some(message) = self.receiver.recv().await {
-            match message {
-                Message::Get(get) => self.handle_get(get),
-                Message::Put(put) => self.handle_put(put),
-                _ => {}
-            }
-        }
-    }
+    async fn started(&self, _context: &ActorContext) {}
 }
 
 

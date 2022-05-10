@@ -1,4 +1,5 @@
-use futures_util::{SinkExt, StreamExt};
+use futures_util::{StreamExt, SinkExt};
+use futures::stream::{SplitStream, SplitSink};
 use tokio_tungstenite::{
     connect_async,
     tungstenite::{Message as WsMessage},
@@ -6,22 +7,24 @@ use tokio_tungstenite::{
 };
 use url::Url;
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use crate::message::Message;
-use crate::actor::{Actor, Addr};
-use crate::Node;
+use crate::actor::{Actor, Addr, ActorContext, start_actor};
+use crate::Config;
 use async_trait::async_trait;
 use log::{debug, error};
 use tokio::time::{sleep, Duration};
-use tokio::sync::mpsc::{Receiver, channel};
 
 pub struct OutgoingWebsocketManager {
-    clients: HashSet<Addr>
+    clients: HashSet<Arc<Addr>>,
+    config: Config
 }
 
 impl OutgoingWebsocketManager {
-    fn new() -> Self {
+    pub fn new(config: Config) -> Self {
         OutgoingWebsocketManager {
+            config,
             clients: HashSet::new()
         }
     }
@@ -29,18 +32,18 @@ impl OutgoingWebsocketManager {
 
 #[async_trait]
 impl Actor for OutgoingWebsocketManager { // TODO: support multiple outbound websockets
-    async fn started(&self) {
-        let config = self.node.config.read().unwrap().clone();
-        for peer in config.outgoing_websocket_peers {
-            loop { // TODO don't reconnect if self.receiver is closed
+    async fn started(&self, ctx: &ActorContext) {
+        for url in self.config.outgoing_websocket_peers {
+            let url = url.to_string();
+            loop { // TODO break on actor shutdown
                 let result = connect_async(
-                    Url::parse(&peer).expect("Can't connect to URL"),
+                    Url::parse(&url).expect("Can't connect to URL"),
                 ).await;
                 if let Ok(tuple) = result {
                     let (socket, _) = tuple;
-                    debug!("outgoing websocket opened to {}", peer.to_string());
-                    let client = WebsocketClient::new_with_socket(socket, receiver);
-                    let addr = start_actor(client).await;
+                    debug!("outgoing websocket opened to {}", url);
+                    let client = WebsocketClient::new(socket);
+                    let addr = start_actor(Box::new(client), ctx);
                     self.clients.insert(addr);
                 }
                 sleep(Duration::from_millis(1000)).await;
@@ -48,35 +51,41 @@ impl Actor for OutgoingWebsocketManager { // TODO: support multiple outbound web
         }
     }
 
-    async fn handle(&self, message: Message) {
+    async fn handle(&self, message: Message, _ctx: &ActorContext) {
         for client in self.clients {
             client.sender.try_send(message.clone());
         }
     }
 }
 
+type WsStream = WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
 pub struct WebsocketClient {
-    socket: Option<WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>>
+    sender: SplitSink<WsStream, tokio_tungstenite::tungstenite::Message>,
+    receiver: SplitStream<WsStream>
+}
+
+impl WebsocketClient {
+    pub fn new(socket: WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>) -> Self {
+        let (mut sender, mut receiver) = socket.split();
+        WebsocketClient {
+            sender,
+            receiver
+        }
+    }
 }
 
 #[async_trait]
 impl Actor for WebsocketClient {
-    async fn started(&self) {
-        let ws = match &self.socket {
-            Some(s) => s,
-            _ => { return; } // TODO stop
-        };
-
+    async fn started(&self, ctx: &ActorContext) {
         // Split the socket into a sender and receive of messages.
-        let (mut user_ws_tx, mut user_ws_rx) = ws.split();
 
         // Return a `Future` that is basically a state machine managing
         // this specific user's connection.
 
         // Every time the user sends a message, broadcast it to
         // all other users...
-        let router = self.node.get_router_addr().unwrap();
-        while let Some(result) = user_ws_rx.next().await {
+        while let Some(result) = self.receiver.next().await {
             let msg = match result {
                 Ok(msg) => msg,
                 Err(e) => {
@@ -89,10 +98,10 @@ impl Actor for WebsocketClient {
                     if s == "PING" {
                         continue;
                     }
-                    match Message::try_from(s, self.addr.clone()) {
+                    match Message::try_from(s, *ctx.addr.upgrade().unwrap().clone()) {
                         Ok(msgs) => {
                             for msg in msgs.into_iter() {
-                                if let Err(e) = router.sender.try_send(msg) {
+                                if let Err(e) = ctx.router.sender.try_send(msg) {
                                     error!("failed to send incoming message to node: {}", e);
                                 }
                             }
@@ -111,18 +120,9 @@ impl Actor for WebsocketClient {
         }
     }
 
-    fn handle(&self, message: Message) {
-        if let Err(_) = user_ws_tx.send(WsMessage::text(message.to_string())).await {
+    async fn handle(&self, message: Message, _ctx: &ActorContext) {
+        if let Err(_) = self.sender.send(WsMessage::text(message.to_string())).await {
             // TODO stop actor
         }
     }
 }
-
-impl WebsocketClient {
-    fn new(socket: WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>) -> Self {
-        WebsocketClient {
-            socket
-        }
-    }
-}
-

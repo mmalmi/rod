@@ -1,26 +1,34 @@
 use std::collections::{HashMap, HashSet, BTreeMap};
 
 use crate::message::{Message, Put, Get};
-use crate::actor::Actor;
-use crate::Node;
+use crate::actor::{Actor, ActorContext};
+use crate::Config;
 use crate::types::*;
 
 use async_trait::async_trait;
 use log::{debug};
 use std::sync::{Arc, RwLock};
-use tokio::time::{sleep, Duration};
-use tokio::sync::mpsc::Receiver;
+//use tokio::time::{sleep, Duration};
 
 pub struct MemoryStorage {
     id: String,
-    node: Node,
-    receiver: Receiver<Message>,
+    config: Config,
     graph_size_bytes: Arc<RwLock<usize>>,
     store: Arc<RwLock<HashMap<String, Children>>>,
 }
 
 impl MemoryStorage {
+    pub fn new(config: Config) -> Self {
+        MemoryStorage {
+            id: "memory_storage".to_string(),
+            config,
+            graph_size_bytes: Arc::new(RwLock::new(0)),
+            store: Arc::new(RwLock::new(HashMap::new())), // If we don't want to store everything in memory, this needs to use something like Redis or LevelDB. Or have a FileSystem adapter for persistence and evict the least important stuff from memory when it's full.
+        }
+    }
+
     fn update_stats(&self) {
+        /*
         let peer_id = self.node.get_peer_id();
         let mut stats = self.node.clone().get("node_stats").get(&peer_id);
         let store = self.store.clone();
@@ -35,9 +43,10 @@ impl MemoryStorage {
                 sleep(Duration::from_millis(1000)).await;
             }
         });
+         */
     }
 
-    fn handle_get(&self, get: Get) {
+    fn handle_get(&self, get: Get, ctx: &ActorContext) {
         if let Some(children) = self.store.read().unwrap().get(&get.node_id).cloned() {
             debug!("have {}: {:?}", get.node_id, children);
             let reply_with_children = match &get.child_key {
@@ -64,7 +73,7 @@ impl MemoryStorage {
         }
     }
 
-    fn handle_put(&self, put: Put) {
+    fn handle_put(&self, put: Put, ctx: &ActorContext) {
         for (node_id, update_data) in put.updated_nodes.iter().rev() { // return in reverse
             debug!("saving k-v {}: {:?}", node_id, update_data);
             let mut write = self.store.write().unwrap();
@@ -87,28 +96,19 @@ impl MemoryStorage {
 
 #[async_trait]
 impl Actor for MemoryStorage {
-    fn new(receiver: Receiver<Message>, node: Node) -> Self {
-        MemoryStorage {
-            id: "memory_storage".to_string(),
-            receiver,
-            node,
-            graph_size_bytes: Arc::new(RwLock::new(0)),
-            store: Arc::new(RwLock::new(HashMap::new())), // If we don't want to store everything in memory, this needs to use something like Redis or LevelDB. Or have a FileSystem adapter for persistence and evict the least important stuff from memory when it's full.
-        }
-    }
-
-    async fn start(&self) {
-        let config = self.node.config.read().unwrap().clone();
-        if config.stats {
+    async fn started(&self, _ctx: &ActorContext) {
+        /*
+        if self.config.stats {
             self.update_stats();
         }
+         */
+    }
 
-        while let Some(message) = self.receiver.recv().await {
-            match message {
-                Message::Get(get) => self.handle_get(get),
-                Message::Put(put) => self.handle_put(put),
-                _ => {}
-            }
+    async fn handle(&self, message: Message, ctx: &ActorContext) {
+        match message {
+            Message::Get(get) => self.handle_get(get, ctx),
+            Message::Put(put) => self.handle_put(put, ctx),
+            _ => {}
         }
     }
 }

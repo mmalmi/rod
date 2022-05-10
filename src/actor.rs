@@ -1,9 +1,11 @@
 use async_trait::async_trait;
 use std::hash::{Hash, Hasher};
+use std::sync::{Arc, Weak};
+use std::fmt;
+use std::marker::Send;
 use crate::message::Message;
 use crate::utils::random_string;
-use crate::Node;
-use tokio::sync::mpsc::{Sender, Receiver, channel};
+use tokio::sync::mpsc::{Sender, Receiver};
 use tokio::sync::oneshot;
 
 // TODO: stop signal. Or just call tokio runtime stop / abort? https://docs.rs/tokio/1.18.2/tokio/task/struct.JoinHandle.html#method.abort
@@ -15,14 +17,14 @@ use tokio::sync::oneshot;
 pub trait Actor {
     /// This is called on node.start_adapters()
     async fn handle(&self, message: Message, context: &ActorContext);
+    async fn started(&self, context: &ActorContext);
 }
-impl Actor {
-    async fn run(&self, receiver: Receiver<Message>, stop_receiver: oneshot::Receiver<()>, context: ActorContext) {
+impl dyn Actor {
+    async fn run(&self, mut receiver: Receiver<Message>, mut stop_receiver: oneshot::Receiver<()>, context: ActorContext) {
         self.started(&context).await;
-
         loop {
             tokio::select! {
-                Some(()) = stop_receiver.recv() => {
+                _v = &mut stop_receiver => {
                     break;
                 },
                 opt_msg = receiver.recv() => {
@@ -36,7 +38,7 @@ impl Actor {
         }
         self.stopping(&context);
     }
-    async fn started(&self, _context: &ActorContext) {}
+    //async fn started(&self, _context: &ActorContext) {}
     async fn stopping(&self, _context: &ActorContext) {}
 }
 
@@ -48,7 +50,7 @@ pub struct ActorContext {
     pub router: Addr,
 }
 impl ActorContext {
-    pub fn new(&self, addr: Weak<Addr>, stop_signal: oneshot::Sender<()>) -> Self {
+    pub fn new_with(&self, addr: Weak<Addr>, stop_signal: oneshot::Sender<()>) -> Self {
         Self {
             addr,
             stop_signal,
@@ -58,11 +60,11 @@ impl ActorContext {
     }
 }
 
-pub fn start_actor(actor: Box<Actor>, mut context: ActorContext) -> Arc<Addr> {
-    let (sender, receiver) = channel::new(10);
-    let (stop_sender, stop_receiver) = oneshot::channel();
+pub fn start_actor(actor: Box<dyn Actor + Sync + Send>, parent_context: &ActorContext) -> Arc<Addr> {
+    let (mut sender, mut receiver) = tokio::sync::mpsc::channel::<Message>(10);
+    let (mut stop_sender, mut stop_receiver) = oneshot::channel();
     let addr = Arc::new(Addr::new(sender));
-    let new_context = context.new(Arc::downgrade(addr), stop_sender);
+    let new_context = parent_context.new_with(Arc::downgrade(&addr), stop_sender);
     tokio::spawn(async move { actor.run(receiver, stop_receiver, new_context).await }); // ActorSystem with HashMap<Addr, Sender> that lets us call stop() on all actors?
     addr
 }
@@ -91,4 +93,8 @@ impl Hash for Addr {
         self.id.hash(state);
     }
 }
-
+impl fmt::Display for Addr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "actor:{}", self.id)
+    }
+}

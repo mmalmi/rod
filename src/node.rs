@@ -1,17 +1,19 @@
 use std::collections::BTreeMap;
 use std::sync::{
     Arc,
+    Weak,
     RwLock // TODO: could we use async RwLock? Would require some changes to the chaining api (.get()).
 };
 use std::time::SystemTime;
 use crate::router::Router;
 use crate::message::{Message, Put, Get};
 use crate::types::*;
-use crate::actor::{Actor, Addr};
+use crate::actor::{start_actor, Addr, ActorContext};
 use crate::utils::random_string;
 use log::{debug};
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::{Receiver, channel};
+use tokio::sync::oneshot;
 
 // TODO extract networking to struct Mesh
 // TODO proper automatic tests
@@ -75,7 +77,7 @@ impl Default for Config {
 /// Disk storage adapter to be done.
 #[derive(Clone)]
 pub struct Node {
-    pub config: Arc<RwLock<Config>>,
+    config: Arc<RwLock<Config>>,
     uid: Arc<RwLock<String>>,
     path: Vec<String>,
     peer_id: Arc<RwLock<String>>,
@@ -84,7 +86,7 @@ pub struct Node {
     on_sender: broadcast::Sender<GunValue>,
     map_sender: broadcast::Sender<(String, GunValue)>,
     addr: Arc<RwLock<Option<Addr>>>,
-    router: Arc<RwLock<Option<Addr>>>
+    router: Arc<RwLock<Option<Arc<Addr>>>>
 }
 
 impl Node {
@@ -139,18 +141,25 @@ impl Node {
     pub async fn start(&mut self) {
         // should we start Node right away on new()?
         let (incoming_tx, incoming_rx) = channel::<Message>(self.config.read().unwrap().rust_channel_size);
-        *self.addr.write().unwrap() = Some(Addr::new(incoming_tx));
+        let addr = Addr::new(incoming_tx);
 
-        let (sender, receiver) = channel::<Message>(self.config.read().unwrap().rust_channel_size);
-        let router = Router::new(receiver, self.clone());
-        *self.router.write().unwrap() = Some(Addr::new(sender));
-        tokio::spawn(async move { router.start().await });
+        let config = self.config.read().unwrap().clone();
+        let (stop_sender, stop_receiver) = oneshot::channel();
+        let context = ActorContext {
+            peer_id: self.get_peer_id(),
+            router: addr.clone(),
+            addr: Weak::new(),
+            stop_signal: stop_sender
+        };
+        let router = start_actor(Box::new(Router::new(config)), &context);
+        *self.router.write().unwrap() = Some(router);
+        *self.addr.write().unwrap() = Some(addr);
 
         self.listen(incoming_rx).await
     }
 
     async fn listen(&mut self, mut receiver: Receiver<Message>) {
-        while let Some(msg) = receiver.recv().await {
+        while let Some(msg) = receiver.recv().await { // TODO shutdown
             debug!("incoming message");
             match msg {
                 Message::Put(put) => self.handle_put(put),
@@ -248,14 +257,10 @@ impl Node {
             let mut children = Children::default();
             children.insert(self.path.last().unwrap().clone(), NodeData { value: value.clone(), updated_at });
             let mut put = Put::new_from_kv(parent_id.to_string(), children);
-            if let Some(router) = self.get_router_addr() {
+            if let Some(router) = *self.router.read().unwrap() {
                 router.sender.try_send(Message::Put(put));
             }
         }
-    }
-
-    pub fn get_router_addr(&self) -> Option<Addr> {
-        self.router.read().unwrap().clone()
     }
 
     pub fn stop(&mut self) {
