@@ -14,13 +14,13 @@ use tokio::sync::oneshot;
 ///
 /// Actors should relay messages to [Node::get_router_addr]
 #[async_trait]
-pub trait Actor {
+pub trait Actor: Send + Sync + 'static {
     /// This is called on node.start_adapters()
-    async fn handle(&self, message: Message, context: &ActorContext);
-    async fn started(&self, context: &ActorContext);
+    async fn handle(&mut self, message: Message, context: &ActorContext);
+    async fn started(&mut self, context: &ActorContext);
 }
 impl dyn Actor {
-    async fn run(&self, mut receiver: Receiver<Message>, mut stop_receiver: oneshot::Receiver<()>, context: ActorContext) {
+    async fn run(&mut self, mut receiver: Receiver<Message>, mut stop_receiver: oneshot::Receiver<()>, context: ActorContext) {
         self.started(&context).await;
         loop {
             tokio::select! {
@@ -36,10 +36,10 @@ impl dyn Actor {
                 }
             }
         }
-        self.stopping(&context);
+        self.stopping(&context).await;
     }
     //async fn started(&self, _context: &ActorContext) {}
-    async fn stopping(&self, _context: &ActorContext) {}
+    async fn stopping(&mut self, _context: &ActorContext) {}
 }
 
 /// Stuff that Actors need (cocaine not included)
@@ -60,9 +60,9 @@ impl ActorContext {
     }
 }
 
-pub fn start_actor(actor: Box<dyn Actor + Sync + Send>, parent_context: &ActorContext) -> Arc<Addr> {
-    let (mut sender, mut receiver) = tokio::sync::mpsc::channel::<Message>(10);
-    let (mut stop_sender, mut stop_receiver) = oneshot::channel();
+pub fn start_actor(mut actor: Box<dyn Actor>, parent_context: &ActorContext) -> Arc<Addr> {
+    let (sender, receiver) = tokio::sync::mpsc::channel::<Message>(10);
+    let (stop_sender, stop_receiver) = oneshot::channel();
     let addr = Arc::new(Addr::new(sender));
     let new_context = parent_context.new_with(Arc::downgrade(&addr), stop_sender);
     tokio::spawn(async move { actor.run(receiver, stop_receiver, new_context).await }); // ActorSystem with HashMap<Addr, Sender> that lets us call stop() on all actors?

@@ -2,6 +2,8 @@ extern crate clap;
 use clap::{Arg, App, SubCommand};
 use gundb::{Node, Config};
 use std::env;
+use tokio::runtime::Handle;
+use std::time::Duration;
 use ctrlc;
 
 #[tokio::main]
@@ -71,7 +73,7 @@ async fn main() {
             .default_value("false")
             .takes_value(true))
         .arg(Arg::with_name("sled-storage")
-            .long("multicast")
+            .long("sled-storage")
             .env("SLED_STORAGE")
             .value_name("BOOL")
             .help("Sled storage (disk+mem)")
@@ -134,8 +136,19 @@ async fn main() {
             println!("Gun endpoint: {}/gun", url);
         }
 
-        ctrlc::set_handler(|| std::process::exit(0)).expect("Error setting Ctrl-C handler");
+        let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
 
-        node.start_adapters().await;
+        let tx_mutex = std::sync::Mutex::new(Some(cancel_tx));
+        ctrlc::set_handler(move || {
+            if let Some(tx) = tx_mutex.lock().unwrap().take() {
+                let _ = tx.send(()).unwrap();
+            }
+            std::process::exit(0);
+        }).expect("Error setting Ctrl-C handler");
+
+        tokio::select! {
+            _ = cancel_rx => {}
+            _ = node.start() => {},
+        }
     }
 }

@@ -31,29 +31,28 @@ pub struct Router {
 #[async_trait]
 impl Actor for Router {
     /// Listen to incoming messages and start [Actor]s
-    async fn started(&self, ctx: &ActorContext) {
+    async fn started(&mut self, ctx: &ActorContext) {
         let config = &self.config;
-        let adapter_addrs = &self.adapter_addrs;
         if config.multicast {
             let addr = start_actor(Box::new(Multicast::new()), ctx);
-            adapter_addrs.insert(addr);
+            self.adapter_addrs.insert(addr);
         }
         if config.websocket_server {
             let addr = start_actor(Box::new(WebsocketServer::new(config.clone())), ctx);
-            adapter_addrs.insert(addr);
+            self.adapter_addrs.insert(addr);
         }
         if config.sled_storage {
             let addr = start_actor(Box::new(SledStorage::new(config.clone())), ctx);
-            adapter_addrs.insert(addr);
+            self.adapter_addrs.insert(addr);
         }
         if config.memory_storage {
             let addr = start_actor(Box::new(MemoryStorage::new(config.clone())), ctx);
-            adapter_addrs.insert(addr);
+            self.adapter_addrs.insert(addr);
         }
         if config.outgoing_websocket_peers.len() > 0 {
             let actor = OutgoingWebsocketManager::new(config.clone());
             let addr = start_actor(Box::new(actor), ctx);
-            adapter_addrs.insert(addr);
+            self.adapter_addrs.insert(addr);
         }
 
         if self.config.stats {
@@ -61,7 +60,7 @@ impl Actor for Router {
         }
     }
 
-    async fn handle(&self, msg: Message, ctx: &ActorContext) {
+    async fn handle(&mut self, msg: Message, ctx: &ActorContext) {
         debug!("incoming message");
         match msg {
             Message::Put(put) => self.handle_put(put),
@@ -148,11 +147,11 @@ impl Router {
                 }
             },
             _ => {
-                for node_id in put.updated_nodes.keys() {
+                for node_id in put.clone().updated_nodes.keys() {
                     let topic = node_id.split("/").next().unwrap_or("");
                     if let Some(subscribers) = self.subscribers_by_topic.get(topic) {
                         for addr in subscribers {
-                            addr.sender.try_send(Message::Put(put));
+                            addr.sender.try_send(Message::Put(put.clone()));
                         }
                     }
                 }
@@ -172,22 +171,22 @@ impl Router {
         return false;
     }
 
-    fn send(&self, msg: Message) {
+    fn send(&mut self, msg: Message) {
         debug!("msg out {:?}", msg);
         self.seen_messages.insert(msg.get_id()); // TODO: doesn't seem to work, at least on multicast
         match msg {
-            Message::Get(get) => {
+            Message::Get(ref get) => {
                 for addr in self.adapter_addrs.iter() {
+                    // TODO send Gets to... someone, not everyone
                     addr.sender.try_send(msg.clone());
                 }
             },
-            Message::Put(put) => {
+            Message::Put(ref put) => {
                 for (node_id, _updated_node) in put.updated_nodes.iter() {
-
+                    // TODO send Puts to subscribed Addrs
                 }
-            }
+            },
+            _ => {}
         }
-        // TODO send Puts to subscribed Addrs
-        // TODO send Gets to... someone
     }
 }

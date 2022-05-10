@@ -124,8 +124,8 @@ impl Message {
 
     pub fn get_id(&self) -> String {
         match self {
-            Message::Get(get) => get.id,
-            Message::Put(put) => put.id,
+            Message::Get(get) => get.id.clone(),
+            Message::Put(put) => put.id.clone(),
             Message::Hi { from } => from.to_string()
         }
     }

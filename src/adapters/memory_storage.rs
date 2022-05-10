@@ -6,7 +6,7 @@ use crate::Config;
 use crate::types::*;
 
 use async_trait::async_trait;
-use log::{debug};
+use log::{debug, info};
 use std::sync::{Arc, RwLock};
 //use tokio::time::{sleep, Duration};
 
@@ -96,7 +96,8 @@ impl MemoryStorage {
 
 #[async_trait]
 impl Actor for MemoryStorage {
-    async fn started(&self, _ctx: &ActorContext) {
+    async fn started(&mut self, _ctx: &ActorContext) {
+        info!("MemoryStorage adapter starting");
         /*
         if self.config.stats {
             self.update_stats();
@@ -104,7 +105,7 @@ impl Actor for MemoryStorage {
          */
     }
 
-    async fn handle(&self, message: Message, ctx: &ActorContext) {
+    async fn handle(&mut self, message: Message, ctx: &ActorContext) {
         match message {
             Message::Get(get) => self.handle_get(get, ctx),
             Message::Put(put) => self.handle_put(put, ctx),

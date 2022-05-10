@@ -4,7 +4,7 @@ use std::net::{SocketAddrV4};
 use crate::message::Message;
 use crate::actor::{Actor, ActorContext};
 use async_trait::async_trait;
-use log::{debug, error};
+use log::{info, debug, error};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -24,7 +24,7 @@ impl Multicast {
 
 #[async_trait]
 impl Actor for Multicast {
-    async fn handle(&self, msg: Message, ctx: &ActorContext) {
+    async fn handle(&mut self, msg: Message, ctx: &ActorContext) {
         match msg {
             Message::Put(put) => {
                 if let Err(e) = self.socket.write().await.broadcast(put.to_string().as_bytes()) {
@@ -40,14 +40,15 @@ impl Actor for Multicast {
         }
     }
 
-    async fn started(&self, ctx: &ActorContext) { // "wss://gun-us.herokuapp.com/gun"
-        debug!("Syncing over multicast\n");
+    async fn started(&mut self, ctx: &ActorContext) { // "wss://gun-us.herokuapp.com/gun"
+        info!("Syncing over multicast\n");
 
         let socket = self.socket.clone();
-        let addr = *ctx.addr.upgrade().unwrap().clone();
+        let addr = (*ctx.addr.upgrade().unwrap()).clone();
         let router = ctx.router.clone();
         tokio::task::spawn(async move {
             loop { // TODO break on self.receiver close
+                let addr = addr.clone();
                 if let Ok(message) = socket.read().await.receive() {
                     // TODO if message.from == multicast_[interface], don't resend to [interface]
                     if let Ok(data) = std::str::from_utf8(&message.data) {

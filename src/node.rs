@@ -191,7 +191,8 @@ impl Node {
             router: self.router.clone(),
             addr: Arc::new(RwLock::new(Some(Addr::new(sender))))
         };
-        tokio::spawn(async move { node.listen(receiver).await });
+        let mut clone = node.clone();
+        tokio::spawn(async move { clone.listen(receiver).await });
         self.children.write().unwrap().insert(key, node.clone());
         node
     }
@@ -203,7 +204,7 @@ impl Node {
 
     /// Subscribe to the Node's value.
     pub fn on(&mut self) -> broadcast::Receiver<GunValue> {
-        let mut key;
+        let key;
         if self.path.len() > 1 {
             key = self.path.iter().nth(self.path.len() - 1).cloned();
         } else {
@@ -256,8 +257,8 @@ impl Node {
         for (parent_id, _parent) in self.parents.read().unwrap().iter() {
             let mut children = Children::default();
             children.insert(self.path.last().unwrap().clone(), NodeData { value: value.clone(), updated_at });
-            let mut put = Put::new_from_kv(parent_id.to_string(), children);
-            if let Some(router) = *self.router.read().unwrap() {
+            let put = Put::new_from_kv(parent_id.to_string(), children);
+            if let Some(router) = &*self.router.read().unwrap() {
                 router.sender.try_send(Message::Put(put));
             }
         }

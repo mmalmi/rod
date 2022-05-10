@@ -24,7 +24,7 @@ use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
 
 //use tokio::time::sleep;
 
-use log::{debug, error};
+use log::{debug, error, info};
 
 static NEXT_USER_ID: AtomicUsize = AtomicUsize::new(1);
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
@@ -121,7 +121,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for MyWs {
             },
             Ok(ws::Message::Text(text)) => {
                 debug!("in: {}", text);
-                match MyMessage::try_from(&text.to_string(), *self.addr.upgrade().unwrap()) {
+                match MyMessage::try_from(&text.to_string(), (*self.addr.upgrade().unwrap()).clone()) {
                     Ok(msgs) => {
                         for msg in msgs.into_iter() {
                             if let Err(e) = self.router.sender.try_send(msg) {
@@ -154,7 +154,8 @@ pub struct WebsocketServer {
 
 #[async_trait]
 impl MyActor for WebsocketServer {
-    async fn started(&self, ctx: &ActorContext) {
+    async fn started(&mut self, ctx: &ActorContext) {
+        info!("WebsocketServer adapter starting");
         let users = self.users.clone();
 
         /*
@@ -174,7 +175,7 @@ impl MyActor for WebsocketServer {
         self.actix_start(self.config.clone(), users, ctx).await.unwrap(); // TODO close when receiver dropped
     }
 
-    async fn handle(&self, message: MyMessage, ctx: &ActorContext) {
+    async fn handle(&mut self, message: MyMessage, ctx: &ActorContext) {
         match message {
             MyMessage::Get(msg) => { self.broadcast(msg.to_string()).await; },
             MyMessage::Put(msg) => { self.broadcast(msg.to_string()).await; },
@@ -198,16 +199,21 @@ impl WebsocketServer {
         let addr = ctx.addr.clone();
         let peer_id = ctx.peer_id.clone();
         let router = ctx.router.clone();
+        let config_clone = config.clone();
         let server = HttpServer::new(move || {
             let users = users_clone.clone();
+            let router = router.clone();
+            let peer_id = peer_id.clone();
+            let addr = addr.clone();
+            let config_clone = config_clone.clone();
             App::new()
-                .app_data(Data::new(AppState { peer_id }))
+                .app_data(Data::new(AppState { peer_id: peer_id.clone() }))
                 .wrap(middleware::Logger::default())
                 .route("/peer_id", web::get().to(Self::peer_id))
                 .service(fs::Files::new("/stats", "assets/stats").index_file("index.html"))
                 .route("/gun", web::get().to(
                     move |a, b| {
-                        Self::user_connected(a, b, config.websocket_frame_max_size, users.clone(), addr.clone(), peer_id.clone(), router.clone())
+                        Self::user_connected(a, b, config_clone.websocket_frame_max_size, users.clone(), addr.clone(), peer_id.clone(), router.clone())
                     }
                 ))
                 .service(fs::Files::new("/", "assets/iris").index_file("index.html"))

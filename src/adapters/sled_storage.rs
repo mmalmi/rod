@@ -6,7 +6,7 @@ use crate::Config;
 use crate::types::*;
 
 use async_trait::async_trait;
-use log::{debug, error};
+use log::{debug, error, info};
 use sled;
 
 macro_rules! unwrap_or_return {
@@ -105,7 +105,8 @@ impl SledStorage {
 
 #[async_trait]
 impl Actor for SledStorage {
-    async fn handle(&self, message: Message, ctx: &ActorContext) {
+    async fn handle(&mut self, message: Message, ctx: &ActorContext) {
+        debug!("SledStorage incoming message");
         match message {
             Message::Get(get) => self.handle_get(get, ctx),
             Message::Put(put) => self.handle_put(put, ctx),
@@ -113,7 +114,9 @@ impl Actor for SledStorage {
         }
     }
 
-    async fn started(&self, _context: &ActorContext) {}
+    async fn started(&mut self, _context: &ActorContext) {
+        info!("SledStorage adapter starting");
+    }
 }
 
 
