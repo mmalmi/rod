@@ -119,7 +119,7 @@ async fn main() {
 
         if websocket_server {
             let url = format!("http://localhost:{}", websocket_server_port);
-            println!("Gun server starting...");
+            println!("Node starting...");
             println!("Iris UI:      {}", url);
             println!("Stats:        {}/stats", url);
             println!("Gun endpoint: {}/gun", url);
@@ -137,9 +137,6 @@ async fn main() {
             std::process::exit(0);
         }).expect("Error setting Ctrl-C handler");
 
-        tokio::select! {
-            _ = cancel_rx => {}
-            _ = node.start() => {},
-        }
+        cancel_rx.await;
     }
 }

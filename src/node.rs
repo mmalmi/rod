@@ -9,7 +9,7 @@ use crate::message::{Message, Put, Get};
 use crate::types::*;
 use crate::actor::{Addr, ActorContext};
 use crate::utils::random_string;
-use log::{debug};
+use log::{debug, info};
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
@@ -116,7 +116,7 @@ impl Node {
     /// })
     /// ```
     pub fn new_with_config(config: Config) -> Self {
-        Self {
+        let mut node = Self {
             path: vec![],
             uid: Arc::new(RwLock::new("".to_string())),
             config: Arc::new(RwLock::new(config.clone())),
@@ -127,26 +127,24 @@ impl Node {
             addr: Arc::new(RwLock::new(None)), // set this to None when stopping
             router: Arc::new(RwLock::new(None)),
             actor_context: ActorContext::new(random_string(16))
-        }
+        };
+
+        let node_clone = node.clone();
+        tokio::spawn(async move {
+            let (incoming_tx, incoming_rx) = unbounded_channel::<Message>();
+            let addr = Addr::new(incoming_tx);
+            let config = node.config.read().unwrap().clone();
+            let router = Box::new(Router::new(config));
+            let router_addr = node.actor_context.start_router(router);
+            *node.router.write().unwrap() = Some(router_addr);
+            *node.addr.write().unwrap() = Some(addr);
+            node.listen(incoming_rx).await
+        });
+        node_clone
     }
 
     fn handle_put(&mut self, msg: Put) {
         // notify subscriptions
-    }
-
-    // should we start adapters on ::new()? in a new thread
-    /// Starts [Actor]s that are enabled for this Node.
-    pub async fn start(&mut self) {
-        // should we start Node right away on new()?
-        let (incoming_tx, incoming_rx) = unbounded_channel::<Message>();
-        let addr = Addr::new(incoming_tx);
-        let config = self.config.read().unwrap().clone();
-        let router = Box::new(Router::new(config));
-        let router_addr = self.actor_context.start_router(router);
-        *self.router.write().unwrap() = Some(router_addr);
-        *self.addr.write().unwrap() = Some(addr);
-
-        self.listen(incoming_rx).await
     }
 
     async fn listen(&mut self, mut receiver: UnboundedReceiver<Message>) {
@@ -251,6 +249,7 @@ impl Node {
     }
 
     pub fn stop(&mut self) {
+        info!("Node stopping");
         self.actor_context.stop();
     }
 }
@@ -337,30 +336,25 @@ mod tests {
             outgoing_websocket_peers: vec!["ws://localhost:4944/gun".to_string()],
             ..Config::default()
         });
-        async fn tst(mut node1: Node, mut node2: Node) {
-            sleep(Duration::from_millis(1000)).await;
-            let mut sub1 = node1.get("node2").get("name").on();
-            let mut sub2 = node2.get("node1").get("name").on();
-            node1.get("node1").get("name").put("Amandil".into());
-            node2.get("node2").get("name").put("Beregond".into());
-            match sub1.recv().await.unwrap() {
-                GunValue::Text(str) => {
-                    assert_eq!(&str, "Beregond");
-                },
-                _ => panic!("Expected GunValue::Text")
-            }
-            match sub2.recv().await.unwrap() {
-                GunValue::Text(str) => {
-                    assert_eq!(&str, "Amandil");
-                },
-                _ => panic!("Expected GunValue::Text")
-            }
-            node1.stop();
-            node2.stop();
+        sleep(Duration::from_millis(1000)).await;
+        let mut sub1 = node1.get("node2").get("name").on();
+        let mut sub2 = node2.get("node1").get("name").on();
+        node1.get("node1").get("name").put("Amandil".into());
+        node2.get("node2").get("name").put("Beregond".into());
+        match sub1.recv().await.unwrap() {
+            GunValue::Text(str) => {
+                assert_eq!(&str, "Beregond");
+            },
+            _ => panic!("Expected GunValue::Text")
         }
-        let node1_clone = node1.clone();
-        let node2_clone = node2.clone();
-        tokio::join!(node1.start(), node2.start(), tst(node1_clone, node2_clone));
+        match sub2.recv().await.unwrap() {
+            GunValue::Text(str) => {
+                assert_eq!(&str, "Amandil");
+            },
+            _ => panic!("Expected GunValue::Text")
+        }
+        node1.stop();
+        node2.stop();
     }
 
     /*
