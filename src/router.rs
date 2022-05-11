@@ -10,7 +10,7 @@ use std::sync::Arc;
 //use tokio::time::{sleep, Duration};
 use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};
-use log::{debug, error};
+use log::{debug, error, info};
 use rand::{seq::IteratorRandom, thread_rng};
 
 static SEEN_MSGS_MAX_SIZE: usize = 10000;
@@ -60,6 +60,10 @@ impl Actor for Router {
         if self.config.stats {
             self.update_stats();
         }
+    }
+
+    async fn stopping(&mut self, _ctx: &ActorContext) {
+        info!("Router stopping");
     }
 
     async fn handle(&mut self, msg: Message, ctx: &ActorContext) {

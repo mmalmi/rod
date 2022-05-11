@@ -127,8 +127,10 @@ async fn main() {
 
         let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
 
+        let mut node_clone = node.clone();
         let tx_mutex = std::sync::Mutex::new(Some(cancel_tx));
         ctrlc::set_handler(move || {
+            node_clone.stop();
             if let Some(tx) = tx_mutex.lock().unwrap().take() {
                 let _ = tx.send(()).unwrap();
             }

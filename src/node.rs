@@ -257,6 +257,7 @@ impl Node {
 
     pub fn stop(&mut self) {
         *self.addr.write().unwrap() = None; // Dropping the Node's Addr should stop the Message listener thread
+        *self.router.write().unwrap() = None; // Dropping the Router's Addr should stop it
     }
 }
 
