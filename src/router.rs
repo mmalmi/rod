@@ -21,7 +21,8 @@ struct SeenGetMessage {
 
 pub struct Router {
     config: Config,
-    adapter_addrs: HashSet<Arc<Addr>>,
+    storage_adapters: HashSet<Arc<Addr>>,
+    network_adapters: HashSet<Arc<Addr>>,
     seen_messages: BoundedHashSet,
     seen_get_messages: BoundedHashMap<String, SeenGetMessage>,
     subscribers_by_topic: HashMap<String, HashSet<Addr>>,
@@ -35,24 +36,24 @@ impl Actor for Router {
         let config = &self.config;
         if config.multicast {
             let addr = start_actor(Box::new(Multicast::new()), ctx);
-            self.adapter_addrs.insert(addr);
+            self.network_adapters.insert(addr);
         }
         if config.websocket_server {
             let addr = start_actor(Box::new(WebsocketServer::new(config.clone())), ctx);
-            self.adapter_addrs.insert(addr);
+            self.network_adapters.insert(addr);
         }
         if config.sled_storage {
             let addr = start_actor(Box::new(SledStorage::new(config.clone())), ctx);
-            self.adapter_addrs.insert(addr);
+            self.storage_adapters.insert(addr);
         }
         if config.memory_storage {
             let addr = start_actor(Box::new(MemoryStorage::new(config.clone())), ctx);
-            self.adapter_addrs.insert(addr);
+            self.storage_adapters.insert(addr);
         }
         if config.outgoing_websocket_peers.len() > 0 {
             let actor = OutgoingWebsocketManager::new(config.clone());
             let addr = start_actor(Box::new(actor), ctx);
-            self.adapter_addrs.insert(addr);
+            self.network_adapters.insert(addr);
         }
 
         if self.config.stats {
@@ -74,7 +75,8 @@ impl Router {
     pub fn new(config: Config) -> Self {
         Self {
             config,
-            adapter_addrs: HashSet::new(),
+            storage_adapters: HashSet::new(),
+            network_adapters: HashSet::new(),
             seen_messages: BoundedHashSet::new(SEEN_MSGS_MAX_SIZE),
             seen_get_messages: BoundedHashMap::new(SEEN_MSGS_MAX_SIZE),
             subscribers_by_topic: HashMap::new(),
@@ -122,12 +124,24 @@ impl Router {
         }
         let seen_get_message = SeenGetMessage { from: get.from.clone(), last_reply_checksum: None };
         self.seen_get_messages.insert(get.id.clone(), seen_get_message);
+
+        // Record subscriber
         let topic = get.node_id.split("/").next().unwrap_or("");
         debug!("{} subscribed to {}", get.from, topic);
         self.subscribers_by_topic.entry(topic.to_string())
             .or_insert_with(HashSet::new).insert(get.from.clone());
-        debug!("sending get to {} adapters", self.adapter_addrs.len());
-        for addr in self.adapter_addrs.iter() {
+
+        // Ask storage
+        for addr in self.storage_adapters.iter() {
+            let _ = addr.sender.send(Message::Get(get.clone()));
+        }
+
+        // Ask network
+        debug!("sending get to {} adapters", self.network_adapters.len());
+        for addr in self.network_adapters.iter() {
+            if get.from == **addr {
+                continue;
+            }
             // TODO send Gets to... someone, not everyone
             let _ = addr.sender.send(Message::Get(get.clone()));
         }
@@ -151,16 +165,24 @@ impl Router {
                 }
             },
             _ => {
-                debug!("sending put to {} adapters", self.adapter_addrs.len());
-                for addr in self.adapter_addrs.iter() {
-                    // TODO send Puts to subscribers only
+                // Save to storage
+                for addr in self.storage_adapters.iter() {
+                    if put.from == **addr {
+                        continue;
+                    }
+                    // TODO send Gets to... someone, not everyone
                     let _ = addr.sender.send(Message::Put(put.clone()));
                 }
+
+                // Relay to subscribers
                 let mut already_sent_to = HashSet::new();
                 for node_id in put.clone().updated_nodes.keys() {
                     let topic = node_id.split("/").next().unwrap_or("");
                     if let Some(topic_subscribers) = self.subscribers_by_topic.get_mut(topic) {
                         topic_subscribers.retain(|addr| {  // send & remove closed addresses
+                            if put.from == *addr {
+                                return true;
+                            }
                             if already_sent_to.contains(addr) {
                                 return true;
                             }

@@ -105,10 +105,11 @@ impl Actor for MyWs {
             stop_signal: stop_sender
         };
         let helper = MyWsHelper { addr: addr.clone() };
-        self.my_addr = Some((*start_actor(Box::new(helper), &context)).clone());
+        let my_addr = (*start_actor(Box::new(helper), &context)).clone();
+        self.my_addr = Some(my_addr.clone());
         tokio::task::spawn(async move {
             let mut users = users.write().await;
-            users.insert(id.clone(), addr);
+            users.insert(id.clone(), (addr, my_addr));
         });
     }
 
@@ -172,7 +173,7 @@ struct AppState {
     peer_id: String,
 }
 
-type Users = Arc<RwLock<HashMap<String, Addr<MyWs>>>>;
+type Users = Arc<RwLock<HashMap<String, (Addr<MyWs>, MyAddr)>>>;
 
 pub struct WebsocketServer {
     users: Users,
@@ -211,8 +212,8 @@ impl MyActor for WebsocketServer {
 
     async fn handle(&mut self, message: MyMessage, ctx: &ActorContext) {
         match message {
-            MyMessage::Get(msg) => { self.broadcast(msg.to_string()).await; },
-            MyMessage::Put(msg) => { self.broadcast(msg.to_string()).await; },
+            MyMessage::Get(ref msg) => { self.broadcast(message).await; },
+            MyMessage::Put(ref msg) => { self.broadcast(message).await; },
             _ => {}
         }
     }
@@ -265,9 +266,13 @@ impl WebsocketServer {
         server.bind(url).unwrap().run()
     }
 
-    async fn broadcast(&self, msg_str: String) {
-        for recipient in self.users.read().await.values() {
-            if let Err(e) = recipient.try_send(OutgoingMessage { str: msg_str.clone() }) {
+    async fn broadcast(&self, message: MyMessage) {
+        let msg_str = message.clone().to_string();
+        for (actix_addr, my_addr) in self.users.read().await.values() {
+            if message.is_from(my_addr) {
+                continue;
+            }
+            if let Err(e) = actix_addr.try_send(OutgoingMessage { str: msg_str.clone() }) {
                 error!("error sending outgoing msg to websocket actor: {}", e);
             }
         }

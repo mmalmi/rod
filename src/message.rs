@@ -48,6 +48,7 @@ impl Get {
 #[derive(Clone, Debug)]
 pub struct Put {
     pub id: String,
+    pub from: Addr,
     pub recipients: Option<HashSet<String>>,
     pub in_response_to: Option<String>,
     pub updated_nodes: BTreeMap<String, Children>,
@@ -55,9 +56,10 @@ pub struct Put {
     pub json_str: Option<String>
 }
 impl Put {
-    pub fn new(updated_nodes: BTreeMap<String, Children>, in_response_to: Option<String>) -> Self {
+    pub fn new(updated_nodes: BTreeMap<String, Children>, in_response_to: Option<String>, from: Addr) -> Self {
         Self {
             id: random_string(8),
+            from,
             recipients: None,
             in_response_to,
             updated_nodes,
@@ -66,10 +68,10 @@ impl Put {
         }
     }
 
-    pub fn new_from_kv(key: String, children: Children) -> Self {
+    pub fn new_from_kv(key: String, children: Children, from: Addr) -> Self {
         let mut updated_nodes = BTreeMap::new();
         updated_nodes.insert(key, children);
-        Put::new(updated_nodes, None)
+        Put::new(updated_nodes, None, from)
     }
 
     pub fn to_string(&self) -> String {
@@ -130,7 +132,15 @@ impl Message {
         }
     }
 
-    fn from_put_obj(json: &SerdeJsonValue, json_str: String, msg_id: String) -> Result<Self, &'static str> {
+    pub fn is_from(&self, addr: &Addr) -> bool {
+        match self {
+            Message::Get(get) => get.from == *addr,
+            Message::Put(put) => put.from == *addr,
+            Message::Hi { from } => false
+        }
+    }
+
+    fn from_put_obj(json: &SerdeJsonValue, json_str: String, msg_id: String, from: Addr) -> Result<Self, &'static str> {
         let obj = match json.get("put").unwrap().as_object() {
             Some(obj) => obj,
             _ => { return Err("invalid message: msg.put was not an object"); }
@@ -177,6 +187,7 @@ impl Message {
         }
         let put = Put {
             id: msg_id.to_string(),
+            from,
             recipients: None,
             in_response_to,
             updated_nodes,
@@ -236,7 +247,7 @@ impl Message {
             return Err("msg_id must be alphanumeric");
         }
         if obj.contains_key("put") {
-            Self::from_put_obj(json, json_str, msg_id)
+            Self::from_put_obj(json, json_str, msg_id, from)
         } else if obj.contains_key("get") {
             Self::from_get_obj(json, json_str, msg_id, from)
         } else if let Some(_dam) = obj.get("dam") {

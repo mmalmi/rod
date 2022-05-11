@@ -247,7 +247,8 @@ impl Node {
         for (parent_id, _parent) in self.parents.read().unwrap().iter() {
             let mut children = Children::default();
             children.insert(self.path.last().unwrap().clone(), NodeData { value: value.clone(), updated_at });
-            let put = Put::new_from_kv(parent_id.to_string(), children);
+            let my_addr = self.addr.read().unwrap().clone();
+            let put = Put::new_from_kv(parent_id.to_string(), children, my_addr.unwrap());
             if let Some(router) = &*self.router.read().unwrap() {
                 let _ = router.sender.send(Message::Put(put));
             }
