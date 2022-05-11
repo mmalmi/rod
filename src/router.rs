@@ -11,6 +11,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};
 use log::{debug, error};
+use rand::{seq::IteratorRandom, thread_rng};
 
 static SEEN_MSGS_MAX_SIZE: usize = 10000;
 
@@ -137,13 +138,26 @@ impl Router {
         }
 
         // Ask network
-        debug!("sending get to {} adapters", self.network_adapters.len());
-        for addr in self.network_adapters.iter() {
-            if get.from == **addr {
-                continue;
+        let mut errored = HashSet::new();
+        if let Some(topic_subscribers) = self.subscribers_by_topic.get(topic) {
+            let mut rng = thread_rng();
+            let sample = topic_subscribers.iter().choose_multiple(&mut rng, 4);
+            debug!("sending get to a random sample of subscribers of size {}", sample.len());
+            for addr in sample {
+                if get.from == *addr {
+                    continue;
+                }
+                if let Err(_) = addr.sender.send(Message::Get(get.clone())) {
+                    errored.insert(addr.clone());
+                }
             }
-            // TODO send Gets to... someone, not everyone
-            let _ = addr.sender.send(Message::Get(get.clone()));
+        }
+        if errored.len() > 0 {
+            if let Some(topic_subscribers) = self.subscribers_by_topic.get_mut(topic) {
+                for addr in errored {
+                    topic_subscribers.remove(&addr);
+                }
+            }
         }
     }
 

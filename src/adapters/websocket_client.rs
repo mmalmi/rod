@@ -128,7 +128,7 @@ impl Actor for WebsocketClient {
     async fn handle(&mut self, message: Message, ctx: &ActorContext) {
         //tx.stop_signal.send(());
         if let Err(_) = self.sender.send(WsMessage::text(message.to_string())).await {
-            // TODO stop actor
+            ctx.stop_signal.try_send(());
         }
     }
 }

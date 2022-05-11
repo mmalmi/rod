@@ -79,9 +79,11 @@ pub struct MyWsHelper {
 #[async_trait]
 impl MyActor for MyWsHelper {
     async fn pre_start(&mut self, _ctx: &ActorContext) {}
-    async fn handle(&mut self, msg: MyMessage, _ctx: &ActorContext) {
+    async fn handle(&mut self, msg: MyMessage, mut ctx: &ActorContext) {
         debug!("forwarding to Actix Addr");
-        let _ = self.addr.try_send(OutgoingMessage { str: msg.to_string() });
+        if let Err(_) = self.addr.try_send(OutgoingMessage { str: msg.to_string() }) {
+            ctx.stop_signal.try_send(());
+        }
     }
 }
 
@@ -97,7 +99,7 @@ impl Actor for MyWs {
         let users = self.users.clone();
         let addr = ctx.address();
 
-        let (stop_sender, stop_receiver) = tokio::sync::oneshot::channel();
+        let (stop_sender, stop_receiver) = tokio::sync::mpsc::channel(1);
         let context = ActorContext {
             peer_id: self.peer_id.clone(),
             addr: Weak::new(),
