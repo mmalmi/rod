@@ -19,10 +19,6 @@ async fn main() {
         .takes_value(true))
     .subcommand(SubCommand::with_name("start")
         .about("runs the gun server")
-        .arg(Arg::with_name("debug")
-            .long("debug")
-            .short("d")
-            .help("print debug information verbosely"))
         .arg(Arg::with_name("ws-server")
             .long("ws-server")
             .env("WS_SERVER")
@@ -94,11 +90,6 @@ async fn main() {
         let mut outgoing_websocket_peers = Vec::new();
         if let Some(peers) = matches.value_of("peers") {
             outgoing_websocket_peers = peers.split(",").map(|s| s.to_string()).collect();
-        }
-
-        if matches.is_present("debug") {
-            println!("debug");
-            env::set_var("RUST_LOG", "debug");
         }
 
         env_logger::init();

@@ -11,7 +11,6 @@ use std::sync::{Arc, RwLock};
 //use tokio::time::{sleep, Duration};
 
 pub struct MemoryStorage {
-    id: String,
     config: Config,
     graph_size_bytes: Arc<RwLock<usize>>,
     store: Arc<RwLock<HashMap<String, Children>>>,
@@ -20,7 +19,6 @@ pub struct MemoryStorage {
 impl MemoryStorage {
     pub fn new(config: Config) -> Self {
         MemoryStorage {
-            id: "memory_storage".to_string(),
             config,
             graph_size_bytes: Arc::new(RwLock::new(0)),
             store: Arc::new(RwLock::new(HashMap::new())), // If we don't want to store everything in memory, this needs to use something like Redis or LevelDB. Or have a FileSystem adapter for persistence and evict the least important stuff from memory when it's full.
@@ -67,7 +65,7 @@ impl MemoryStorage {
             let mut recipients = HashSet::new();
             recipients.insert(get.from.clone());
             let put = Put::new(reply_with_nodes, Some(get.id.clone()));
-            get.from.sender.try_send(Message::Put(put));
+            let _ = get.from.sender.send(Message::Put(put));
         } else {
             debug!("have not {}", get.node_id);
         }
@@ -96,7 +94,7 @@ impl MemoryStorage {
 
 #[async_trait]
 impl Actor for MemoryStorage {
-    async fn started(&mut self, _ctx: &ActorContext) {
+    async fn pre_start(&mut self, _ctx: &ActorContext) {
         info!("MemoryStorage adapter starting");
         /*
         if self.config.stats {

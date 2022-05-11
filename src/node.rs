@@ -11,8 +11,7 @@ use crate::actor::{start_router, Addr, ActorContext};
 use crate::utils::random_string;
 use log::{debug};
 use tokio::sync::broadcast;
-use tokio::sync::mpsc::{Receiver, channel};
-use tokio::sync::oneshot;
+use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
 // TODO extract networking to struct Mesh
 // TODO proper automatic tests
@@ -139,7 +138,7 @@ impl Node {
     /// Starts [Actor]s that are enabled for this Node.
     pub async fn start(&mut self) {
         // should we start Node right away on new()?
-        let (incoming_tx, incoming_rx) = channel::<Message>(self.config.read().unwrap().rust_channel_size);
+        let (incoming_tx, incoming_rx) = unbounded_channel::<Message>();
         let addr = Addr::new(incoming_tx);
         let config = self.config.read().unwrap().clone();
         let router = start_router(Box::new(Router::new(config)), self.get_peer_id());
@@ -149,7 +148,7 @@ impl Node {
         self.listen(incoming_rx).await
     }
 
-    async fn listen(&mut self, mut receiver: Receiver<Message>) {
+    async fn listen(&mut self, mut receiver: UnboundedReceiver<Message>) {
         while let Some(msg) = receiver.recv().await { // TODO shutdown
             debug!("incoming message");
             match msg {
@@ -169,7 +168,7 @@ impl Node {
         path.push(key.clone());
         let new_child_uid = path.join("/");
         debug!("new_child_uid {}", new_child_uid);
-        let (sender, receiver) = channel::<Message>(config.rust_channel_size);
+        let (sender, receiver) = unbounded_channel::<Message>();
         let node = Self {
             path,
             peer_id: self.peer_id.clone(),
@@ -204,7 +203,7 @@ impl Node {
         let addr = self.addr.read().unwrap().clone();
         let get = Get::new(self.uid.read().unwrap().to_string(), key, addr.unwrap());
         if let Some(router) = self.router.read().unwrap().clone() {
-            router.sender.try_send(Message::Get(get));
+            let _ = router.sender.send(Message::Get(get));
         }
         let sub = self.on_sender.subscribe();
         let uid = self.uid.read().unwrap().clone();
@@ -250,7 +249,7 @@ impl Node {
             children.insert(self.path.last().unwrap().clone(), NodeData { value: value.clone(), updated_at });
             let put = Put::new_from_kv(parent_id.to_string(), children);
             if let Some(router) = &*self.router.read().unwrap() {
-                router.sender.try_send(Message::Put(put));
+                let _ = router.sender.send(Message::Put(put));
             }
         }
     }

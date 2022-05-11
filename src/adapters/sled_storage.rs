@@ -22,7 +22,6 @@ macro_rules! unwrap_or_return {
 }
 
 pub struct SledStorage {
-    id: String,
     config: Config,
     store: sled::Db,
 }
@@ -31,7 +30,6 @@ impl SledStorage {
     pub fn new(config: Config) -> Self {
         let store = config.sled_config.open().unwrap();
         SledStorage {
-            id: "memory_storage".to_string(),
             config,
             store, // If we don't want to store everything in memory, this needs to use something like Redis or LevelDB. Or have a FileSystem adapter for persistence and evict the least important stuff from memory when it's full.
         }
@@ -70,8 +68,9 @@ impl SledStorage {
         reply_with_nodes.insert(get.node_id.clone(), reply_with_children);
         let mut recipients = HashSet::new();
         recipients.insert(get.from.clone());
+        debug!("direct replying to {}", get.from);
         let put = Put::new(reply_with_nodes, Some(get.id.clone()));
-        get.from.sender.try_send(Message::Put(put));
+        let _ = get.from.sender.send(Message::Put(put));
     }
 
     fn handle_put(&self, put: Put, ctx: &ActorContext) {
@@ -86,17 +85,17 @@ impl SledStorage {
                     if let Some(existing) = unwrap_or_return!(children.get(child_id)) {
                         let existing = unwrap_or_return!(bincode::deserialize::<NodeData>(&existing));
                         if child_data.updated_at >= existing.updated_at {
-                            children.insert(child_id, bincode::serialize(child_data).unwrap());
+                            let _ = children.insert(child_id, bincode::serialize(child_data).unwrap());
                         }
                     } else {
-                        children.insert(child_id, bincode::serialize(child_data).unwrap());
+                        let _ = children.insert(child_id, bincode::serialize(child_data).unwrap());
                     }
                 }
             } else {
-                self.store.insert(node_id, vec![1]);
+                let _ = self.store.insert(node_id, vec![1]);
                 let children = unwrap_or_return!(self.store.open_tree(node_id));
                 for (child_id, child_data) in update_data {
-                    children.insert(child_id, bincode::serialize(child_data).unwrap());
+                    let _ = children.insert(child_id, bincode::serialize(child_data).unwrap());
                 }
             }
         }
@@ -106,7 +105,7 @@ impl SledStorage {
 #[async_trait]
 impl Actor for SledStorage {
     async fn handle(&mut self, message: Message, ctx: &ActorContext) {
-        debug!("SledStorage incoming message");
+        debug!("SledStorage incoming message {:?}", message);
         match message {
             Message::Get(get) => self.handle_get(get, ctx),
             Message::Put(put) => self.handle_put(put, ctx),
@@ -114,7 +113,7 @@ impl Actor for SledStorage {
         }
     }
 
-    async fn started(&mut self, _context: &ActorContext) {
+    async fn pre_start(&mut self, _context: &ActorContext) {
         info!("SledStorage adapter starting");
     }
 }

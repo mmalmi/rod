@@ -31,7 +31,7 @@ pub struct Router {
 #[async_trait]
 impl Actor for Router {
     /// Listen to incoming messages and start [Actor]s
-    async fn started(&mut self, ctx: &ActorContext) {
+    async fn pre_start(&mut self, ctx: &ActorContext) {
         let config = &self.config;
         if config.multicast {
             let addr = start_actor(Box::new(Multicast::new()), ctx);
@@ -126,7 +126,11 @@ impl Router {
         debug!("{} subscribed to {}", get.from, topic);
         self.subscribers_by_topic.entry(topic.to_string())
             .or_insert_with(HashSet::new).insert(get.from.clone());
-        self.send(Message::Get(get));
+        debug!("sending get to {} adapters", self.adapter_addrs.len());
+        for addr in self.adapter_addrs.iter() {
+            // TODO send Gets to... someone, not everyone
+            let _ = addr.sender.send(Message::Get(get.clone()));
+        }
     }
 
     // relay to original requester or all subscribers
@@ -143,16 +147,26 @@ impl Router {
                         return;
                     } // failing these conditions, should we still send the ack to someone?
                     seen_get_message.last_reply_checksum = put.checksum.clone();
-                    seen_get_message.from.sender.try_send(Message::Put(put));
+                    let _ = seen_get_message.from.sender.send(Message::Put(put));
                 }
             },
             _ => {
+                debug!("sending put to {} adapters", self.adapter_addrs.len());
+                for addr in self.adapter_addrs.iter() {
+                    // TODO send Puts to subscribers only
+                    let _ = addr.sender.send(Message::Put(put.clone()));
+                }
+                let mut already_sent_to = HashSet::new();
                 for node_id in put.clone().updated_nodes.keys() {
                     let topic = node_id.split("/").next().unwrap_or("");
-                    if let Some(subscribers) = self.subscribers_by_topic.get(topic) {
-                        for addr in subscribers {
-                            addr.sender.try_send(Message::Put(put.clone()));
-                        }
+                    if let Some(topic_subscribers) = self.subscribers_by_topic.get_mut(topic) {
+                        topic_subscribers.retain(|addr| {  // send & remove closed addresses
+                            if already_sent_to.contains(addr) {
+                                return true;
+                            }
+                            already_sent_to.insert(addr.clone());
+                            addr.sender.send(Message::Put(put.clone())).is_ok()
+                        })
                     }
                 }
             }
@@ -169,27 +183,5 @@ impl Router {
         self.seen_messages.insert(id.clone());
 
         return false;
-    }
-
-    fn send(&mut self, msg: Message) {
-        debug!("msg out {:?}", msg);
-        self.seen_messages.insert(msg.get_id()); // TODO: doesn't seem to work, at least on multicast
-        match msg {
-            Message::Get(ref get) => {
-                for addr in self.adapter_addrs.iter() {
-                    // TODO send Gets to... someone, not everyone
-                    addr.sender.try_send(msg.clone());
-                }
-            },
-            Message::Put(ref put) => {
-                for (node_id, _updated_node) in put.updated_nodes.iter() {
-                    // TODO send Puts to subscribed Addrs only
-                    for addr in self.adapter_addrs.iter() {
-                        addr.sender.try_send(msg.clone());
-                    }
-                }
-            },
-            _ => {}
-        }
     }
 }

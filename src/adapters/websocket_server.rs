@@ -78,10 +78,10 @@ pub struct MyWsHelper {
 
 #[async_trait]
 impl MyActor for MyWsHelper {
-    async fn started(&mut self, _ctx: &ActorContext) {}
+    async fn pre_start(&mut self, _ctx: &ActorContext) {}
     async fn handle(&mut self, msg: MyMessage, _ctx: &ActorContext) {
         debug!("forwarding to Actix Addr");
-        self.addr.try_send(OutgoingMessage { str: msg.to_string() });
+        let _ = self.addr.try_send(OutgoingMessage { str: msg.to_string() });
     }
 }
 
@@ -89,6 +89,7 @@ impl Actor for MyWs {
     type Context = ws::WebsocketContext<Self>;
 
     fn started(&mut self, ctx: &mut ws::WebsocketContext<Self>) {
+        ctx.set_mailbox_capacity(1000);
         ctx.text(format!("[{{\"dam\":\"hi\",\"#\":\"{}\"}}]", self.peer_id));
         self.actix_addr = Some(ctx.address());
         self.check_and_send_heartbeat(ctx);
@@ -145,11 +146,11 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for MyWs {
                 ctx.close(reason);
             },
             Ok(ws::Message::Text(text)) => {
-                debug!("in: {}", text);
+                debug!("in from client: {}", text);
                 match MyMessage::try_from(&text.to_string(), self.my_addr.as_ref().unwrap().clone()) {
                     Ok(msgs) => {
                         for msg in msgs.into_iter() {
-                            if let Err(e) = self.router.sender.try_send(msg) {
+                            if let Err(e) = self.router.sender.send(msg) {
                                 error!("error sending incoming message to router: {}", e);
                             }
                         }
@@ -180,7 +181,7 @@ pub struct WebsocketServer {
 
 #[async_trait]
 impl MyActor for WebsocketServer {
-    async fn started(&mut self, ctx: &ActorContext) {
+    async fn pre_start(&mut self, ctx: &ActorContext) {
         info!("WebsocketServer adapter starting");
         let users = self.users.clone();
 
@@ -198,7 +199,14 @@ impl MyActor for WebsocketServer {
         }
          */
 
-        self.actix_start(self.config.clone(), users, ctx).await.unwrap(); // TODO close when receiver dropped
+        let users = self.users.clone();
+        let config = self.config.clone();
+        let router = ctx.router.clone();
+        let peer_id = ctx.peer_id.clone();
+        let addr = ctx.addr.clone();
+        tokio::spawn(async move {
+            Self::actix_start(config, users, peer_id, router, addr).await.unwrap(); // TODO close when receiver dropped
+        });
     }
 
     async fn handle(&mut self, message: MyMessage, ctx: &ActorContext) {
@@ -218,13 +226,11 @@ impl WebsocketServer {
         }
     }
 
-    fn actix_start(&self, config: Config, users: Users, ctx: &ActorContext) -> actix_web::dev::Server {
+    fn actix_start(config: Config, users: Users, peer_id: String, router: MyAddr, addr: Weak<MyAddr>) -> actix_web::dev::Server {
         let url = format!("0.0.0.0:{}", config.websocket_server_port);
 
         let users_clone = users.clone();
-        let addr = (*ctx.addr.upgrade().unwrap()).clone();
-        let peer_id = ctx.peer_id.clone();
-        let router = ctx.router.clone();
+        let addr = (*addr.upgrade().unwrap()).clone();
         let config_clone = config.clone();
         let server = HttpServer::new(move || {
             let users = users_clone.clone();
@@ -283,7 +289,7 @@ impl WebsocketServer {
         let id = NEXT_USER_ID.fetch_add(1, Ordering::Relaxed);
         let id = format!("ws_server_{}", id).to_string();
 
-        let mut ws = MyWs {
+        let ws = MyWs {
             id,
             users,
             my_addr,

@@ -5,7 +5,7 @@ use std::fmt;
 use std::marker::Send;
 use crate::message::Message;
 use crate::utils::random_string;
-use tokio::sync::mpsc::{Sender, Receiver};
+use tokio::sync::mpsc::{UnboundedSender, UnboundedReceiver};
 use tokio::sync::oneshot;
 use log::{info};
 
@@ -18,13 +18,13 @@ use log::{info};
 pub trait Actor: Send + Sync + 'static {
     /// This is called on node.start_adapters()
     async fn handle(&mut self, message: Message, context: &ActorContext);
-    async fn started(&mut self, _context: &ActorContext) {}
+    async fn pre_start(&mut self, _context: &ActorContext) {}
     async fn stopping(&mut self, _context: &ActorContext) {}
 
 }
 impl dyn Actor {
-    async fn run(&mut self, mut receiver: Receiver<Message>, mut stop_receiver: oneshot::Receiver<()>, context: ActorContext) {
-        self.started(&context).await;
+    async fn run(&mut self, mut receiver: UnboundedReceiver<Message>, mut stop_receiver: oneshot::Receiver<()>, context: ActorContext) {
+        self.pre_start(&context).await;
         loop {
             tokio::select! {
                 _v = &mut stop_receiver => {
@@ -45,7 +45,7 @@ impl dyn Actor {
 
 /// Stuff that Actors need (cocaine not included)
 pub struct ActorContext {
-    pub addr: Weak<Addr>, // Weak reference so that addr.sender doesn't linger in the context of Actor::run()
+    pub addr: Weak<Addr>, // Weak reference so that addr.sender doesn't linger in the context of Actor::run(). TODO: use just Addr and stop signals?
     pub stop_signal: oneshot::Sender<()>,
     pub peer_id: String,
     pub router: Addr,
@@ -62,7 +62,7 @@ impl ActorContext {
 }
 
 pub fn start_actor(mut actor: Box<dyn Actor>, parent_context: &ActorContext) -> Arc<Addr> {
-    let (sender, receiver) = tokio::sync::mpsc::channel::<Message>(100);
+    let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<Message>();
     let (stop_sender, stop_receiver) = oneshot::channel();
     let addr = Arc::new(Addr::new(sender));
     let new_context = parent_context.new_with(Arc::downgrade(&addr), stop_sender);
@@ -71,7 +71,7 @@ pub fn start_actor(mut actor: Box<dyn Actor>, parent_context: &ActorContext) -> 
 }
 
 pub fn start_router(mut actor: Box<dyn Actor>, peer_id: String) -> Arc<Addr> {
-    let (sender, receiver) = tokio::sync::mpsc::channel::<Message>(100);
+    let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<Message>();
     let (stop_sender, stop_receiver) = oneshot::channel();
     let addr = Arc::new(Addr::new(sender));
     let ctx = ActorContext {
@@ -87,10 +87,10 @@ pub fn start_router(mut actor: Box<dyn Actor>, peer_id: String) -> Arc<Addr> {
 #[derive(Clone, Debug)]
 pub struct Addr {
     id: String,
-    pub sender: Sender<Message>
+    pub sender: UnboundedSender<Message>
 }
 impl Addr {
-    pub fn new(sender: Sender<Message>) -> Self {
+    pub fn new(sender: UnboundedSender<Message>) -> Self {
         Self {
             id: random_string(32),
             sender

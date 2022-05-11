@@ -40,7 +40,7 @@ impl Actor for Multicast {
         }
     }
 
-    async fn started(&mut self, ctx: &ActorContext) { // "wss://gun-us.herokuapp.com/gun"
+    async fn pre_start(&mut self, ctx: &ActorContext) { // "wss://gun-us.herokuapp.com/gun"
         info!("Syncing over multicast\n");
 
         let socket = self.socket.clone();
@@ -53,20 +53,20 @@ impl Actor for Multicast {
                     // TODO if message.from == multicast_[interface], don't resend to [interface]
                     if let Ok(data) = std::str::from_utf8(&message.data) {
                         debug!("in: {}", data);
-                        let from = format!("multicast_{:?}", message.interface).to_string();
+                        //let from = format!("multicast_{:?}", message.interface).to_string();
                         match Message::try_from(data, addr) {
                             Ok(msgs) => {
                                 for msg in msgs.into_iter() {
                                     match msg {
                                         Message::Put(put) => {
                                             let put = put.clone();
-                                            if let Err(e) = router.sender.try_send(Message::Put(put)) {
+                                            if let Err(e) = router.sender.send(Message::Put(put)) {
                                                 error!("failed to send message to node: {}", e);
                                             }
                                         },
                                         Message::Get(get) => {
                                             let get = get.clone();
-                                            if let Err(e) = router.sender.try_send(Message::Get(get)) {
+                                            if let Err(e) = router.sender.send(Message::Get(get)) {
                                                 error!("failed to send message to node: {}", e);
                                             }
                                         },
