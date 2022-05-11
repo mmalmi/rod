@@ -64,7 +64,7 @@ impl MemoryStorage {
             reply_with_nodes.insert(get.node_id.clone(), reply_with_children);
             let mut recipients = HashSet::new();
             recipients.insert(get.from.clone());
-            let my_addr = (*ctx.addr.upgrade().unwrap()).clone();
+            let my_addr = ctx.addr.clone();
             let put = Put::new(reply_with_nodes, Some(get.id.clone()), my_addr);
             let _ = get.from.sender.send(Message::Put(put));
         } else {

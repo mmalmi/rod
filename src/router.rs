@@ -1,10 +1,9 @@
 use crate::message::{Message, Put, Get};
-use crate::actor::{Actor, ActorContext, Addr, start_actor};
+use crate::actor::{Actor, ActorContext, Addr};
 use crate::{Config};
 use crate::utils::{BoundedHashSet, BoundedHashMap};
 use crate::adapters::{SledStorage, MemoryStorage, WebsocketServer, OutgoingWebsocketManager, Multicast};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
 //use std::time::Instant;
 //use sysinfo::{ProcessorExt, System, SystemExt};
 //use tokio::time::{sleep, Duration};
@@ -22,8 +21,8 @@ struct SeenGetMessage {
 
 pub struct Router {
     config: Config,
-    storage_adapters: HashSet<Arc<Addr>>,
-    network_adapters: HashSet<Arc<Addr>>,
+    storage_adapters: HashSet<Addr>,
+    network_adapters: HashSet<Addr>,
     seen_messages: BoundedHashSet,
     seen_get_messages: BoundedHashMap<String, SeenGetMessage>,
     subscribers_by_topic: HashMap<String, HashSet<Addr>>,
@@ -36,24 +35,24 @@ impl Actor for Router {
     async fn pre_start(&mut self, ctx: &ActorContext) {
         let config = &self.config;
         if config.multicast {
-            let addr = start_actor(Box::new(Multicast::new()), ctx);
+            let addr = ctx.start_actor(Box::new(Multicast::new()));
             self.network_adapters.insert(addr);
         }
         if config.websocket_server {
-            let addr = start_actor(Box::new(WebsocketServer::new(config.clone())), ctx);
+            let addr = ctx.start_actor(Box::new(WebsocketServer::new(config.clone())));
             self.network_adapters.insert(addr);
         }
         if config.sled_storage {
-            let addr = start_actor(Box::new(SledStorage::new(config.clone())), ctx);
+            let addr = ctx.start_actor(Box::new(SledStorage::new(config.clone())));
             self.storage_adapters.insert(addr);
         }
         if config.memory_storage {
-            let addr = start_actor(Box::new(MemoryStorage::new(config.clone())), ctx);
+            let addr = ctx.start_actor(Box::new(MemoryStorage::new(config.clone())));
             self.storage_adapters.insert(addr);
         }
         if config.outgoing_websocket_peers.len() > 0 {
             let actor = OutgoingWebsocketManager::new(config.clone());
-            let addr = start_actor(Box::new(actor), ctx);
+            let addr = ctx.start_actor(Box::new(actor));
             self.network_adapters.insert(addr);
         }
 
@@ -185,7 +184,7 @@ impl Router {
             _ => {
                 // Save to storage
                 for addr in self.storage_adapters.iter() {
-                    if put.from == **addr {
+                    if put.from == *addr {
                         continue;
                     }
                     // TODO send Gets to... someone, not everyone

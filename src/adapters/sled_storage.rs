@@ -22,7 +22,6 @@ macro_rules! unwrap_or_return {
 }
 
 pub struct SledStorage {
-    config: Config,
     store: sled::Db,
 }
 
@@ -30,7 +29,6 @@ impl SledStorage {
     pub fn new(config: Config) -> Self {
         let store = config.sled_config.open().unwrap();
         SledStorage {
-            config,
             store, // If we don't want to store everything in memory, this needs to use something like Redis or LevelDB. Or have a FileSystem adapter for persistence and evict the least important stuff from memory when it's full.
         }
     }
@@ -69,7 +67,7 @@ impl SledStorage {
         let mut recipients = HashSet::new();
         recipients.insert(get.from.clone());
         debug!("direct replying to {}", get.from);
-        let my_addr = (*ctx.addr.upgrade().unwrap()).clone();
+        let my_addr = ctx.addr.clone();
         let put = Put::new(reply_with_nodes, Some(get.id.clone()), my_addr);
         let _ = get.from.sender.send(Message::Put(put));
     }

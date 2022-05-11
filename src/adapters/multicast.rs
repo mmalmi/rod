@@ -44,7 +44,7 @@ impl Actor for Multicast {
         info!("Syncing over multicast\n");
 
         let socket = self.socket.clone();
-        let addr = (*ctx.addr.upgrade().unwrap()).clone();
+        let addr = ctx.addr.clone();
         let router = ctx.router.clone();
         tokio::task::spawn(async move {
             loop { // TODO break on self.receiver close

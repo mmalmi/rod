@@ -11,10 +11,9 @@ use bytes::Bytes;
 use futures::Stream;
 
 use std::collections::HashMap;
-use std::sync::Weak;
 use async_trait::async_trait;
 use crate::message::Message as MyMessage;
-use crate::actor::{Actor as MyActor, Addr as MyAddr, ActorContext, start_actor};
+use crate::actor::{Actor as MyActor, Addr as MyAddr, ActorContext};
 use crate::Config;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -45,10 +44,8 @@ where
 pub struct MyWs {
     id: String,
     users: Users,
-    my_addr: Option<MyAddr>,
+    ctx: ActorContext,
     actix_addr: Option<Addr<MyWs>>,
-    peer_id: String,
-    router: MyAddr,
     heartbeat: Instant
 }
 
@@ -79,10 +76,10 @@ pub struct MyWsHelper {
 #[async_trait]
 impl MyActor for MyWsHelper {
     async fn pre_start(&mut self, _ctx: &ActorContext) {}
-    async fn handle(&mut self, msg: MyMessage, mut ctx: &ActorContext) {
+    async fn handle(&mut self, msg: MyMessage, ctx: &ActorContext) {
         debug!("forwarding to Actix Addr");
         if let Err(_) = self.addr.try_send(OutgoingMessage { str: msg.to_string() }) {
-            ctx.stop_signal.try_send(());
+            ctx.stop();
         }
     }
 }
@@ -92,23 +89,17 @@ impl Actor for MyWs {
 
     fn started(&mut self, ctx: &mut ws::WebsocketContext<Self>) {
         ctx.set_mailbox_capacity(1000);
-        ctx.text(format!("[{{\"dam\":\"hi\",\"#\":\"{}\"}}]", self.peer_id));
+        ctx.text(format!("[{{\"dam\":\"hi\",\"#\":\"{}\"}}]", self.ctx.peer_id));
         self.actix_addr = Some(ctx.address());
         self.check_and_send_heartbeat(ctx);
         let id = self.id.clone();
         let users = self.users.clone();
         let addr = ctx.address();
+        let my_addr = self.ctx.addr.clone();
 
-        let (stop_sender, stop_receiver) = tokio::sync::mpsc::channel(1);
-        let context = ActorContext {
-            peer_id: self.peer_id.clone(),
-            addr: Weak::new(),
-            router: self.router.clone(),
-            stop_signal: stop_sender
-        };
         let helper = MyWsHelper { addr: addr.clone() };
-        let my_addr = (*start_actor(Box::new(helper), &context)).clone();
-        self.my_addr = Some(my_addr.clone());
+        self.ctx.start_actor(Box::new(helper));
+
         tokio::task::spawn(async move {
             let mut users = users.write().await;
             users.insert(id.clone(), (addr, my_addr));
@@ -150,10 +141,10 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for MyWs {
             },
             Ok(ws::Message::Text(text)) => {
                 debug!("in from client: {}", text);
-                match MyMessage::try_from(&text.to_string(), self.my_addr.as_ref().unwrap().clone()) {
+                match MyMessage::try_from(&text.to_string(), self.ctx.addr.clone()) {
                     Ok(msgs) => {
                         for msg in msgs.into_iter() {
-                            if let Err(e) = self.router.sender.send(msg) {
+                            if let Err(e) = self.ctx.router.sender.send(msg) {
                                 error!("error sending incoming message to router: {}", e);
                             }
                         }
@@ -204,11 +195,9 @@ impl MyActor for WebsocketServer {
 
         let users = self.users.clone();
         let config = self.config.clone();
-        let router = ctx.router.clone();
-        let peer_id = ctx.peer_id.clone();
-        let addr = ctx.addr.clone();
+        let ctx = ctx.clone();
         tokio::spawn(async move {
-            Self::actix_start(config, users, peer_id, router, addr).await.unwrap(); // TODO close when receiver dropped
+            Self::actix_start(config, users, ctx).await.unwrap(); // TODO close when receiver dropped
         });
     }
 
@@ -229,26 +218,23 @@ impl WebsocketServer {
         }
     }
 
-    fn actix_start(config: Config, users: Users, peer_id: String, router: MyAddr, addr: Weak<MyAddr>) -> actix_web::dev::Server {
+    fn actix_start(config: Config, users: Users, ctx: ActorContext) -> actix_web::dev::Server {
         let url = format!("0.0.0.0:{}", config.websocket_server_port);
 
         let users_clone = users.clone();
-        let addr = (*addr.upgrade().unwrap()).clone();
         let config_clone = config.clone();
         let server = HttpServer::new(move || {
             let users = users_clone.clone();
-            let router = router.clone();
-            let peer_id = peer_id.clone();
-            let addr = Some(addr.clone());
             let config_clone = config_clone.clone();
+            let ctx = ctx.clone();
             App::new()
-                .app_data(Data::new(AppState { peer_id: peer_id.clone() }))
+                .app_data(Data::new(AppState { peer_id: ctx.peer_id.clone() }))
                 .wrap(middleware::Logger::default())
                 .route("/peer_id", web::get().to(Self::peer_id))
                 .service(fs::Files::new("/stats", "assets/stats").index_file("index.html"))
                 .route("/gun", web::get().to(
                     move |a, b| {
-                        Self::user_connected(a, b, config_clone.websocket_frame_max_size, users.clone(), addr.clone(), peer_id.clone(), router.clone())
+                        Self::user_connected(a, b, config_clone.websocket_frame_max_size, users.clone(), ctx.clone())
                     }
                 ))
                 .service(fs::Files::new("/", "assets/iris").index_file("index.html"))
@@ -288,9 +274,7 @@ impl WebsocketServer {
                             stream: web::Payload,
                             websocket_frame_max_size: usize,
                             users: Users,
-                            my_addr: Option<MyAddr>,
-                            peer_id: String,
-                            router: MyAddr,
+                            ctx: ActorContext
     ) -> Result<HttpResponse, Error> {
         // Use a counter to assign a new unique ID for this user.
         let id = NEXT_USER_ID.fetch_add(1, Ordering::Relaxed);
@@ -299,10 +283,8 @@ impl WebsocketServer {
         let ws = MyWs {
             id,
             users,
-            my_addr,
+            ctx,
             actix_addr: None,
-            peer_id,
-            router: router.clone(),
             heartbeat: Instant::now()
         };
 

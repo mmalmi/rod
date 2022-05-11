@@ -1,12 +1,11 @@
 use async_trait::async_trait;
 use std::hash::{Hash, Hasher};
-use std::sync::{Arc, Weak};
 use std::fmt;
 use std::marker::Send;
+use std::sync::{Arc, RwLock};
 use crate::message::Message;
 use crate::utils::random_string;
 use tokio::sync::mpsc::{UnboundedSender, UnboundedReceiver, Receiver, Sender, channel, unbounded_channel};
-use log::{info};
 
 // TODO: stop signal. Or just call tokio runtime stop / abort? https://docs.rs/tokio/1.18.2/tokio/task/struct.JoinHandle.html#method.abort
 
@@ -27,6 +26,7 @@ impl dyn Actor {
         loop {
             tokio::select! {
                 _v = stop_receiver.recv() => {
+                    context.stop();
                     break;
                 },
                 opt_msg = receiver.recv() => {
@@ -43,44 +43,60 @@ impl dyn Actor {
 }
 
 /// Stuff that Actors need (cocaine not included)
+#[derive(Clone)]
 pub struct ActorContext {
-    pub addr: Weak<Addr>, // Weak reference so that addr.sender doesn't linger in the context of Actor::run(). TODO: use just Addr and stop signals?
-    pub stop_signal: Sender<()>,
     pub peer_id: String,
     pub router: Addr,
+    stop_signals: Arc<RwLock<Vec<Sender<()>>>>,
+    pub addr: Addr,
 }
 impl ActorContext {
-    pub fn new_with(&self, addr: Weak<Addr>, stop_signal: Sender<()>) -> Self {
+    pub fn new(peer_id: String) -> Self {
+        let (sender, _receiver) = unbounded_channel::<Message>();
+        let noop = Addr::new(sender);
+        Self {
+            addr: noop.clone(),
+            stop_signals: Arc::new(RwLock::new(Vec::new())),
+            peer_id,
+            router: noop
+        }
+    }
+
+    fn child_context(&self, addr: Addr, stop_signal: Sender<()>) -> Self {
         Self {
             addr,
-            stop_signal,
-            peer_id: self.peer_id.clone(),
+            stop_signals: Arc::new(RwLock::new(vec![stop_signal])),
+            peer_id: self.peer_id.clone(), // arc rwlock?
             router: self.router.clone()
         }
     }
-}
 
-pub fn start_actor(mut actor: Box<dyn Actor>, parent_context: &ActorContext) -> Arc<Addr> {
-    let (sender, receiver) = unbounded_channel::<Message>();
-    let (stop_sender, stop_receiver) = channel(1);
-    let addr = Arc::new(Addr::new(sender));
-    let new_context = parent_context.new_with(Arc::downgrade(&addr), stop_sender);
-    tokio::spawn(async move { actor.run(receiver, stop_receiver, new_context).await }); // ActorSystem with HashMap<Addr, Sender> that lets us call stop() on all actors?
-    addr
-}
+    pub fn start_actor(&self, actor: Box<dyn Actor>) -> Addr {
+        self.start_actor_or_router(actor, false)
+    }
 
-pub fn start_router(mut actor: Box<dyn Actor>, peer_id: String) -> Arc<Addr> {
-    let (sender, receiver) = unbounded_channel::<Message>();
-    let (stop_sender, stop_receiver) = channel(1);
-    let addr = Arc::new(Addr::new(sender));
-    let ctx = ActorContext {
-        addr: Arc::downgrade(&addr),
-        router: (*addr).clone(),
-        peer_id,
-        stop_signal: stop_sender
-    };
-    tokio::spawn(async move { actor.run(receiver, stop_receiver, ctx).await }); // ActorSystem with HashMap<Addr, Sender> that lets us call stop() on all actors?
-    addr
+    pub fn start_router(&self, actor: Box<dyn Actor>) -> Addr {
+        self.start_actor_or_router(actor, true)
+    }
+
+    fn start_actor_or_router(&self, mut actor: Box<dyn Actor>, is_router: bool) -> Addr {
+        let (sender, receiver) = unbounded_channel::<Message>();
+        let (stop_sender, stop_receiver) = channel(1);
+        let addr = Addr::new(sender);
+        let mut new_context = self.child_context(addr.clone(), stop_sender.clone());
+        if is_router {
+            new_context.router = addr.clone();
+        }
+        self.stop_signals.write().unwrap().push(stop_sender);
+        tokio::spawn(async move { actor.run(receiver, stop_receiver, new_context).await }); // ActorSystem with HashMap<Addr, Sender> that lets us call stop() on all actors?
+        addr
+    }
+
+    pub fn stop(&self) {
+        for signal in self.stop_signals.read().unwrap().iter() {
+            let _ = signal.try_send(());
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

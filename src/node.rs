@@ -7,7 +7,7 @@ use std::time::SystemTime;
 use crate::router::Router;
 use crate::message::{Message, Put, Get};
 use crate::types::*;
-use crate::actor::{start_router, Addr, ActorContext};
+use crate::actor::{Addr, ActorContext};
 use crate::utils::random_string;
 use log::{debug};
 use tokio::sync::broadcast;
@@ -78,13 +78,13 @@ pub struct Node {
     config: Arc<RwLock<Config>>,
     uid: Arc<RwLock<String>>,
     path: Vec<String>,
-    peer_id: Arc<RwLock<String>>,
     children: Arc<RwLock<BTreeMap<String, Node>>>,
     parents: Arc<RwLock<BTreeMap<String, Node>>>,
     on_sender: broadcast::Sender<GunValue>,
     map_sender: broadcast::Sender<(String, GunValue)>,
+    actor_context: ActorContext,
     addr: Arc<RwLock<Option<Addr>>>,
-    router: Arc<RwLock<Option<Arc<Addr>>>>
+    router: Arc<RwLock<Option<Addr>>>,
 }
 
 impl Node {
@@ -118,7 +118,6 @@ impl Node {
     pub fn new_with_config(config: Config) -> Self {
         Self {
             path: vec![],
-            peer_id: Arc::new(RwLock::new(random_string(16))),
             uid: Arc::new(RwLock::new("".to_string())),
             config: Arc::new(RwLock::new(config.clone())),
             children: Arc::new(RwLock::new(BTreeMap::new())),
@@ -127,6 +126,7 @@ impl Node {
             map_sender: broadcast::channel::<(String, GunValue)>(config.rust_channel_size).0,
             addr: Arc::new(RwLock::new(None)), // set this to None when stopping
             router: Arc::new(RwLock::new(None)),
+            actor_context: ActorContext::new(random_string(16))
         }
     }
 
@@ -141,8 +141,9 @@ impl Node {
         let (incoming_tx, incoming_rx) = unbounded_channel::<Message>();
         let addr = Addr::new(incoming_tx);
         let config = self.config.read().unwrap().clone();
-        let router = start_router(Box::new(Router::new(config)), self.get_peer_id());
-        *self.router.write().unwrap() = Some(router);
+        let router = Box::new(Router::new(config));
+        let router_addr = self.actor_context.start_router(router);
+        *self.router.write().unwrap() = Some(router_addr);
         *self.addr.write().unwrap() = Some(addr);
 
         self.listen(incoming_rx).await
@@ -171,7 +172,6 @@ impl Node {
         let (sender, receiver) = unbounded_channel::<Message>();
         let node = Self {
             path,
-            peer_id: self.peer_id.clone(),
             config: self.config.clone(),
             children: Arc::new(RwLock::new(BTreeMap::new())),
             parents: Arc::new(RwLock::new(parents)),
@@ -179,17 +179,13 @@ impl Node {
             map_sender: broadcast::channel::<(String, GunValue)>(config.rust_channel_size).0,
             uid: Arc::new(RwLock::new(new_child_uid)),
             router: self.router.clone(),
-            addr: Arc::new(RwLock::new(Some(Addr::new(sender))))
+            addr: Arc::new(RwLock::new(Some(Addr::new(sender)))),
+            actor_context: self.actor_context.clone()
         };
         let mut clone = node.clone();
         tokio::spawn(async move { clone.listen(receiver).await });
         self.children.write().unwrap().insert(key, node.clone());
         node
-    }
-
-    /// Get the network peer id of this Node
-    pub fn get_peer_id(&self) -> String {
-        self.peer_id.read().unwrap().to_string()
     }
 
     /// Subscribe to the Node's value.
@@ -206,7 +202,6 @@ impl Node {
             let _ = router.sender.send(Message::Get(get));
         }
         let sub = self.on_sender.subscribe();
-        let uid = self.uid.read().unwrap().clone();
         sub
     }
 
@@ -256,8 +251,7 @@ impl Node {
     }
 
     pub fn stop(&mut self) {
-        *self.addr.write().unwrap() = None; // Dropping the Node's Addr should stop the Message listener thread
-        *self.router.write().unwrap() = None; // Dropping the Router's Addr should stop it
+        self.actor_context.stop();
     }
 }
 

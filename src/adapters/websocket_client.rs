@@ -7,17 +7,16 @@ use tokio_tungstenite::{
 };
 use url::Url;
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use crate::message::Message;
-use crate::actor::{Actor, Addr, ActorContext, start_actor};
+use crate::actor::{Actor, Addr, ActorContext};
 use crate::Config;
 use async_trait::async_trait;
 use log::{debug, error, info};
 use tokio::time::{sleep, Duration};
 
 pub struct OutgoingWebsocketManager {
-    clients: HashMap<String, Arc<Addr>>,
+    clients: HashMap<String, Addr>,
     config: Config
 }
 
@@ -48,7 +47,7 @@ impl Actor for OutgoingWebsocketManager { // TODO: support multiple outbound web
                     let (socket, _) = tuple;
                     debug!("outgoing websocket opened to {}", url);
                     let client = WebsocketClient::new(socket);
-                    let addr = start_actor(Box::new(client), ctx);
+                    let addr = ctx.start_actor(Box::new(client));
                     self.clients.insert(url.clone(), addr);
                 }
             }
@@ -102,7 +101,7 @@ impl Actor for WebsocketClient {
                     if s == "PING" {
                         continue;
                     }
-                    match Message::try_from(s, (*ctx.addr.upgrade().unwrap()).clone()) {
+                    match Message::try_from(s, ctx.addr.clone()) {
                         Ok(msgs) => {
                             debug!("websocket_client in");
                             for msg in msgs.into_iter() {
@@ -128,7 +127,7 @@ impl Actor for WebsocketClient {
     async fn handle(&mut self, message: Message, ctx: &ActorContext) {
         //tx.stop_signal.send(());
         if let Err(_) = self.sender.send(WsMessage::text(message.to_string())).await {
-            ctx.stop_signal.try_send(());
+            ctx.stop();
         }
     }
 }
