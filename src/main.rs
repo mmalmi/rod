@@ -1,12 +1,12 @@
 extern crate clap;
 use clap::{Arg, App, SubCommand};
-use gundb::{Node, NodeConfig};
+use gundb::{Node, Config};
 use std::env;
 use ctrlc;
 
 #[tokio::main]
 async fn main() {
-    let default_port = NodeConfig::default().websocket_server_port.to_string();
+    let default_port = Config::default().websocket_server_port.to_string();
     let matches = App::new("Gun")
     .version("1.0")
     .author("Martti Malmi")
@@ -19,10 +19,6 @@ async fn main() {
         .takes_value(true))
     .subcommand(SubCommand::with_name("start")
         .about("runs the gun server")
-        .arg(Arg::with_name("debug")
-            .long("debug")
-            .short("d")
-            .help("print debug information verbosely"))
         .arg(Arg::with_name("ws-server")
             .long("ws-server")
             .env("WS_SERVER")
@@ -71,7 +67,7 @@ async fn main() {
             .default_value("false")
             .takes_value(true))
         .arg(Arg::with_name("sled-storage")
-            .long("multicast")
+            .long("sled-storage")
             .env("SLED_STORAGE")
             .value_name("BOOL")
             .help("Sled storage (disk+mem)")
@@ -90,15 +86,10 @@ async fn main() {
     //let config = matches.value_of("config").unwrap_or("default.conf");
     //println!("Value for config: {}", config);
 
-    if let Some(matches) = matches.subcommand_matches("start") { // TODO: write fn to convert matches into NodeConfig
+    if let Some(matches) = matches.subcommand_matches("start") { // TODO: write fn to convert matches into Config
         let mut outgoing_websocket_peers = Vec::new();
         if let Some(peers) = matches.value_of("peers") {
             outgoing_websocket_peers = peers.split(",").map(|s| s.to_string()).collect();
-        }
-
-        if matches.is_present("debug") {
-            println!("debug");
-            env::set_var("RUST_LOG", "debug");
         }
 
         env_logger::init();
@@ -112,7 +103,7 @@ async fn main() {
 
         let websocket_server = matches.value_of("ws-server").unwrap() == "true";
 
-        let mut node = Node::new_with_config(NodeConfig {
+        let mut node = Node::new_with_config(Config {
             outgoing_websocket_peers,
             rust_channel_size,
             websocket_server,
@@ -123,7 +114,7 @@ async fn main() {
             cert_path: matches.value_of("cert-path").map(|s| s.to_string()),
             key_path: matches.value_of("key-path").map(|s| s.to_string()),
             stats: matches.value_of("stats").unwrap() == "true",
-            ..NodeConfig::default()
+            ..Config::default()
         });
 
         if websocket_server {
@@ -134,8 +125,19 @@ async fn main() {
             println!("Gun endpoint: {}/gun", url);
         }
 
-        ctrlc::set_handler(|| std::process::exit(0)).expect("Error setting Ctrl-C handler");
+        let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
 
-        node.start_adapters().await;
+        let tx_mutex = std::sync::Mutex::new(Some(cancel_tx));
+        ctrlc::set_handler(move || {
+            if let Some(tx) = tx_mutex.lock().unwrap().take() {
+                let _ = tx.send(()).unwrap();
+            }
+            std::process::exit(0);
+        }).expect("Error setting Ctrl-C handler");
+
+        tokio::select! {
+            _ = cancel_rx => {}
+            _ = node.start() => {},
+        }
     }
 }

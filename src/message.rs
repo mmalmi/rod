@@ -2,27 +2,24 @@ use serde_json::{json, Value as SerdeJsonValue};
 use crate::utils::random_string;
 use std::collections::{HashSet, BTreeMap};
 use crate::types::*;
-use log::{debug, error};
+use log::{debug};
 use std::convert::TryFrom;
-use actix::Addr;
-use crate::adapters::websocket_server::MyWs;
+use crate::actor::Addr;
 
 #[derive(Clone, Debug)]
 pub struct Get {
     pub id: String,
-    pub from: String,
-    pub from_addr: Option<Addr<MyWs>>,
+    pub from: Addr,
     pub recipients: Option<HashSet<String>>,
     pub node_id: String,
     pub child_key: Option<String>,
     pub json_str: Option<String>
 }
 impl Get {
-    pub fn new(node_id: String, child_key: Option<String>, from: String) -> Self {
+    pub fn new(node_id: String, child_key: Option<String>, from: Addr) -> Self {
         Self {
             id: random_string(8),
             from,
-            from_addr: None,
             recipients: None,
             node_id,
             child_key,
@@ -51,7 +48,7 @@ impl Get {
 #[derive(Clone, Debug)]
 pub struct Put {
     pub id: String,
-    pub from: String,
+    pub from: Addr,
     pub recipients: Option<HashSet<String>>,
     pub in_response_to: Option<String>,
     pub updated_nodes: BTreeMap<String, Children>,
@@ -59,10 +56,10 @@ pub struct Put {
     pub json_str: Option<String>
 }
 impl Put {
-    pub fn new(updated_nodes: BTreeMap<String, Children>, in_response_to: Option<String>) -> Self {
+    pub fn new(updated_nodes: BTreeMap<String, Children>, in_response_to: Option<String>, from: Addr) -> Self {
         Self {
             id: random_string(8),
-            from: "".to_string(),
+            from,
             recipients: None,
             in_response_to,
             updated_nodes,
@@ -71,10 +68,10 @@ impl Put {
         }
     }
 
-    pub fn new_from_kv(key: String, children: Children) -> Self {
+    pub fn new_from_kv(key: String, children: Children, from: Addr) -> Self {
         let mut updated_nodes = BTreeMap::new();
         updated_nodes.insert(key, children);
-        Put::new(updated_nodes, None)
+        Put::new(updated_nodes, None, from)
     }
 
     pub fn to_string(&self) -> String {
@@ -112,7 +109,7 @@ impl Put {
 }
 
 #[derive(Clone, Debug)]
-pub enum Message { // could consider structs for each enum variant (Message::Get(Get))
+pub enum Message { // TODO: NetworkMessage and InternalMessage
     Get(Get),
     Put(Put),
     Hi { from: String }
@@ -127,7 +124,23 @@ impl Message {
         }
     }
 
-    fn from_put_obj(json: &SerdeJsonValue, json_str: String, msg_id: String, from: String) -> Result<Self, &'static str> {
+    pub fn get_id(&self) -> String {
+        match self {
+            Message::Get(get) => get.id.clone(),
+            Message::Put(put) => put.id.clone(),
+            Message::Hi { from } => from.to_string()
+        }
+    }
+
+    pub fn is_from(&self, addr: &Addr) -> bool {
+        match self {
+            Message::Get(get) => get.from == *addr,
+            Message::Put(put) => put.from == *addr,
+            Message::Hi { from } => false
+        }
+    }
+
+    fn from_put_obj(json: &SerdeJsonValue, json_str: String, msg_id: String, from: Addr) -> Result<Self, &'static str> {
         let obj = match json.get("put").unwrap().as_object() {
             Some(obj) => obj,
             _ => { return Err("invalid message: msg.put was not an object"); }
@@ -184,7 +197,7 @@ impl Message {
         Ok(Message::Put(put))
     }
 
-    fn from_get_obj(json: &SerdeJsonValue, json_str: String, msg_id: String, from: String) -> Result<Self, &'static str> {
+    fn from_get_obj(json: &SerdeJsonValue, json_str: String, msg_id: String, from: Addr) -> Result<Self, &'static str> {
         /* TODO: other types of child_key selectors than equality.
 
         node.get({'.': {'<': cursor, '-': true}, '%': 20 * 1000}).once().map().on((value, key) => { ...
@@ -210,7 +223,6 @@ impl Message {
         let get = Get {
             id: msg_id,
             from,
-            from_addr: None,
             recipients: None,
             node_id: node_id.to_string(),
             child_key,
@@ -219,7 +231,7 @@ impl Message {
         Ok(Message::Get(get))
     }
     
-    pub fn from_json_obj(json: &SerdeJsonValue, json_str: String, from: String) -> Result<Self, &'static str> {
+    pub fn from_json_obj(json: &SerdeJsonValue, json_str: String, from: Addr) -> Result<Self, &'static str> {
         let obj = match json.as_object() {
             Some(obj) => obj,
             _ => { return Err("not a json object"); }
@@ -245,7 +257,7 @@ impl Message {
         }
     }
 
-    pub fn try_from(s: &str, from: String) -> Result<Vec<Self>, &str> {
+    pub fn try_from(s: &str, from: Addr) -> Result<Vec<Self>, &str> {
         let json: SerdeJsonValue = match serde_json::from_str(s) {
             Ok(json) => json,
             Err(_) => { return Err("Failed to parse message as JSON"); }

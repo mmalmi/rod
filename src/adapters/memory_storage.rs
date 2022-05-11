@@ -1,26 +1,32 @@
 use std::collections::{HashMap, HashSet, BTreeMap};
 
 use crate::message::{Message, Put, Get};
-use crate::types::NetworkAdapter;
-use crate::Node;
+use crate::actor::{Actor, ActorContext};
+use crate::Config;
 use crate::types::*;
 
 use async_trait::async_trait;
-use log::{debug, error};
+use log::{debug, info};
 use std::sync::{Arc, RwLock};
-use tokio::time::{sleep, Duration};
-
-use crate::adapters::websocket_server::OutgoingMessage;
+//use tokio::time::{sleep, Duration};
 
 pub struct MemoryStorage {
-    id: String,
-    node: Node,
+    config: Config,
     graph_size_bytes: Arc<RwLock<usize>>,
     store: Arc<RwLock<HashMap<String, Children>>>,
 }
 
 impl MemoryStorage {
+    pub fn new(config: Config) -> Self {
+        MemoryStorage {
+            config,
+            graph_size_bytes: Arc::new(RwLock::new(0)),
+            store: Arc::new(RwLock::new(HashMap::new())), // If we don't want to store everything in memory, this needs to use something like Redis or LevelDB. Or have a FileSystem adapter for persistence and evict the least important stuff from memory when it's full.
+        }
+    }
+
     fn update_stats(&self) {
+        /*
         let peer_id = self.node.get_peer_id();
         let mut stats = self.node.clone().get("node_stats").get(&peer_id);
         let store = self.store.clone();
@@ -35,16 +41,13 @@ impl MemoryStorage {
                 sleep(Duration::from_millis(1000)).await;
             }
         });
+         */
     }
 
-    fn handle_get(msg: &Get, my_id: &String, store: Arc<RwLock<HashMap<String, Children>>>, node: &Node) {
-        if &msg.from == my_id {
-            return;
-        }
-
-        if let Some(children) = store.read().unwrap().get(&msg.node_id).cloned() {
-            debug!("have {}: {:?}", msg.node_id, children);
-            let reply_with_children = match &msg.child_key {
+    fn handle_get(&self, get: Get, ctx: &ActorContext) {
+        if let Some(children) = self.store.read().unwrap().get(&get.node_id).cloned() {
+            debug!("have {}: {:?}", get.node_id, children);
+            let reply_with_children = match &get.child_key {
                 Some(child_key) => { // reply with specific child if it's found
                     match children.get(child_key) {
                         Some(child_val) => {
@@ -58,31 +61,21 @@ impl MemoryStorage {
                 None => children.clone() // reply with all children of this node
             };
             let mut reply_with_nodes = BTreeMap::new();
-            reply_with_nodes.insert(msg.node_id.clone(), reply_with_children);
+            reply_with_nodes.insert(get.node_id.clone(), reply_with_children);
             let mut recipients = HashSet::new();
-            recipients.insert(msg.from.clone());
-            let put = Put::new(reply_with_nodes, Some(msg.id.clone()));
-
-            if let Some(addr) = &msg.from_addr {
-                addr.try_send(OutgoingMessage { str: put.to_string() });
-            } else {
-                if let Err(e) = node.get_incoming_msg_sender().try_send(Message::Put(put)) {
-                    error!("failed to send incoming message to node: {}", e);
-                }
-            }
+            recipients.insert(get.from.clone());
+            let my_addr = (*ctx.addr.upgrade().unwrap()).clone();
+            let put = Put::new(reply_with_nodes, Some(get.id.clone()), my_addr);
+            let _ = get.from.sender.send(Message::Put(put));
         } else {
-            debug!("have not {}", msg.node_id);
+            debug!("have not {}", get.node_id);
         }
     }
 
-    fn handle_put(msg: &Put, my_id: &String, store: Arc<RwLock<HashMap<String, Children>>>) {
-        if &msg.from == my_id {
-            return;
-        }
-
-        for (node_id, update_data) in msg.updated_nodes.iter().rev() { // return in reverse
+    fn handle_put(&self, put: Put, ctx: &ActorContext) {
+        for (node_id, update_data) in put.updated_nodes.iter().rev() { // return in reverse
             debug!("saving k-v {}: {:?}", node_id, update_data);
-            let mut write = store.write().unwrap();
+            let mut write = self.store.write().unwrap();
             if let Some(children) = write.get_mut(node_id) {
                 for (child_id, child_data) in update_data {
                     if let Some(existing) = children.get(child_id) {
@@ -101,37 +94,22 @@ impl MemoryStorage {
 }
 
 #[async_trait]
-impl NetworkAdapter for MemoryStorage {
-    fn new(node: Node) -> Self {
-        MemoryStorage {
-            id: "memory_storage".to_string(),
-            node,
-            graph_size_bytes: Arc::new(RwLock::new(0)),
-            store: Arc::new(RwLock::new(HashMap::new())), // If we don't want to store everything in memory, this needs to use something like Redis or LevelDB. Or have a FileSystem adapter for persistence and evict the least important stuff from memory when it's full.
-        }
-    }
-
-    async fn start(&self) {
-        let store = self.store.clone();
-        let my_id = self.id.clone();
-        let node = self.node.clone();
-
-        if node.config.read().unwrap().stats {
+impl Actor for MemoryStorage {
+    async fn pre_start(&mut self, _ctx: &ActorContext) {
+        info!("MemoryStorage adapter starting");
+        /*
+        if self.config.stats {
             self.update_stats();
         }
+         */
+    }
 
-        let mut rx = node.get_outgoing_msg_receiver();
-        tokio::task::spawn(async move {
-            loop {
-                if let Ok(message) = rx.recv().await {
-                    match message {
-                        Message::Get(get) => Self::handle_get(&get, &my_id, store.clone(), &node),
-                        Message::Put(put) => Self::handle_put(&put, &my_id, store.clone()),
-                        _ => {}
-                    }
-                }
-            }
-        });
+    async fn handle(&mut self, message: Message, ctx: &ActorContext) {
+        match message {
+            Message::Get(get) => self.handle_get(get, ctx),
+            Message::Put(put) => self.handle_put(put, ctx),
+            _ => {}
+        }
     }
 }
 

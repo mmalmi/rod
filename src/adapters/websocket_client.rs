@@ -1,156 +1,134 @@
-use futures_util::{SinkExt, StreamExt};
+use futures_util::{StreamExt, SinkExt};
+use futures::stream::{SplitStream, SplitSink};
 use tokio_tungstenite::{
     connect_async,
     tungstenite::{Message as WsMessage},
     WebSocketStream
 };
-use tokio::sync::RwLock;
 use url::Url;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::message::Message;
-use crate::types::NetworkAdapter;
-use crate::Node;
+use crate::actor::{Actor, Addr, ActorContext, start_actor};
+use crate::Config;
 use async_trait::async_trait;
-use log::{debug, error};
-use std::sync::Arc;
+use log::{debug, error, info};
 use tokio::time::{sleep, Duration};
 
-type Users = Arc<RwLock<HashMap<String, User>>>;
-
-struct User {
-
+pub struct OutgoingWebsocketManager {
+    clients: HashMap<String, Arc<Addr>>,
+    config: Config
 }
-impl User {
-    fn new() -> User {
-        User { }
+
+impl OutgoingWebsocketManager {
+    pub fn new(config: Config) -> Self {
+        OutgoingWebsocketManager {
+            config,
+            clients: HashMap::new()
+        }
     }
-}
-
-pub struct WebsocketClient {
-    node: Node,
-    users: Users
 }
 
 #[async_trait]
-impl NetworkAdapter for WebsocketClient {
-    fn new(node: Node) -> Self {
-        WebsocketClient {
-            node,
-            users: Users::default()
+impl Actor for OutgoingWebsocketManager { // TODO: support multiple outbound websockets
+    async fn pre_start(&mut self, ctx: &ActorContext) {
+        info!("OutgoingWebsocketManager starting");
+        for url in self.config.outgoing_websocket_peers.iter() {
+            let url = url.to_string();
+            loop { // TODO break on actor shutdown
+                sleep(Duration::from_millis(1000)).await;
+                if self.clients.contains_key(&url) {
+                    continue;
+                }
+                let result = connect_async(
+                    Url::parse(&url).expect("Can't connect to URL"),
+                ).await;
+                if let Ok(tuple) = result {
+                    let (socket, _) = tuple;
+                    debug!("outgoing websocket opened to {}", url);
+                    let client = WebsocketClient::new(socket);
+                    let addr = start_actor(Box::new(client), ctx);
+                    self.clients.insert(url.clone(), addr);
+                }
+            }
         }
     }
 
-    async fn start(&self) {
-        let config = self.node.config.read().unwrap().clone();
-        for peer in config.outgoing_websocket_peers {
-            let node = self.node.clone();
-            let users = self.users.clone();
-            tokio::task::spawn(async move {
-                debug!("WebsocketClient connecting to {}\n", peer);
-                loop {
-                    let node = node.clone();
-                    let users = users.clone();
-                    let result = connect_async(
-                        Url::parse(&peer).expect("Can't connect to URL"),
-                    ).await;
-                    if let Ok(tuple) = result {
-                        let (socket, _) = tuple;
-                        debug!("connected");
-                        user_connected(node, socket, users).await;
-                    }
-                    sleep(Duration::from_millis(1000)).await;
-                }
-            });
+    async fn handle(&mut self, message: Message, _ctx: &ActorContext) {
+        self.clients.retain(|_url,client| {
+            client.sender.send(message.clone()).is_ok()
+        });
+    }
+}
+
+type WsStream = WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+pub struct WebsocketClient {
+    sender: SplitSink<WsStream, tokio_tungstenite::tungstenite::Message>,
+    receiver: SplitStream<WsStream>
+}
+
+impl WebsocketClient {
+    pub fn new(socket: WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>) -> Self {
+        let (sender, receiver) = socket.split();
+        WebsocketClient {
+            sender,
+            receiver
         }
     }
 }
 
-async fn user_connected(mut node: Node, ws: WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>, users: Users) { // TODO copied from server, need similar here.
-    let my_id = "wss://gun-us.herokuapp.com/gun".to_string();
+#[async_trait]
+impl Actor for WebsocketClient {
+    async fn pre_start(&mut self, ctx: &ActorContext) {
+        // Split the socket into a sender and receive of messages.
 
-    debug!("outgoing websocket opened: {}", my_id);
+        // Return a `Future` that is basically a state machine managing
+        // this specific user's connection.
 
-    // Split the socket into a sender and receive of messages.
-    let (mut user_ws_tx, mut user_ws_rx) = ws.split();
-
-    let mut rx = node.get_outgoing_msg_receiver();
-
-    let update_stats = node.config.read().unwrap().stats;
-
-    let my_id_clone = my_id.clone();
-    tokio::task::spawn(async move { // TODO as in websocket_server, there should be only 1 task that relays to the addressed message recipient
-        loop {
-            if let Ok(message) = rx.recv().await {
-                let from = match message.clone() {
-                    Message::Get(get) => get.from,
-                    Message::Put(put) => put.from,
-                    _ => "".to_string()
-                };
-                if from == my_id_clone {
-                    continue;
-                }
-                if let Err(_) = user_ws_tx.send(WsMessage::text(message.to_string())).await {
+        // Every time the user sends a message, broadcast it to
+        // all other users...
+        while let Some(result) = self.receiver.next().await {
+            let msg = match result {
+                Ok(msg) => msg,
+                Err(e) => {
+                    error!("websocket receive error: {}", e);
                     break;
                 }
-            }
-        }
-    });
-
-    // Save the sender in our list of connected users.
-    let user = User::new();
-    users.write().await.insert(my_id.clone(), user);
-
-    let peer_id = node.get_peer_id();
-    if update_stats {
-        node.get("node_stats").get(&peer_id).get("websocket_client_connections").put(users.read().await.len().to_string().into());
-    }
-
-    // Return a `Future` that is basically a state machine managing
-    // this specific user's connection.
-
-    // Every time the user sends a message, broadcast it to
-    // all other users...
-    let incoming_message_sender = node.get_incoming_msg_sender();
-    while let Some(result) = user_ws_rx.next().await {
-        let msg = match result {
-            Ok(msg) => msg,
-            Err(e) => {
-                error!("websocket receive error: {}", e);
-                break;
-            }
-        };
-        match msg.to_text() {
-            Ok(s) => {
-                if s == "PING" {
-                    continue;
-                }
-                match Message::try_from(s, my_id.clone()) {
-                    Ok(msgs) => {
-                        for msg in msgs.into_iter() {
-                            if let Err(e) = incoming_message_sender.try_send(msg) {
-                                error!("failed to send incoming message to node: {}", e);
-                            }
-                        }
-                    },
-                    Err(e) => {
-                        error!("{}", e);
+            };
+            match msg.to_text() {
+                Ok(s) => {
+                    if s == "PING" {
                         continue;
                     }
+                    match Message::try_from(s, (*ctx.addr.upgrade().unwrap()).clone()) {
+                        Ok(msgs) => {
+                            debug!("websocket_client in");
+                            for msg in msgs.into_iter() {
+                                if let Err(e) = ctx.router.sender.send(msg) {
+                                    error!("failed to send incoming message to node: {}", e);
+                                }
+                            }
+                        },
+                        Err(e) => {
+                            error!("{}", e);
+                            continue;
+                        }
+                    }
+                },
+                Err(e) => {
+                    error!("websocket incoming msg .to_text() failed: {}", e);
+                    break;
                 }
-            },
-            Err(e) => {
-                error!("websocket incoming msg .to_text() failed: {}", e);
-                break;
-            }
-        };
+            };
+        }
     }
 
-    // user_ws_rx stream will keep processing as long as the user stays
-    // connected. Once they disconnect, then...
-    users.write().await.remove(&my_id);
-    if update_stats {
-        node.get("node_stats").get(&peer_id).get("websocket_client_connections").put(users.read().await.len().to_string().into());
+    async fn handle(&mut self, message: Message, ctx: &ActorContext) {
+        //tx.stop_signal.send(());
+        if let Err(_) = self.sender.send(WsMessage::text(message.to_string())).await {
+            // TODO stop actor
+        }
     }
 }
-

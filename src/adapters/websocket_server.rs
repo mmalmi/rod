@@ -10,20 +10,21 @@ use actix_http::ws::{Codec, Message, ProtocolError};
 use bytes::Bytes;
 use futures::Stream;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+use std::sync::Weak;
 use async_trait::async_trait;
-use crate::message::Message as GunMessage;
-use crate::types::NetworkAdapter;
-use crate::Node;
+use crate::message::Message as MyMessage;
+use crate::actor::{Actor as MyActor, Addr as MyAddr, ActorContext, start_actor};
+use crate::Config;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Instant, Duration};
 use tokio::sync::RwLock;
 use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
 
-use tokio::time::sleep;
+//use tokio::time::sleep;
 
-use log::{debug, error};
+use log::{debug, error, info};
 
 static NEXT_USER_ID: AtomicUsize = AtomicUsize::new(1);
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
@@ -42,10 +43,12 @@ where
 
 /// Define HTTP actor
 pub struct MyWs {
-    node: Node,
     id: String,
     users: Users,
-    incoming_msg_sender: tokio::sync::mpsc::Sender<GunMessage>,
+    my_addr: Option<MyAddr>,
+    actix_addr: Option<Addr<MyWs>>,
+    peer_id: String,
+    router: MyAddr,
     heartbeat: Instant
 }
 
@@ -69,18 +72,44 @@ impl actix::Message for OutgoingMessage {
     type Result = ();
 }
 
+pub struct MyWsHelper {
+    pub addr: Addr<MyWs>
+}
+
+#[async_trait]
+impl MyActor for MyWsHelper {
+    async fn pre_start(&mut self, _ctx: &ActorContext) {}
+    async fn handle(&mut self, msg: MyMessage, _ctx: &ActorContext) {
+        debug!("forwarding to Actix Addr");
+        let _ = self.addr.try_send(OutgoingMessage { str: msg.to_string() });
+    }
+}
+
 impl Actor for MyWs {
     type Context = ws::WebsocketContext<Self>;
 
     fn started(&mut self, ctx: &mut ws::WebsocketContext<Self>) {
-        ctx.text(format!("[{{\"dam\":\"hi\",\"#\":\"{}\"}}]", self.node.get_peer_id()));
+        ctx.set_mailbox_capacity(1000);
+        ctx.text(format!("[{{\"dam\":\"hi\",\"#\":\"{}\"}}]", self.peer_id));
+        self.actix_addr = Some(ctx.address());
         self.check_and_send_heartbeat(ctx);
         let id = self.id.clone();
-        let addr = ctx.address();
         let users = self.users.clone();
+        let addr = ctx.address();
+
+        let (stop_sender, stop_receiver) = tokio::sync::oneshot::channel();
+        let context = ActorContext {
+            peer_id: self.peer_id.clone(),
+            addr: Weak::new(),
+            router: self.router.clone(),
+            stop_signal: stop_sender
+        };
+        let helper = MyWsHelper { addr: addr.clone() };
+        let my_addr = (*start_actor(Box::new(helper), &context)).clone();
+        self.my_addr = Some(my_addr.clone());
         tokio::task::spawn(async move {
             let mut users = users.write().await;
-            users.insert(id.clone(), addr);
+            users.insert(id.clone(), (addr, my_addr));
         });
     }
 
@@ -118,23 +147,17 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for MyWs {
                 ctx.close(reason);
             },
             Ok(ws::Message::Text(text)) => {
-                debug!("in: {}", text);
-                match GunMessage::try_from(&text.to_string(), self.id.clone()) {
+                debug!("in from client: {}", text);
+                match MyMessage::try_from(&text.to_string(), self.my_addr.as_ref().unwrap().clone()) {
                     Ok(msgs) => {
                         for msg in msgs.into_iter() {
-                            let m = match msg {
-                                GunMessage::Get(mut get) => {
-                                    get.from_addr = Some(ctx.address());
-                                    GunMessage::Get(get)
-                                },
-                                _ => msg
-                            };
-                            if let Err(e) = self.incoming_msg_sender.try_send(m) {
-                                error!("error sending incoming message to node: {}", e);
+                            if let Err(e) = self.router.sender.send(msg) {
+                                error!("error sending incoming message to router: {}", e);
                             }
                         }
                     },
-                    Err(e) => debug!("{}", e)
+                    _ => {}
+                    //Err(e) => debug!("{}", e)
                 };
             },
             Err(e) => {
@@ -150,68 +173,84 @@ struct AppState {
     peer_id: String,
 }
 
-type Users = Arc<RwLock<HashMap<String, Addr<MyWs>>>>;
+type Users = Arc<RwLock<HashMap<String, (Addr<MyWs>, MyAddr)>>>;
 
 pub struct WebsocketServer {
-    node: Node,
-    users: Users
+    users: Users,
+    config: Config
 }
 
 #[async_trait]
-impl NetworkAdapter for WebsocketServer {
-    fn new(node: Node) -> Self {
-        WebsocketServer {
-            node,
-            users: Users::default()
-        }
-    }
-
-    async fn start(&self) {
-        let node = self.node.clone();
+impl MyActor for WebsocketServer {
+    async fn pre_start(&mut self, ctx: &ActorContext) {
+        info!("WebsocketServer adapter starting");
         let users = self.users.clone();
-        let peer_id = node.get_peer_id();
-        let mut node_clone = node.clone();
-        let users_clone = users.clone();
 
-        if node.config.read().unwrap().stats {
+        /*
+        let users_clone = users.clone();
+        let update_stats = self.config.stats;
+        if update_stats {
             tokio::task::spawn(async move {
-                loop {
+                loop { // TODO break
                     let users = users_clone.read().await;
                     node_clone.get("node_stats").get(&peer_id).get("websocket_server_connections").put(users.len().to_string().into());
                     sleep(tokio::time::Duration::from_millis(1000)).await;
                 }
             });
         }
+         */
 
-        Self::actix_start(node, users).await.unwrap();
+        let users = self.users.clone();
+        let config = self.config.clone();
+        let router = ctx.router.clone();
+        let peer_id = ctx.peer_id.clone();
+        let addr = ctx.addr.clone();
+        tokio::spawn(async move {
+            Self::actix_start(config, users, peer_id, router, addr).await.unwrap(); // TODO close when receiver dropped
+        });
+    }
+
+    async fn handle(&mut self, message: MyMessage, ctx: &ActorContext) {
+        match message {
+            MyMessage::Get(ref msg) => { self.broadcast(message).await; },
+            MyMessage::Put(ref msg) => { self.broadcast(message).await; },
+            _ => {}
+        }
     }
 }
 
 impl WebsocketServer {
-    fn actix_start(node: Node, users: Users) -> actix_web::dev::Server {
-        let config = node.config.read().unwrap();
+    pub fn new(config: Config) -> Self {
+        WebsocketServer {
+            users: Users::default(),
+            config
+        }
+    }
+
+    fn actix_start(config: Config, users: Users, peer_id: String, router: MyAddr, addr: Weak<MyAddr>) -> actix_web::dev::Server {
         let url = format!("0.0.0.0:{}", config.websocket_server_port);
 
-        let node_clone = node.clone();
         let users_clone = users.clone();
+        let addr = (*addr.upgrade().unwrap()).clone();
+        let config_clone = config.clone();
         let server = HttpServer::new(move || {
-            let node = node_clone.clone();
             let users = users_clone.clone();
-            let peer_id = node.get_peer_id();
+            let router = router.clone();
+            let peer_id = peer_id.clone();
+            let addr = Some(addr.clone());
+            let config_clone = config_clone.clone();
             App::new()
-                .app_data(Data::new(AppState { peer_id }))
+                .app_data(Data::new(AppState { peer_id: peer_id.clone() }))
                 .wrap(middleware::Logger::default())
                 .route("/peer_id", web::get().to(Self::peer_id))
                 .service(fs::Files::new("/stats", "assets/stats").index_file("index.html"))
                 .route("/gun", web::get().to(
                     move |a, b| {
-                        Self::user_connected(a, b, node.clone(), users.clone())
+                        Self::user_connected(a, b, config_clone.websocket_frame_max_size, users.clone(), addr.clone(), peer_id.clone(), router.clone())
                     }
                 ))
                 .service(fs::Files::new("/", "assets/iris").index_file("index.html"))
         });
-
-        Self::send_outgoing_msgs(&node, &users);
 
         if let Some(cert_path) = &config.cert_path {
             if let Some(key_path) = &config.key_path {
@@ -227,68 +266,45 @@ impl WebsocketServer {
         server.bind(url).unwrap().run()
     }
 
-    async fn send_msg_to(msg_str: &String, recipient: &String, users: &Users) {
-        let users = users.read().await;
-        if let Some(addr) = users.get(recipient) {
-            let res = addr.try_send(OutgoingMessage { str: msg_str.clone() }); // TODO break on Closed error only
-            if let Err(e) = res {
+    async fn broadcast(&self, message: MyMessage) {
+        let msg_str = message.clone().to_string();
+        for (actix_addr, my_addr) in self.users.read().await.values() {
+            if message.is_from(my_addr) {
+                continue;
+            }
+            if let Err(e) = actix_addr.try_send(OutgoingMessage { str: msg_str.clone() }) {
                 error!("error sending outgoing msg to websocket actor: {}", e);
             }
         }
-    }
-
-    async fn send_outgoing_msg(msg_str: String, recipients: Option<HashSet<String>>, users: &Users) {
-        match recipients {
-            Some(recipients) => {
-                debug!("sending message to recipients: {:?}", recipients);
-                for recipient in recipients.iter() {
-                    Self::send_msg_to(&msg_str, &recipient, users).await;
-                }
-            },
-            _ => {
-                for recipient in users.read().await.keys() { // TODO cleanup, basically the same code as above
-                    Self::send_msg_to(&msg_str, recipient, users).await;
-                }
-            }
-        };
-    }
-
-    fn send_outgoing_msgs(node: &Node, users: &Users) {
-        let mut rx = node.get_outgoing_msg_receiver();
-        let users = users.clone();
-        tokio::task::spawn(async move {
-            loop {
-                if let Ok(message) = rx.recv().await {
-                    match message {
-                        GunMessage::Get(msg) => { Self::send_outgoing_msg(msg.to_string(), msg.recipients, &users).await; },
-                        GunMessage::Put(msg) => { Self::send_outgoing_msg(msg.to_string(), msg.recipients, &users).await; },
-                        _ => {}
-                    }
-
-                }
-            }
-        });
     }
 
     async fn peer_id(data: web::Data<AppState>) -> String {
         data.peer_id.clone()
     }
 
-    async fn user_connected(req: HttpRequest, stream: web::Payload, node: Node, users: Users) -> Result<HttpResponse, Error> {
+    async fn user_connected(req: HttpRequest,
+                            stream: web::Payload,
+                            websocket_frame_max_size: usize,
+                            users: Users,
+                            my_addr: Option<MyAddr>,
+                            peer_id: String,
+                            router: MyAddr,
+    ) -> Result<HttpResponse, Error> {
         // Use a counter to assign a new unique ID for this user.
         let id = NEXT_USER_ID.fetch_add(1, Ordering::Relaxed);
         let id = format!("ws_server_{}", id).to_string();
 
         let ws = MyWs {
-            node: node.clone(),
             id,
             users,
-            incoming_msg_sender: node.get_incoming_msg_sender(),
+            my_addr,
+            actix_addr: None,
+            peer_id,
+            router: router.clone(),
             heartbeat: Instant::now()
         };
 
-        let config = node.config.read().unwrap();
-        let resp = start_with_codec(ws, &req, stream, Codec::new().max_size(config.websocket_frame_max_size));
+        let resp = start_with_codec(ws, &req, stream, Codec::new().max_size(websocket_frame_max_size));
 
         //println!("{:?}", resp);
         resp
