@@ -16,7 +16,7 @@ static SEEN_MSGS_MAX_SIZE: usize = 10000;
 
 struct SeenGetMessage {
     from: Addr,
-    last_reply_checksum: Option<String>,
+    last_reply_checksum: Option<i32>,
 }
 
 pub struct Router {

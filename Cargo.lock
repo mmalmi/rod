@@ -927,6 +927,7 @@ dependencies = [
  "futures",
  "futures-channel",
  "futures-util",
+ "java-utils",
  "log",
  "multicast-socket",
  "openssl",
@@ -1057,6 +1058,12 @@ name = "itoa"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1aab8fc367588b89dcee83ab0fd66b72b50b72fa1904d7095045ace2b0c81c35"
+
+[[package]]
+name = "java-utils"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d297521cbb9571836820b10efa36a96e09889ccca4f6a6091a22f69e6a8a34bf"
 
 [[package]]
 name = "jobserver"

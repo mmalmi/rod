@@ -2,9 +2,10 @@ use serde_json::{json, Value as SerdeJsonValue};
 use crate::utils::random_string;
 use std::collections::{HashSet, BTreeMap};
 use crate::types::*;
-use log::{debug};
+use log::{debug, info};
 use std::convert::TryFrom;
 use crate::actor::Addr;
+use java_utils::HashCode;
 
 #[derive(Clone, Debug)]
 pub struct Get {
@@ -52,7 +53,7 @@ pub struct Put {
     pub recipients: Option<HashSet<String>>,
     pub in_response_to: Option<String>,
     pub updated_nodes: BTreeMap<String, Children>,
-    pub checksum: Option<String>,
+    pub checksum: Option<i32>,
     pub json_str: Option<String>
 }
 impl Put {
@@ -88,10 +89,6 @@ impl Put {
             json["@"] = json!(in_response_to);
         }
 
-        if let Some(checksum) = &self.checksum {
-            json["##"] = json!(checksum);
-        }
-
         for (node_id, children) in self.updated_nodes.iter() {
             let node = &mut json["put"][node_id];
             node["_"] = json!({
@@ -103,6 +100,15 @@ impl Put {
                 node[k] = v.value.clone().into();
             }
         }
+
+        let checksum = match &self.checksum {
+            Some(s) => *s,
+            _ => {
+                let put_str = json["put"].to_string();
+                put_str.hash_code()
+            }
+        };
+        json["##"] = json!(checksum);
 
         json.to_string()
     }
@@ -153,7 +159,10 @@ impl Message {
             _ => None
         };
         let checksum = match json.get("##") {
-            Some(checksum) => Some(checksum.to_string()),
+            Some(checksum) => match checksum.as_i64() {
+                Some(checksum) => Some(checksum as i32),
+                _ => None,
+            },
             _ => None
         };
         let mut updated_nodes = BTreeMap::<String, Children>::new();
