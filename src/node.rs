@@ -129,32 +129,33 @@ impl Node {
             actor_context: ActorContext::new(random_string(16))
         };
 
-        let node_clone = node.clone();
-        tokio::spawn(async move {
-            let (incoming_tx, incoming_rx) = unbounded_channel::<Message>();
-            let addr = Addr::new(incoming_tx);
-            let config = node.config.read().unwrap().clone();
-            let router = Box::new(Router::new(config));
-            let router_addr = node.actor_context.start_router(router);
-            *node.router.write().unwrap() = Some(router_addr);
-            *node.addr.write().unwrap() = Some(addr);
-            node.listen(incoming_rx).await
-        });
-        node_clone
+        let (incoming_tx, incoming_rx) = unbounded_channel::<Message>();
+        let addr = Addr::new(incoming_tx);
+        let config = node.config.read().unwrap().clone();
+        let router = Box::new(Router::new(config));
+        let router_addr = node.actor_context.start_router(router);
+        *node.router.write().unwrap() = Some(router_addr);
+        *node.addr.write().unwrap() = Some(addr);
+        node.listen(incoming_rx);
+
+        node
     }
 
     fn handle_put(&mut self, msg: Put) {
         // notify subscriptions
     }
 
-    async fn listen(&mut self, mut receiver: UnboundedReceiver<Message>) {
-        while let Some(msg) = receiver.recv().await { // TODO shutdown
-            debug!("incoming message");
-            match msg {
-                Message::Put(put) => self.handle_put(put),
-                _ => {}
+    fn listen(&mut self, mut receiver: UnboundedReceiver<Message>) {
+        let mut clone = self.clone();
+        self.actor_context.abort_on_stop(tokio::spawn(async move {
+            while let Some(msg) = receiver.recv().await { // TODO shutdown
+                debug!("incoming message");
+                match msg {
+                    Message::Put(put) => clone.handle_put(put),
+                    _ => {}
+                }
             }
-        }
+        }));
     }
 
     fn new_child(&self, key: String) -> Node {
@@ -168,7 +169,7 @@ impl Node {
         let new_child_uid = path.join("/");
         debug!("new_child_uid {}", new_child_uid);
         let (sender, receiver) = unbounded_channel::<Message>();
-        let node = Self {
+        let mut node = Self {
             path,
             config: self.config.clone(),
             children: Arc::new(RwLock::new(BTreeMap::new())),
@@ -180,8 +181,7 @@ impl Node {
             addr: Arc::new(RwLock::new(Some(Addr::new(sender)))),
             actor_context: self.actor_context.clone()
         };
-        let mut clone = node.clone();
-        tokio::spawn(async move { clone.listen(receiver).await });
+        node.listen(receiver);
         self.children.write().unwrap().insert(key, node.clone());
         node
     }

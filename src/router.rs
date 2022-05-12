@@ -2,7 +2,7 @@ use crate::message::{Message, Put, Get};
 use crate::actor::{Actor, ActorContext, Addr};
 use crate::{Config};
 use crate::utils::{BoundedHashSet, BoundedHashMap};
-use crate::adapters::{SledStorage, MemoryStorage, WebsocketServer, OutgoingWebsocketManager, Multicast};
+use crate::adapters::{WsServer2, SledStorage, MemoryStorage, WebsocketServer, OutgoingWebsocketManager, Multicast};
 use std::sync::atomic::{AtomicUsize, Ordering};
 //use std::time::Instant;
 //use sysinfo::{ProcessorExt, System, SystemExt};
@@ -40,7 +40,7 @@ impl Actor for Router {
             self.network_adapters.insert(addr);
         }
         if config.websocket_server {
-            let addr = ctx.start_actor(Box::new(WebsocketServer::new(config.clone())));
+            let addr = ctx.start_actor(Box::new(WsServer2::new(config.clone())));
             self.network_adapters.insert(addr);
         }
         if config.sled_storage {
@@ -218,8 +218,7 @@ impl Router {
                                 return true;
                             }
                             already_sent_to.insert(addr.clone());
-                            addr.sender.send(Message::Put(put.clone())).is_ok();
-                            true
+                            addr.sender.send(Message::Put(put.clone())).is_ok()
                         })
                     }
                 }

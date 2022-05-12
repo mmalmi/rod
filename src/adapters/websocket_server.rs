@@ -100,7 +100,7 @@ impl Actor for MyWs {
         let helper = MyWsHelper { addr: addr.clone() };
         self.ctx.start_actor(Box::new(helper));
 
-        tokio::task::spawn(async move {
+        tokio::spawn(async move {
             let mut users = users.write().await;
             users.insert(id.clone(), (addr, my_addr));
         });
@@ -109,7 +109,7 @@ impl Actor for MyWs {
     fn stopping(&mut self, _ctx: &mut ws::WebsocketContext<Self>) -> Running {
         let users = self.users.clone();
         let id = self.id.clone();
-        tokio::task::spawn(async move {
+        tokio::spawn(async move {
             let mut users = users.write().await;
             users.remove(&id);
         });
@@ -183,7 +183,7 @@ impl MyActor for WebsocketServer {
         let users_clone = users.clone();
         let update_stats = self.config.stats;
         if update_stats {
-            tokio::task::spawn(async move {
+            tokio::spawn(async move {
                 loop { // TODO break
                     let users = users_clone.read().await;
                     node_clone.get("node_stats").get(&peer_id).get("websocket_server_connections").put(users.len().to_string().into());
@@ -195,10 +195,10 @@ impl MyActor for WebsocketServer {
 
         let users = self.users.clone();
         let config = self.config.clone();
-        let ctx = ctx.clone();
-        tokio::spawn(async move {
-            Self::actix_start(config, users, ctx).await.unwrap(); // TODO close when receiver dropped
-        });
+        let ctx2 = ctx.clone();
+        ctx.abort_on_stop(tokio::spawn(async move {
+            Self::actix_start(config, users, ctx2).await.unwrap();
+        }));
     }
 
     async fn handle(&mut self, message: MyMessage, ctx: &ActorContext) {

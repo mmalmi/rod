@@ -103,7 +103,7 @@ async fn main() {
 
         let websocket_server = matches.value_of("ws-server").unwrap() == "true";
 
-        let mut node = Node::new_with_config(Config {
+        let node = Node::new_with_config(Config {
             outgoing_websocket_peers,
             rust_channel_size,
             websocket_server,

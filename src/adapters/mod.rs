@@ -1,10 +1,12 @@
 mod memory_storage;
 mod sled_storage;
-pub mod websocket_server;
+mod websocket_server;
+mod tungstenite_ws_server;
 mod websocket_client;
 mod multicast;
 pub use memory_storage::MemoryStorage;
 pub use sled_storage::SledStorage;
 pub use multicast::Multicast;
 pub use websocket_server::{MyWs, WebsocketServer, OutgoingMessage};
+pub use tungstenite_ws_server::WsServer2;
 pub use websocket_client::OutgoingWebsocketManager;

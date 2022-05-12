@@ -6,6 +6,8 @@ use std::sync::{Arc, RwLock};
 use crate::message::Message;
 use crate::utils::random_string;
 use tokio::sync::mpsc::{UnboundedSender, UnboundedReceiver, Receiver, Sender, channel, unbounded_channel};
+use tokio::task::JoinHandle;
+use futures::Future;
 
 // TODO: stop signal. Or just call tokio runtime stop / abort? https://docs.rs/tokio/1.18.2/tokio/task/struct.JoinHandle.html#method.abort
 
@@ -48,6 +50,7 @@ pub struct ActorContext {
     pub peer_id: String,
     pub router: Addr,
     stop_signals: Arc<RwLock<Vec<Sender<()>>>>,
+    task_handles: Arc<RwLock<Vec<JoinHandle<()>>>>,
     pub addr: Addr,
 }
 impl ActorContext {
@@ -57,6 +60,7 @@ impl ActorContext {
         Self {
             addr: noop.clone(),
             stop_signals: Arc::new(RwLock::new(Vec::new())),
+            task_handles: Arc::new(RwLock::new(Vec::new())),
             peer_id,
             router: noop
         }
@@ -66,6 +70,7 @@ impl ActorContext {
         Self {
             addr,
             stop_signals: Arc::new(RwLock::new(vec![stop_signal])),
+            task_handles: Arc::new(RwLock::new(Vec::new())),
             peer_id: self.peer_id.clone(), // arc rwlock?
             router: self.router.clone()
         }
@@ -77,6 +82,10 @@ impl ActorContext {
 
     pub fn start_router(&self, actor: Box<dyn Actor>) -> Addr {
         self.start_actor_or_router(actor, true)
+    }
+
+    pub fn abort_on_stop(&self, handle: JoinHandle<()>) {
+        self.task_handles.write().unwrap().push(handle);
     }
 
     fn start_actor_or_router(&self, mut actor: Box<dyn Actor>, is_router: bool) -> Addr {
@@ -93,6 +102,9 @@ impl ActorContext {
     }
 
     pub fn stop(&self) {
+        for handle in self.task_handles.read().unwrap().iter() {
+            handle.abort();
+        }
         for signal in self.stop_signals.read().unwrap().iter() {
             let _ = signal.try_send(());
         }
