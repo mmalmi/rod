@@ -23,6 +23,7 @@ pub struct Router {
     config: Config,
     storage_adapters: HashSet<Addr>,
     network_adapters: HashSet<Addr>,
+    server_peers: HashSet<Addr>, // temporary, so we can forward stuff to outgoing websocket peers (servers)
     seen_messages: BoundedHashSet,
     seen_get_messages: BoundedHashMap<String, SeenGetMessage>,
     subscribers_by_topic: HashMap<String, HashSet<Addr>>,
@@ -53,6 +54,7 @@ impl Actor for Router {
         if config.outgoing_websocket_peers.len() > 0 {
             let actor = OutgoingWebsocketManager::new(config.clone());
             let addr = ctx.start_actor(Box::new(actor));
+            self.server_peers.insert(addr.clone());
             self.network_adapters.insert(addr);
         }
 
@@ -81,6 +83,7 @@ impl Router {
             config,
             storage_adapters: HashSet::new(),
             network_adapters: HashSet::new(),
+            server_peers: HashSet::new(),
             seen_messages: BoundedHashSet::new(SEEN_MSGS_MAX_SIZE),
             seen_get_messages: BoundedHashMap::new(SEEN_MSGS_MAX_SIZE),
             subscribers_by_topic: HashMap::new(),
@@ -140,9 +143,15 @@ impl Router {
             let _ = addr.sender.send(Message::Get(get.clone()));
         }
 
+        // Send to server peers
+        for addr in self.server_peers.iter() {
+            addr.sender.send(Message::Get(get.clone()));
+        }
+
         // Ask network
         let mut errored = HashSet::new();
         if let Some(topic_subscribers) = self.subscribers_by_topic.get(topic) {
+            // should have a list of all peers and send to those who are the likeliest to respond (MANET)
             let mut rng = thread_rng();
             let sample = topic_subscribers.iter().choose_multiple(&mut rng, 4);
             debug!("sending get to a random sample of subscribers of size {}", sample.len());
@@ -151,7 +160,7 @@ impl Router {
                     continue;
                 }
                 if let Err(_) = addr.sender.send(Message::Get(get.clone())) {
-                    errored.insert(addr.clone());
+                    //errored.insert(addr.clone());
                 }
             }
         }
@@ -191,6 +200,11 @@ impl Router {
                     let _ = addr.sender.send(Message::Put(put.clone()));
                 }
 
+                // Send to server peers
+                for addr in self.server_peers.iter() {
+                    addr.sender.send(Message::Put(put.clone()));
+                }
+
                 // Relay to subscribers
                 let mut already_sent_to = HashSet::new();
                 for node_id in put.clone().updated_nodes.keys() {
@@ -204,7 +218,8 @@ impl Router {
                                 return true;
                             }
                             already_sent_to.insert(addr.clone());
-                            addr.sender.send(Message::Put(put.clone())).is_ok()
+                            addr.sender.send(Message::Put(put.clone())).is_ok();
+                            true
                         })
                     }
                 }
