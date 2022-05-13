@@ -13,7 +13,8 @@ use tokio::sync::RwLock;
 
 use futures_util::{future, StreamExt, TryStreamExt};
 use log::{info, error, debug};
-use native_tls::{Identity, TlsAcceptor, TlsStream};
+use tokio_native_tls::native_tls::{Identity};
+use tokio_native_tls::{TlsAcceptor, TlsStream};
 use tokio::net::{TcpListener, TcpStream};
 
 use tokio_tungstenite::{WebSocketStream, MaybeTlsStream};
@@ -63,6 +64,13 @@ impl Actor for WsServer {
 
     async fn pre_start(&mut self, ctx: &ActorContext) {
         let addr = format!("0.0.0.0:{}", self.config.websocket_server_port).to_string();
+        let clients = self.clients.clone();
+        let ctx = ctx.clone();
+
+        // Create the event loop and TCP listener we'll accept connections on.
+        let try_socket = TcpListener::bind(&addr).await;
+        let listener = try_socket.expect("Failed to bind");
+        info!("Listening on: {}", addr);
 
         if let Some(cert_path) = &self.config.cert_path {
             let mut cert_file = File::open(cert_path).unwrap();
@@ -75,20 +83,29 @@ impl Actor for WsServer {
             key_file.read_to_end(&mut key).unwrap();
 
             let identity = Identity::from_pkcs8(&cert, &key).unwrap();
+            let acceptor = tokio_native_tls::native_tls::TlsAcceptor::new(identity).unwrap();
+            let acceptor = tokio_native_tls::TlsAcceptor::from(acceptor);
+            let acceptor = Arc::new(acceptor);
+
+            ctx.clone().abort_on_stop(tokio::spawn(async move {
+                while let Ok((stream, _)) = listener.accept().await {
+                    let acceptor = acceptor.clone();
+                    let stream = acceptor.accept(stream).await;
+                    match stream {
+                        Ok(stream) => {
+                            Self::handle_stream(MaybeTlsStream::NativeTls(stream), &ctx, clients.clone()).await;
+                        },
+                        _ => {}
+                    }
+                }
+            }));
+        } else {
+            ctx.clone().abort_on_stop(tokio::spawn(async move {
+                while let Ok((stream, _)) = listener.accept().await {
+                    Self::handle_stream(MaybeTlsStream::Plain(stream), &ctx, clients.clone()).await;
+                }
+            }));
         }
-
-        // Create the event loop and TCP listener we'll accept connections on.
-        let try_socket = TcpListener::bind(&addr).await;
-        let listener = try_socket.expect("Failed to bind");
-        info!("Listening on: {}", addr);
-
-        let clients = self.clients.clone();
-        let ctx = ctx.clone();
-        tokio::spawn(async move {
-            while let Ok((stream, _)) = listener.accept().await {
-                Self::handle_stream(MaybeTlsStream::Plain(stream), &ctx, clients.clone()).await;
-            }
-        });
     }
 }
 
