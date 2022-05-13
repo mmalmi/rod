@@ -41,7 +41,7 @@ impl Actor for WsServer2 {
     }
 
     async fn pre_start(&mut self, ctx: &ActorContext) {
-        let addr = "0.0.0.0:4944".to_string();
+        let addr = format!("0.0.0.0:{}", self.config.websocket_server_port).to_string();
 
         // Create the event loop and TCP listener we'll accept connections on.
         let try_socket = TcpListener::bind(&addr).await;
@@ -111,7 +111,7 @@ impl Actor for WsConn {
                             }
                         },
                         Err(e) => {
-                            error!("{}", e);
+                            //error!("{}", e);
                         }
                     };
                 }
