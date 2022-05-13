@@ -1,39 +1,60 @@
 use crate::message::Message;
 use crate::actor::{Actor, Addr, ActorContext};
 use crate::Config;
-use futures_util::stream::{SplitSink, SplitStream};
+use futures_util::stream::{Stream, SplitSink, SplitStream};
 use futures_util::SinkExt;
 
 use async_trait::async_trait;
 use std::collections::HashSet;
 use std::sync::{Arc};
+use std::fs::File;
+use std::io::Read;
 use tokio::sync::RwLock;
 
 use futures_util::{future, StreamExt, TryStreamExt};
 use log::{info, error, debug};
+use native_tls::{Identity, TlsAcceptor, TlsStream};
 use tokio::net::{TcpListener, TcpStream};
 
-use tokio_tungstenite::WebSocketStream;
+use tokio_tungstenite::{WebSocketStream, MaybeTlsStream};
 use tokio_tungstenite::tungstenite::{Message as WsMessage};
 
-type WsSender = SplitSink<WebSocketStream<tokio::net::TcpStream>, WsMessage>;
-type WsReceiver = SplitStream<WebSocketStream<tokio::net::TcpStream>>;
+type WsStream = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
+type WsSender = SplitSink<WsStream, WsMessage>;
+type WsReceiver = SplitStream<WsStream>;
 type Clients = Arc<RwLock<HashSet<Addr>>>;
 
-pub struct WsServer2 {
+pub struct WsServer {
     config: Config,
     clients: Clients
 }
-impl WsServer2 {
+impl WsServer {
     pub fn new(config: Config) -> Self {
         Self {
             config,
             clients: Clients::default()
         }
     }
+
+    async fn handle_stream(stream: MaybeTlsStream<tokio::net::TcpStream>, ctx: &ActorContext, clients: Clients) {
+        let ws_stream = match tokio_tungstenite::accept_async(stream).await {
+            Ok(s) => s,
+            Err(e) => {
+                // suppress errors from receiving normal http requests
+                // error!("Error during the websocket handshake occurred: {}", e);
+                return;
+            }
+        };
+
+        let (sender, receiver) = ws_stream.split();
+
+        let conn = WsConn::new(sender, receiver);
+        let addr = ctx.start_actor(Box::new(conn));
+        clients.write().await.insert(addr);
+    }
 }
 #[async_trait]
-impl Actor for WsServer2 {
+impl Actor for WsServer {
     async fn handle(&mut self, msg: Message, ctx: &ActorContext) {
         for conn in self.clients.read().await.iter() {
             let _ = conn.sender.send(msg.clone());
@@ -42,6 +63,19 @@ impl Actor for WsServer2 {
 
     async fn pre_start(&mut self, ctx: &ActorContext) {
         let addr = format!("0.0.0.0:{}", self.config.websocket_server_port).to_string();
+
+        if let Some(cert_path) = &self.config.cert_path {
+            let mut cert_file = File::open(cert_path).unwrap();
+            let mut cert = vec![];
+            cert_file.read_to_end(&mut cert).unwrap();
+
+            let key_path = self.config.key_path.as_ref().unwrap();
+            let mut key_file = File::open(key_path).unwrap();
+            let mut key = vec![];
+            key_file.read_to_end(&mut key).unwrap();
+
+            let identity = Identity::from_pkcs8(&cert, &key).unwrap();
+        }
 
         // Create the event loop and TCP listener we'll accept connections on.
         let try_socket = TcpListener::bind(&addr).await;
@@ -52,30 +86,13 @@ impl Actor for WsServer2 {
         let ctx = ctx.clone();
         tokio::spawn(async move {
             while let Ok((stream, _)) = listener.accept().await {
-                let addr = stream.peer_addr().expect("connected streams should have a peer address");
-                info!("Peer address: {}", addr);
-
-                let ws_stream = match tokio_tungstenite::accept_async(stream).await {
-                    Ok(s) => s,
-                    Err(e) => {
-                        // suppress errors from receiving normal http requests
-                        // error!("Error during the websocket handshake occurred: {}", e);
-                        continue;
-                    }
-                };
-
-                info!("New WebSocket connection: {}", addr);
-                let (sender, receiver) = ws_stream.split();
-
-                let conn = WsConn::new(sender, receiver);
-                let addr = ctx.start_actor(Box::new(conn));
-                clients.write().await.insert(addr);
+                Self::handle_stream(MaybeTlsStream::Plain(stream), &ctx, clients.clone()).await;
             }
         });
     }
 }
 
-struct WsConn {
+pub struct WsConn {
     sender: WsSender,
     receiver: Option<WsReceiver>
 }
@@ -119,8 +136,4 @@ impl Actor for WsConn {
             }).await;
         }));
     }
-}
-
-async fn accept_connection(stream: TcpStream) {
-
 }
