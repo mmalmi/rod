@@ -115,6 +115,10 @@ impl Actor for SledStorage {
     async fn pre_start(&mut self, _context: &ActorContext) {
         info!("SledStorage adapter starting");
     }
+
+    async fn stopping(&mut self, _context: &ActorContext) {
+        info!("SledStorage adapter stopping");
+    }
 }
 
 

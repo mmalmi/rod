@@ -134,7 +134,6 @@ async fn main() {
             if let Some(tx) = tx_mutex.lock().unwrap().take() {
                 let _ = tx.send(()).unwrap();
             }
-            std::process::exit(0);
         }).expect("Error setting Ctrl-C handler");
 
         cancel_rx.await;
