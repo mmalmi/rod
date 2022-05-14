@@ -132,7 +132,7 @@ impl Node {
         let (incoming_tx, incoming_rx) = unbounded_channel::<Message>();
         let addr = Addr::new(incoming_tx);
         let config = node.config.read().unwrap().clone();
-        let router = Box::new(Router::new(config));
+        let router = Box::new(Router::new(config)); // actually, we should communicate with MemoryStorage, which has a special role in maintaining our version of the current state? MemoryStorage can then communicate with router as needed.
         let router_addr = node.actor_context.start_router(router);
         *node.router.write().unwrap() = Some(router_addr);
         *node.addr.write().unwrap() = Some(addr);
@@ -141,13 +141,24 @@ impl Node {
         node
     }
 
-    fn handle_put(&mut self, msg: Put) {
-        // notify subscriptions
+    fn handle_put(&mut self, put: Put) { // TODO accept puts only from our memory adapter, which is supposed to serve the latest version. Or store latest NodeData in Node?
+        for (node_id, node_data) in put.updated_nodes {
+            debug!("hi {}", node_id);
+            if node_id == *self.uid.read().unwrap() {
+                for (child, child_data) in node_data {
+                    if let Some(child) = self.children.read().unwrap().get(&child) {
+                        child.on_sender.send(child_data.value.clone());
+                    }
+                    self.map_sender.send((child.to_string(), child_data.value.clone()));
+                }
+            }
+        }
     }
 
     fn listen(&mut self, mut receiver: UnboundedReceiver<Message>) {
         let mut clone = self.clone();
         self.actor_context.abort_on_stop(tokio::spawn(async move {
+            panic!("what? not executing");
             while let Some(msg) = receiver.recv().await { // TODO shutdown
                 debug!("incoming message");
                 match msg {
@@ -273,9 +284,9 @@ mod tests {
     // TODO proper test
     // TODO test .map()
     // TODO benchmark
-    #[test]
-    fn it_doesnt_error() {
-        //setup();
+    #[tokio::test]
+    async fn it_doesnt_error() {
+        setup();
         let mut gun = Node::new_with_config(Config {
             memory_storage: true,
             sled_storage: false,
@@ -302,7 +313,7 @@ mod tests {
 
     #[tokio::test]
     async fn first_put_then_get() {
-        //setup();
+        setup();
         let mut gun = Node::new_with_config(Config {
             memory_storage: true,
             sled_storage: false,

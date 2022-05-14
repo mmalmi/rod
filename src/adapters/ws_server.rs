@@ -14,7 +14,6 @@ use tokio::sync::RwLock;
 use futures_util::{future, StreamExt, TryStreamExt};
 use log::{info, error, debug};
 use tokio_native_tls::native_tls::{Identity};
-use tokio_native_tls::{TlsAcceptor, TlsStream};
 use tokio::net::{TcpListener, TcpStream};
 
 use tokio_tungstenite::{WebSocketStream, MaybeTlsStream};

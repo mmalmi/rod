@@ -2,10 +2,13 @@ use serde_json::{json, Value as SerdeJsonValue};
 use crate::utils::random_string;
 use std::collections::{HashSet, BTreeMap};
 use crate::types::*;
-use log::{debug, info};
+use log::{debug, info, error};
 use std::convert::TryFrom;
 use crate::actor::Addr;
 use java_utils::HashCode;
+use ring::signature::{self, KeyPair};
+use jsonwebtoken::jwk::*;
+use jsonwebtoken::{Header, Algorithm};
 
 #[derive(Clone, Debug)]
 pub struct Get {
@@ -146,6 +149,80 @@ impl Message {
         }
     }
 
+    fn verify_sig(node_id: &str, value: &GunValue) -> Result<(), &'static str> {
+        let text = match value {
+            GunValue::Text(t) => t,
+            _ => { return Err("Values in user space must be signed strings"); }
+        };
+        let json: SerdeJsonValue = match serde_json::from_str(text) {
+            Ok(json) => json,
+            Err(_) => { return Err("Failed to parse signature as JSON"); }
+        };
+        let obj = match json.as_object() {
+            Some(obj) => obj,
+            _ => { return Err("signature json was not an object"); }
+        };
+        let signed_str = match obj.get(":") {
+            Some(s) => s.as_str(),
+            _ => { return Err("no signed string (:) in signature json")}
+        };
+        let signed_str = match signed_str {
+            Some(s) => s,
+            _ => { return Err("signed value (:) in signature json was not a string")}
+        };
+        let signature = match obj.get("~") {
+            Some(s) => s.as_str(),
+            _ => { return Err("no signature (~) in signature json")}
+        };
+        let signature = match signature {
+            Some(s) => s,
+            _ => { return Err("signature (~) in signature json was not a string")}
+        };
+
+        // TODO calculate the hash of signed_str
+        // https://github.com/amark/gun/blob/master/sea.js#L443
+        // json web key library useful? or just decode the base64 str?
+
+        let key = &node_id.split("/").next().unwrap()[1..];
+        let mut split = key.split(".");
+        let x = split.next().unwrap().to_string();
+        let y = match split.next() {
+            Some(y) => y.to_string(),
+            _ => { return Err("invalid key string"); }
+        };
+
+        let algorithm = AlgorithmParameters::EllipticCurve(EllipticCurveKeyParameters {
+            key_type: EllipticCurveKeyType::EC,
+            curve: EllipticCurve::P256,
+            x,
+            y
+        });
+        let jwk = Jwk {
+            common: CommonParameters::default(),
+            algorithm,
+        };
+        let header = Header {
+            jwk: Some(jwk),
+            alg: Algorithm::ES256,
+            ..Header::default()
+        };
+
+        let peer_public_key = signature::UnparsedPublicKey::new(
+            &signature::ECDSA_P256_SHA256_FIXED,
+            key.as_bytes()
+        );
+        match peer_public_key.verify(signed_str.as_bytes(), signature.as_bytes()) {
+            Ok(_) => {
+                info!("good signature :)");
+                Ok(())
+            },
+            Err(_) => {
+                error!("bad signature {} of {}", signature, signed_str);
+                Err("bad signature")
+            }
+        }
+    }
+
     fn from_put_obj(json: &SerdeJsonValue, json_str: String, msg_id: String, from: Addr) -> Result<Self, &'static str> {
         let obj = match json.get("put").unwrap().as_object() {
             Some(obj) => obj,
@@ -190,6 +267,22 @@ impl Message {
                     Ok(v) => v,
                     Err(e) => { return Err(e) }
                 };
+
+                if let Some(first_letter) = node_id.chars().next() {
+                    match first_letter {
+                        '~' => { // signed data
+                            /*
+                            if let Err(e) = Self::verify_sig(node_id, &value) {
+                                return Err(e);
+                            }*/
+                        },
+                        '#' => { // content-hash addressed data
+                            // check hash
+                        },
+                        _ => {}
+                    };
+                }
+
                 children.insert(child_key.to_string(), NodeData { updated_at, value });
             }
             updated_nodes.insert(node_id.to_string(), children);
