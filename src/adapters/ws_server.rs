@@ -93,13 +93,17 @@ impl Actor for WsServer {
                 loop {
                     if let Ok((stream, _)) = listener.accept().await {
                         let acceptor = acceptor.clone();
-                        let stream = acceptor.accept(stream).await;
-                        match stream {
-                            Ok(stream) => {
-                                Self::handle_stream(MaybeTlsStream::NativeTls(stream), &ctx, clients.clone()).await;
-                            },
-                            _ => {}
-                        }
+                        let clients = clients.clone();
+                        let ctx = ctx.clone();
+                        tokio::spawn(async move {
+                            let stream = acceptor.accept(stream).await;
+                            match stream {
+                                Ok(stream) => {
+                                    Self::handle_stream(MaybeTlsStream::NativeTls(stream), &ctx, clients.clone()).await;
+                                },
+                                _ => {}
+                            }
+                        });
                     }
                 }
             }));
@@ -110,6 +114,10 @@ impl Actor for WsServer {
                 }
             }));
         }
+    }
+
+    async fn stopping(&mut self, _context: &ActorContext) {
+        info!("WsServer stopping");
     }
 }
 
