@@ -58,7 +58,9 @@ impl WsServer {
 impl Actor for WsServer {
     async fn handle(&mut self, msg: Message, ctx: &ActorContext) {
         for conn in self.clients.read().await.iter() {
-            let _ = conn.sender.send(msg.clone());
+            if let Err(_) = conn.sender.send(msg.clone()) {
+                self.clients.write().await.remove(conn);
+            }
         }
     }
 
@@ -88,14 +90,16 @@ impl Actor for WsServer {
             let acceptor = Arc::new(acceptor);
 
             ctx.clone().abort_on_stop(tokio::spawn(async move {
-                while let Ok((stream, _)) = listener.accept().await {
-                    let acceptor = acceptor.clone();
-                    let stream = acceptor.accept(stream).await;
-                    match stream {
-                        Ok(stream) => {
-                            Self::handle_stream(MaybeTlsStream::NativeTls(stream), &ctx, clients.clone()).await;
-                        },
-                        _ => {}
+                loop {
+                    if let Ok((stream, _)) = listener.accept().await {
+                        let acceptor = acceptor.clone();
+                        let stream = acceptor.accept(stream).await;
+                        match stream {
+                            Ok(stream) => {
+                                Self::handle_stream(MaybeTlsStream::NativeTls(stream), &ctx, clients.clone()).await;
+                            },
+                            _ => {}
+                        }
                     }
                 }
             }));
@@ -130,6 +134,7 @@ impl Actor for WsConn {
     }
 
     async fn pre_start(&mut self, ctx: &ActorContext) {
+        info!("WsConn starting");
         let receiver = self.receiver.take().unwrap();
         let ctx2 = ctx.clone();
         ctx.abort_on_stop(tokio::spawn(async move {
@@ -152,5 +157,9 @@ impl Actor for WsConn {
                 future::ok(())
             }).await;
         }));
+    }
+
+    async fn stopping(&mut self, _context: &ActorContext) {
+        info!("WsConn stopping");
     }
 }
