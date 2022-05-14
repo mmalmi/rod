@@ -57,7 +57,7 @@ async fn main() {
             .env("MULTICAST")
             .value_name("BOOL")
             .help("Enable multicast sync?")
-            .default_value("false")
+            .default_value("true")
             .takes_value(true))
         .arg(Arg::with_name("memory-storage")
             .long("memory-storage")

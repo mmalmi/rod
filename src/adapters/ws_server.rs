@@ -137,7 +137,7 @@ impl Actor for WsConn {
                 if let Ok(s) = msg.to_text() {
                     match Message::try_from(s, ctx2.addr.clone()) {
                         Ok(msgs) => {
-                            debug!("websocket_client in");
+                            debug!("ws_conn in");
                             for msg in msgs.into_iter() {
                                 if let Err(e) = ctx2.router.sender.send(msg) {
                                     error!("failed to send incoming message to node: {}", e);
