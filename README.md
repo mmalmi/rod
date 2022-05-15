@@ -50,9 +50,8 @@ if let GunValue::Text(str) = sub.recv().await.unwrap() {
 - [ ] Encryption & decryption (usually done on the client side in js, like [iris](https://github.com/iris-lib/iris-messenger) private messaging)
 
 ### Issues
-- When multiple adapters are enabled, it sometimes gets stuck
-- User-space nodes (js: `gun.user().get('something')`) are relayed, but not properly retrieved and sent from memory (wrong format somehow)
 - Multicast doesn't relay large messages like Iris posts
+- Rust API .on() and .map() not working correctly as of 15/5/2022
 
 ## Develop
 ```
