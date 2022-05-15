@@ -50,7 +50,7 @@ if let GunValue::Text(str) = sub.recv().await.unwrap() {
 - [ ] Encryption & decryption (usually done on the client side in js, like [iris](https://github.com/iris-lib/iris-messenger) private messaging)
 
 ### Issues
-- Multicast doesn't relay large messages like Iris posts
+- Multicast doesn't relay large messages like Iris posts with photos
 - Rust API .on() and .map() not working correctly as of 15/5/2022
 
 ## Develop
