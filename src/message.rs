@@ -9,6 +9,7 @@ use java_utils::HashCode;
 use ring::signature::{self, KeyPair};
 use jsonwebtoken::jwk::*;
 use jsonwebtoken::{Header, Algorithm};
+use ring::digest::{digest, SHA256};
 
 #[derive(Clone, Debug)]
 pub struct Get {
@@ -206,12 +207,14 @@ impl Message {
             alg: Algorithm::ES256,
             ..Header::default()
         };
+        // how to verify using the jwk?
 
+        // OR:
         let peer_public_key = signature::UnparsedPublicKey::new(
             &signature::ECDSA_P256_SHA256_FIXED,
-            key.as_bytes()
+            key.as_bytes() // how to convert x.y into a valid key?
         );
-        match peer_public_key.verify(signed_str.as_bytes(), signature.as_bytes()) {
+        match peer_public_key.verify(signed_str.as_bytes(), signature.as_bytes()) { // base64 decode first
             Ok(_) => {
                 info!("good signature :)");
                 Ok(())
@@ -269,18 +272,17 @@ impl Message {
                 };
 
                 if let Some(first_letter) = node_id.chars().next() {
-                    match first_letter {
-                        '~' => { // signed data
-                            /*
-                            if let Err(e) = Self::verify_sig(node_id, &value) {
-                                return Err(e);
-                            }*/
-                        },
-                        '#' => { // content-hash addressed data
-                            // check hash
-                        },
-                        _ => {}
-                    };
+                    if first_letter == '~' { // signed data
+                        /*
+                        if let Err(e) = Self::verify_sig(node_id, &value) {
+                            return Err(e);
+                        }*/
+                    } else if node_id == "#" { // content-hash addressed data
+                        let content_hash = digest(&SHA256, value.to_string().as_bytes());
+                        if *child_key != base64::encode(content_hash.as_ref()) {
+                            return Err("invalid content hash");
+                        }
+                    }
                 }
 
                 children.insert(child_key.to_string(), NodeData { updated_at, value });

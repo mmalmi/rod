@@ -158,7 +158,6 @@ impl Node {
     fn listen(&mut self, mut receiver: UnboundedReceiver<Message>) {
         let mut clone = self.clone();
         self.actor_context.abort_on_stop(tokio::spawn(async move {
-            panic!("what? not executing");
             while let Some(msg) = receiver.recv().await { // TODO shutdown
                 debug!("incoming message");
                 match msg {

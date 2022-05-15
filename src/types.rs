@@ -39,6 +39,22 @@ impl GunValue {
             _ => std::mem::size_of_val(self)
         }
     }
+
+    pub fn to_string(&self) -> String {
+        match self {
+            GunValue::Null => "null".to_string(),
+            GunValue::Bit(bool) => {
+                if *bool {
+                    "true".to_string()
+                } else {
+                    "false".to_string()
+                }
+            }
+            GunValue::Number(n) => n.to_string(),
+            GunValue::Text(t) => t.clone(),
+            GunValue::Link(l) => l.clone(),
+        }
+    }
 }
 
 impl TryFrom<SerdeJsonValue> for GunValue {
