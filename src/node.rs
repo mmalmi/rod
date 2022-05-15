@@ -68,11 +68,8 @@ impl Default for Config {
     }
 }
 
-/// A Graph Node that provides an API for graph traversal
+/// A Graph Node that provides an API for graph traversal.
 /// Sends, processes and relays Put & Get messages between storage and transport adapters.
-///
-/// Supports graph synchronization over [Actor]s (currently websocket and multicast).
-/// Disk storage adapter to be done.
 #[derive(Clone)]
 pub struct Node {
     config: Arc<RwLock<Config>>,
