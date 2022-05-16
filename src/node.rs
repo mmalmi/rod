@@ -144,9 +144,9 @@ impl Node {
             if node_id == *self.uid.read().unwrap() {
                 for (child, child_data) in node_data {
                     if let Some(child) = self.children.read().unwrap().get(&child) {
-                        child.on_sender.send(child_data.value.clone());
+                        let _ = child.on_sender.send(child_data.value.clone());
                     }
-                    self.map_sender.send((child.to_string(), child_data.value.clone()));
+                    let _ = self.map_sender.send((child.to_string(), child_data.value.clone()));
                 }
             }
         }
@@ -240,7 +240,6 @@ impl Node {
     /// Set a GunValue for the Node.
     pub fn put(&mut self, value: GunValue) {
         let updated_at: f64 = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis() as f64;
-        let uid = self.uid.read().unwrap().clone();
         self.on_sender.send(value.clone()).ok();
 
         // TODO: write the full chain of parents

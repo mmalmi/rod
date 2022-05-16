@@ -1,19 +1,16 @@
-use futures_util::{StreamExt, SinkExt};
-use futures::stream::{SplitStream, SplitSink};
+use futures_util::{StreamExt};
 use tokio_tungstenite::{
     connect_async,
-    tungstenite::{Message as WsMessage},
-    WebSocketStream
 };
 use url::Url;
 use std::collections::HashMap;
 
-use crate::adapters::ws_server::WsConn;
+use crate::adapters::ws_conn::WsConn;
 use crate::message::Message;
 use crate::actor::{Actor, Addr, ActorContext};
 use crate::Config;
 use async_trait::async_trait;
-use log::{debug, error, info};
+use log::{debug, info};
 use tokio::time::{sleep, Duration};
 
 pub struct OutgoingWebsocketManager {

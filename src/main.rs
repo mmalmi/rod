@@ -136,6 +136,6 @@ async fn main() {
             }
         }).expect("Error setting Ctrl-C handler");
 
-        cancel_rx.await;
+        let _ = cancel_rx.await;
     }
 }

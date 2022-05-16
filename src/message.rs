@@ -146,7 +146,7 @@ impl Message {
         match self {
             Message::Get(get) => get.from == *addr,
             Message::Put(put) => put.from == *addr,
-            Message::Hi { from } => false
+            Message::Hi { from: _ } => false
         }
     }
 

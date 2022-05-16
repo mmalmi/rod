@@ -7,7 +7,6 @@ use crate::message::Message;
 use crate::utils::random_string;
 use tokio::sync::mpsc::{UnboundedSender, UnboundedReceiver, Receiver, Sender, channel, unbounded_channel};
 use tokio::task::JoinHandle;
-use futures::Future;
 
 // TODO: stop signal. Or just call tokio runtime stop / abort? https://docs.rs/tokio/1.18.2/tokio/task/struct.JoinHandle.html#method.abort
 

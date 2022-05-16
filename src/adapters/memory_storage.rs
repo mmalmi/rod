@@ -25,25 +25,6 @@ impl MemoryStorage {
         }
     }
 
-    fn update_stats(&self) {
-        /*
-        let peer_id = self.node.get_peer_id();
-        let mut stats = self.node.clone().get("node_stats").get(&peer_id);
-        let store = self.store.clone();
-        let graph_size_bytes = self.graph_size_bytes.clone();
-        tokio::task::spawn(async move {
-            loop {
-                let count = store.read().unwrap().len().to_string();
-                let size = *graph_size_bytes.read().unwrap();
-                let size = format!("{}B", size_format::SizeFormatterBinary::new(size as u64).to_string());
-                stats.get("graph_node_count").put(count.into());
-                stats.get("graph_size_bytes").put(size.into());
-                sleep(Duration::from_millis(1000)).await;
-            }
-        });
-         */
-    }
-
     fn handle_get(&self, get: Get, ctx: &ActorContext) {
         if let Some(children) = self.store.read().unwrap().get(&get.node_id).cloned() {
             debug!("have {}: {:?}", get.node_id, children);
@@ -72,7 +53,7 @@ impl MemoryStorage {
         }
     }
 
-    fn handle_put(&self, put: Put, ctx: &ActorContext) {
+    fn handle_put(&self, put: Put, _ctx: &ActorContext) {
         for (node_id, update_data) in put.updated_nodes.iter().rev() { // return in reverse
             debug!("saving k-v {}: {:?}", node_id, update_data);
             let mut write = self.store.write().unwrap();

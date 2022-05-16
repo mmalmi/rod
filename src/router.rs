@@ -67,7 +67,7 @@ impl Actor for Router {
         info!("Router stopping");
     }
 
-    async fn handle(&mut self, msg: Message, ctx: &ActorContext) {
+    async fn handle(&mut self, msg: Message, _ctx: &ActorContext) {
         debug!("incoming message");
         match msg {
             Message::Put(put) => self.handle_put(put),
@@ -145,7 +145,7 @@ impl Router {
 
         // Send to server peers
         for addr in self.server_peers.iter() {
-            addr.sender.send(Message::Get(get.clone()));
+            let _ = addr.sender.send(Message::Get(get.clone()));
         }
 
         // Ask network
@@ -160,7 +160,7 @@ impl Router {
                     continue;
                 }
                 if let Err(_) = addr.sender.send(Message::Get(get.clone())) {
-                    //errored.insert(addr.clone());
+                    errored.insert(addr.clone());
                 }
             }
         }
@@ -202,7 +202,7 @@ impl Router {
 
                 // Send to server peers
                 for addr in self.server_peers.iter() {
-                    addr.sender.send(Message::Put(put.clone()));
+                    let _ = addr.sender.send(Message::Put(put.clone()));
                 }
 
                 // Relay to subscribers

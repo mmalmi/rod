@@ -56,7 +56,7 @@ impl Multicast {
 
 #[async_trait]
 impl Actor for Multicast {
-    async fn handle(&mut self, msg: Message, ctx: &ActorContext) {
+    async fn handle(&mut self, msg: Message, _ctx: &ActorContext) {
         debug!("multicast out msg {}", msg.get_id());
         match msg {
             Message::Put(put) => {

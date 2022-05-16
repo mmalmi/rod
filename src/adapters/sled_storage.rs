@@ -72,13 +72,13 @@ impl SledStorage {
         let _ = get.from.sender.send(Message::Put(put));
     }
 
-    fn handle_put(&self, put: Put, ctx: &ActorContext) {
+    fn handle_put(&self, put: Put) {
         for (node_id, update_data) in put.updated_nodes.iter().rev() {
             debug!("saving k-v {}: {:?}", node_id, update_data);
             // TODO use sled::Tree instead of Children
 
             let res = unwrap_or_return!(self.store.get(node_id));
-            if let Some(children) = res {
+            if let Some(_children) = res {
                 let children = unwrap_or_return!(self.store.open_tree(node_id));
                 for (child_id, child_data) in update_data {
                     if let Some(existing) = unwrap_or_return!(children.get(child_id)) {
@@ -107,7 +107,7 @@ impl Actor for SledStorage {
         debug!("SledStorage incoming message {:?}", message);
         match message {
             Message::Get(get) => self.handle_get(get, ctx),
-            Message::Put(put) => self.handle_put(put, ctx),
+            Message::Put(put) => self.handle_put(put),
             _ => {}
         }
     }
