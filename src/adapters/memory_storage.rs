@@ -8,7 +8,6 @@ use crate::types::*;
 use async_trait::async_trait;
 use log::{debug, info};
 use std::sync::{Arc, RwLock};
-//use tokio::time::{sleep, Duration};
 
 pub struct MemoryStorage {
     config: Config,

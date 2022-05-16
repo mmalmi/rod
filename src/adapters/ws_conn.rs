@@ -37,6 +37,8 @@ impl Actor for WsConn {
 
     async fn pre_start(&mut self, ctx: &ActorContext) {
         info!("WsConn starting");
+        let hi = Message::Hi { from: ctx.peer_id.read().unwrap().clone() };
+        let _ = self.sender.send(WsMessage::Text(hi.to_string())).await;
         let receiver = self.receiver.take().unwrap();
         let ctx2 = ctx.clone();
         ctx.abort_on_stop(tokio::spawn(async move {

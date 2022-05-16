@@ -46,7 +46,7 @@ impl dyn Actor {
 /// Stuff that Actors need (cocaine not included)
 #[derive(Clone)]
 pub struct ActorContext {
-    pub peer_id: String,
+    pub peer_id: Arc<RwLock<String>>,
     pub router: Addr,
     stop_signals: Arc<RwLock<Vec<Sender<()>>>>,
     task_handles: Arc<RwLock<Vec<JoinHandle<()>>>>,
@@ -60,7 +60,7 @@ impl ActorContext {
             addr: noop.clone(),
             stop_signals: Arc::new(RwLock::new(Vec::new())),
             task_handles: Arc::new(RwLock::new(Vec::new())),
-            peer_id,
+            peer_id: Arc::new(RwLock::new(peer_id)),
             router: noop
         }
     }
@@ -70,7 +70,7 @@ impl ActorContext {
             addr,
             stop_signals: Arc::new(RwLock::new(vec![stop_signal])),
             task_handles: Arc::new(RwLock::new(Vec::new())),
-            peer_id: self.peer_id.clone(), // arc rwlock?
+            peer_id: self.peer_id.clone(),
             router: self.router.clone()
         }
     }
