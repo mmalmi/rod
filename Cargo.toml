@@ -1,6 +1,6 @@
 [package]
 name = "gundb"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2018"
 repository = "https://github.com/mmalmi/gun-rs"
 description = "Distributed graph database that syncs over websockets and multicast"

@@ -21,7 +21,7 @@ struct SeenGetMessage {
 
 pub struct Router {
     config: Config,
-    known_peers: HashSet<Addr>, // ping them periodically to remove closed addrs?
+    known_peers: HashSet<Addr>, // ping them periodically to remove closed addrs? and sort by timestamp & prefer long-lasting conns
     storage_adapters: HashSet<Addr>,
     network_adapters: HashSet<Addr>,
     server_peers: HashSet<Addr>, // temporary, so we can forward stuff to outgoing websocket peers (servers)
