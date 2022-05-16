@@ -122,7 +122,7 @@ impl Put {
 pub enum Message { // TODO: NetworkMessage and InternalMessage
     Get(Get),
     Put(Put),
-    Hi { from: String }
+    Hi { from: Addr, peer_id: String }
 }
 
 impl Message {
@@ -130,7 +130,7 @@ impl Message {
         match self {
             Message::Get(get) => get.to_string(),
             Message::Put(put) => put.to_string(),
-            Message::Hi { from } => json!({"dam": "hi","#": from}).to_string()
+            Message::Hi { from, peer_id } => json!({"dam": "hi","#": peer_id}).to_string()
         }
     }
 
@@ -138,7 +138,7 @@ impl Message {
         match self {
             Message::Get(get) => get.id.clone(),
             Message::Put(put) => put.id.clone(),
-            Message::Hi { from } => from.to_string()
+            Message::Hi { from: _, peer_id } => peer_id.to_string()
         }
     }
 
@@ -146,7 +146,7 @@ impl Message {
         match self {
             Message::Get(get) => get.from == *addr,
             Message::Put(put) => put.from == *addr,
-            Message::Hi { from: _ } => false
+            Message::Hi { from, peer_id: _ } => *from == *addr
         }
     }
 
@@ -355,7 +355,7 @@ impl Message {
         } else if obj.contains_key("get") {
             Self::from_get_obj(json, json_str, msg_id, from)
         } else if let Some(_dam) = obj.get("dam") {
-            Ok(Message::Hi { from: msg_id })
+            Ok(Message::Hi { from, peer_id: msg_id })
         } else {
             Err("Unrecognized message")
         }

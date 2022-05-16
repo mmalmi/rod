@@ -21,6 +21,7 @@ struct SeenGetMessage {
 
 pub struct Router {
     config: Config,
+    known_peers: HashSet<Addr>, // ping them periodically to remove closed addrs?
     storage_adapters: HashSet<Addr>,
     network_adapters: HashSet<Addr>,
     server_peers: HashSet<Addr>, // temporary, so we can forward stuff to outgoing websocket peers (servers)
@@ -68,11 +69,11 @@ impl Actor for Router {
     }
 
     async fn handle(&mut self, msg: Message, _ctx: &ActorContext) {
-        debug!("incoming message");
+        debug!("incoming message {}", msg.clone().to_string());
         match msg {
             Message::Put(put) => self.handle_put(put),
             Message::Get(get) => self.handle_get(get),
-            _ => {}
+            Message::Hi { from, peer_id } => { self.known_peers.insert(from); }
         };
     }
 }
@@ -81,6 +82,7 @@ impl Router {
     pub fn new(config: Config) -> Self {
         Self {
             config,
+            known_peers: HashSet::new(),
             storage_adapters: HashSet::new(),
             network_adapters: HashSet::new(),
             server_peers: HashSet::new(),
@@ -150,24 +152,35 @@ impl Router {
 
         // Ask network
         let mut errored = HashSet::new();
+        let mut sent_to = 0;
+        let mut rng = thread_rng();
         if let Some(topic_subscribers) = self.subscribers_by_topic.get(topic) {
             // should have a list of all peers and send to those who are the likeliest to respond (MANET)
-            let mut rng = thread_rng();
             let sample = topic_subscribers.iter().choose_multiple(&mut rng, 4);
-            debug!("sending get to a random sample of subscribers of size {}", sample.len());
             for addr in sample {
                 if get.from == *addr {
                     continue;
                 }
-                if let Err(_) = addr.sender.send(Message::Get(get.clone())) {
-                    errored.insert(addr.clone());
+                match addr.sender.send(Message::Get(get.clone())) {
+                    Ok(_) => { sent_to += 1; },
+                    _=> { errored.insert(addr.clone()); }
                 }
             }
         }
+        debug!("sent get to a random sample of subscribers of size {}", sent_to);
         if errored.len() > 0 {
             if let Some(topic_subscribers) = self.subscribers_by_topic.get_mut(topic) {
                 for addr in errored {
                     topic_subscribers.remove(&addr);
+                    self.known_peers.remove(&addr);
+                }
+            }
+        }
+        if sent_to < 1 {
+            while let Some(addr) = self.known_peers.iter().choose(&mut rng) {
+                match addr.sender.send(Message::Get(get.clone())) {
+                    Ok(_) => { break },
+                    _=> { self.known_peers.remove(&addr.clone()); }
                 }
             }
         }

@@ -37,7 +37,7 @@ impl Actor for WsConn {
 
     async fn pre_start(&mut self, ctx: &ActorContext) {
         info!("WsConn starting");
-        let hi = Message::Hi { from: ctx.peer_id.read().unwrap().clone() };
+        let hi = Message::Hi { from: ctx.addr.clone(), peer_id: ctx.peer_id.read().unwrap().clone() };
         let _ = self.sender.send(WsMessage::Text(hi.to_string())).await;
         let receiver = self.receiver.take().unwrap();
         let ctx2 = ctx.clone();
@@ -46,7 +46,7 @@ impl Actor for WsConn {
                 if let Ok(s) = msg.to_text() {
                     match Message::try_from(s, ctx2.addr.clone()) {
                         Ok(msgs) => {
-                            debug!("ws_conn in");
+                            debug!("ws_conn in {}", s);
                             for msg in msgs.into_iter() {
                                 if let Err(e) = ctx2.router.sender.send(msg) {
                                     error!("failed to send incoming message to node: {}", e);
