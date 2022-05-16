@@ -51,7 +51,6 @@ if let GunValue::Text(str) = sub.recv().await.unwrap() {
 
 ### Issues
 - Multicast doesn't relay large messages like Iris posts with photos
-- Rust API .on() and .map() not working correctly as of 15/5/2022
 
 ## Develop
 ```
