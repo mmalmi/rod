@@ -52,6 +52,9 @@ impl WsServer {
 impl Actor for WsServer {
     async fn handle(&mut self, msg: Message, _ctx: &ActorContext) {
         for conn in self.clients.read().await.iter() {
+            if msg.is_from(conn) {
+                continue;
+            }
             if let Err(_) = conn.sender.send(msg.clone()) {
                 self.clients.write().await.remove(conn);
             }

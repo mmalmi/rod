@@ -220,6 +220,7 @@ impl Router {
 
                 // Relay to subscribers
                 let mut already_sent_to = HashSet::new();
+                let mut sent_to = 0;
                 for node_id in put.clone().updated_nodes.keys() {
                     let topic = node_id.split("/").next().unwrap_or("");
                     if let Some(topic_subscribers) = self.subscribers_by_topic.get_mut(topic) {
@@ -231,8 +232,20 @@ impl Router {
                                 return true;
                             }
                             already_sent_to.insert(addr.clone());
-                            addr.sender.send(Message::Put(put.clone())).is_ok()
+                            match addr.sender.send(Message::Put(put.clone())) {
+                                Ok(_) => { sent_to += 1; true },
+                                _=> { false }
+                            }
                         })
+                    }
+                }
+                if sent_to < 1 {
+                    let mut rng = thread_rng();
+                    while let Some(addr) = self.known_peers.iter().choose(&mut rng) {
+                        match addr.sender.send(Message::Put(put.clone())) {
+                            Ok(_) => { break },
+                            _=> { self.known_peers.remove(&addr.clone()); }
+                        }
                     }
                 }
             }
