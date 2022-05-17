@@ -21,6 +21,16 @@ macro_rules! unwrap_or_return {
     }
 }
 
+// can be extended with defaults https://serde.rs/attr-default.html
+struct NodeMetaData {
+    node_id: String,
+    child_key: String,
+    size: u64,
+    priority: i32,
+    last_opened: u64,
+    times_opened: u32
+}
+
 pub struct SledStorage {
     store: sled::Db,
 }
@@ -29,7 +39,7 @@ impl SledStorage {
     pub fn new(config: Config) -> Self {
         let store = config.sled_config.open().unwrap();
         SledStorage {
-            store, // If we don't want to store everything in memory, this needs to use something like Redis or LevelDB. Or have a FileSystem adapter for persistence and evict the least important stuff from memory when it's full.
+            store
         }
     }
 
@@ -75,8 +85,6 @@ impl SledStorage {
     fn handle_put(&self, put: Put) {
         for (node_id, update_data) in put.updated_nodes.iter().rev() {
             debug!("saving k-v {}: {:?}", node_id, update_data);
-            // TODO use sled::Tree instead of Children
-
             let res = unwrap_or_return!(self.store.get(node_id));
             if let Some(_children) = res {
                 let children = unwrap_or_return!(self.store.open_tree(node_id));

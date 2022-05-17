@@ -186,6 +186,8 @@ impl Message {
 
         // https://github.com/amark/gun/blob/ced9cde41b2781ef3f89ffafd4417405eb473f8a/sea.js#L1413
 
+        // try ecdsa crate?
+
         let peer_public_key = signature::UnparsedPublicKey::new(
             &signature::ECDSA_P256_SHA256_ASN1,
             my_jwk.key.to_der()

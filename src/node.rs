@@ -23,7 +23,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 /// [Node] configuration object.
 #[derive(Clone)]
 pub struct Config {
-    /// [tokio::sync::broadcast] channel size for outgoing network messages. Smaller value may slightly reduce memory usage, but lose outgoing messages when an adapter is lagging. Default: 10.
+    /// [tokio::sync::broadcast] channel size for Node::map() and on(). Default: 10
     pub rust_channel_size: usize,
     /// Enable sled.rs storage (disk + memory cache)? Default: true
     pub sled_storage: bool,
@@ -85,12 +85,12 @@ pub struct Node {
 }
 
 impl Node {
-    /// Create a new root-level Node using default configuration.
+    /// Create a new root-level Node using default configuration. Starts the default network and storage adapters.
     pub fn new() -> Self {
         Self::new_with_config(Config::default())
     }
 
-    /// Create a new root-level Node using custom configuration.
+    /// Create a new root-level Node using custom configuration. Starts the default or configured network and storage adapters.
     ///
     /// # Examples
     ///
@@ -216,7 +216,7 @@ impl Node {
     }
 
     // TODO: optionally specify which adapters to ask
-    /// Return a child Node corresponding to the given Key.
+    /// Return a child Node corresponding to the given key.
     pub fn get(&mut self, key: &str) -> Node {
         if key == "" {
             return self.clone();

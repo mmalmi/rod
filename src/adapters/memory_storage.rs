@@ -20,7 +20,7 @@ impl MemoryStorage {
         MemoryStorage {
             config,
             graph_size_bytes: Arc::new(RwLock::new(0)),
-            store: Arc::new(RwLock::new(HashMap::new())), // If we don't want to store everything in memory, this needs to use something like Redis or LevelDB. Or have a FileSystem adapter for persistence and evict the least important stuff from memory when it's full.
+            store: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
