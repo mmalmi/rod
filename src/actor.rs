@@ -51,6 +51,7 @@ pub struct ActorContext {
     stop_signals: Arc<RwLock<Vec<Sender<()>>>>,
     task_handles: Arc<RwLock<Vec<JoinHandle<()>>>>,
     pub addr: Addr,
+    pub is_stopped: Arc<RwLock<bool>>
 }
 impl ActorContext {
     pub fn new(peer_id: String) -> Self {
@@ -61,7 +62,8 @@ impl ActorContext {
             stop_signals: Arc::new(RwLock::new(Vec::new())),
             task_handles: Arc::new(RwLock::new(Vec::new())),
             peer_id: Arc::new(RwLock::new(peer_id)),
-            router: noop
+            router: noop,
+            is_stopped: Arc::new(RwLock::new(false))
         }
     }
 
@@ -71,7 +73,8 @@ impl ActorContext {
             stop_signals: Arc::new(RwLock::new(vec![stop_signal])),
             task_handles: Arc::new(RwLock::new(Vec::new())),
             peer_id: self.peer_id.clone(),
-            router: self.router.clone()
+            router: self.router.clone(),
+            is_stopped: self.is_stopped.clone()
         }
     }
 
@@ -107,6 +110,7 @@ impl ActorContext {
         for signal in self.stop_signals.read().unwrap().iter() {
             let _ = signal.try_send(());
         }
+        *self.is_stopped.write().unwrap() = true;
     }
 }
 

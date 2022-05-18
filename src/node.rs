@@ -141,12 +141,9 @@ impl Node {
         // TODO accept puts only from our memory adapter, which is supposed to serve the latest version.
         // Or store latest NodeData in Node?
         for (node_id, node_data) in put.updated_nodes {
-            debug!("hi {} {}", node_id, *self.uid.read().unwrap());
             if node_id == *self.uid.read().unwrap() {
-                debug!("yes {}", node_id);
                 for (child, child_data) in node_data {
                     if let Some(child) = self.children.read().unwrap().get(&child) {
-                        debug!("hi2 {}", node_id);
                         let _ = child.on_sender.send(child_data.value.clone());
                     }
                     let _ = self.map_sender.send((child.to_string(), child_data.value.clone()));

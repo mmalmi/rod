@@ -147,6 +147,7 @@ impl Router {
 
         // Send to server peers
         for addr in self.server_peers.iter() {
+            debug!("send to server peer");
             let _ = addr.sender.send(Message::Get(get.clone()));
         }
 

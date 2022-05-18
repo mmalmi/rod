@@ -7,7 +7,7 @@ mod tests {
 
     static INIT: Once = Once::new();
 
-    fn setup() {
+    fn enable_logger() {
         INIT.call_once(|| {
             env_logger::init();
         });
@@ -18,7 +18,6 @@ mod tests {
     // TODO benchmark
     #[tokio::test]
     async fn it_doesnt_error() {
-        setup();
         let mut gun = Node::new_with_config(Config {
             memory_storage: true,
             sled_storage: false,
@@ -29,7 +28,6 @@ mod tests {
 
     #[tokio::test]
     async fn first_get_then_put() {
-        setup();
         let mut gun = Node::new_with_config(Config {
             memory_storage: true,
             sled_storage: false,
@@ -45,7 +43,6 @@ mod tests {
 
     #[tokio::test]
     async fn first_put_then_get() {
-        setup();
         let mut gun = Node::new_with_config(Config {
             memory_storage: true,
             sled_storage: false,
@@ -61,8 +58,7 @@ mod tests {
 
     #[tokio::test]
     async fn connect_and_sync_over_websocket() {
-        setup();
-        let mut node1 = Node::new_with_config(Config {
+        let mut peer1 = Node::new_with_config(Config {
             memory_storage: true,
             sled_storage: false,
             websocket_server: true,
@@ -70,7 +66,7 @@ mod tests {
             stats: false,
             ..Config::default()
         });
-        let mut node2 = Node::new_with_config(Config {
+        let mut peer2 = Node::new_with_config(Config {
             memory_storage: true,
             sled_storage: false,
             websocket_server: false,
@@ -80,10 +76,10 @@ mod tests {
             ..Config::default()
         });
         sleep(Duration::from_millis(2000)).await;
-        let mut sub1 = node1.get("node2").get("name").on();
-        let mut sub2 = node2.get("node1").get("name").on();
-        node1.get("node1").get("name").put("Amandil".into());
-        node2.get("node2").get("name").put("Beregond".into());
+        let mut sub1 = peer1.get("beta").get("name").on();
+        let mut sub2 = peer2.get("alpha").get("name").on();
+        peer1.get("alpha").get("name").put("Amandil".into());
+        peer2.get("beta").get("name").put("Beregond".into());
         match sub1.recv().await.unwrap() {
             GunValue::Text(str) => {
                 assert_eq!(&str, "Beregond");
@@ -96,59 +92,49 @@ mod tests {
             },
             _ => panic!("Expected GunValue::Text")
         }
-        node1.stop();
-        node2.stop();
+        peer1.stop();
+        peer2.stop();
     }
 
-    /*
     #[tokio::test]
     async fn sync_over_multicast() {
-        let mut node1 = Node::new_with_config(Config {
+        enable_logger();
+        let mut peer1 = Node::new_with_config(Config {
             websocket_server: false,
             multicast: true,
             stats: false,
+            sled_storage: false,
             ..Config::default()
         });
-        let mut node2 = Node::new_with_config(Config {
+        let mut peer2 = Node::new_with_config(Config {
             websocket_server: false,
             multicast: true,
             stats: false,
+            sled_storage: false,
             ..Config::default()
         });
-        async fn tst(mut node1: Node, mut node2: Node) {
-            sleep(Duration::from_millis(1000)).await;
-            node1.get("node1a").put("Gorlim".into());
-            node2.get("node2a").put("Smaug".into());
-            let mut sub1 = node1.get("node2a").on();
-            let mut sub2 = node2.get("node1a").on();
-            match sub1.recv().await.unwrap() {
-                GunValue::Text(str) => {
-                    assert_eq!(&str, "Smaug");
-                },
-                _ => panic!("Expected GunValue::Text")
-            }
-            match sub2.recv().await.unwrap() {
-                GunValue::Text(str) => {
-                    assert_eq!(&str, "Gorlim");
-                },
-                _ => panic!("Expected GunValue::Text")
-            }
-            node1.stop();
-            node2.stop();
-        }
-        let node1_clone = node1.clone();
-        let node2_clone = node2.clone();
-        tokio::join!(node1.start(), node2.start(), tst(node1_clone, node2_clone));
-    }*/
-
-    /*
-
-    #[test]
-    fn save_and_retrieve_user_space_data() {
-        setup();
-        let mut node = Node::new();
+        sleep(Duration::from_millis(1000)).await;
+        peer1.get("gamma").put("Gorlim".into());
+        peer2.get("sigma").put("Smaug".into());
+        let mut sub1 = peer1.get("sigma").on();
+        let mut sub2 = peer2.get("gamma").on();
+        match sub1.recv().await.unwrap() {
+            GunValue::Text(str) => {
+                assert_eq!(&str, "Smaug");
+            },
+            _ => panic!("Expected GunValue::Text")
+        };
+        match sub2.recv().await.unwrap() {
+            GunValue::Text(str) => {
+                assert_eq!(&str, "Gorlim");
+            },
+            _ => panic!("Expected GunValue::Text")
+        };
+        peer1.stop();
+        peer2.stop();
     }
 
+    /*
     #[test] // use #[bench] when it's stable
     fn write_benchmark() { // to see the result with optimized binary, run: cargo test --release -- --nocapture
         setup();
