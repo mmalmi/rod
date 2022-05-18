@@ -106,17 +106,24 @@ mod tests {
                 memory_storage: false,
                 sled_storage: true,
                 sled_config: sled::Config::default().path(path),
-                sled_storage_limit: Some(0),
+                sled_storage_limit: Some(10000),
                 my_pub: Some("asdf".to_string()),
                 ..Config::default()
             });
-            let mut node = gun.get("~asdf").get("name");
-            node.put("Ainu".into());
-            sleep(Duration::from_millis(2000)).await;
-            let mut sub = node.on();
-            if let GunValue::Text(str) = sub.recv().await.unwrap() {
-                assert_eq!(&str, "Ainu");
+
+            let mut name = gun.get("~asdf").get("name");
+            name.put("Ainu".into());
+
+            for i in 0..100 {
+                gun.get("something").get(&i.to_string()).put("I just want to fill your disk.".into());
             }
+
+            sleep(Duration::from_millis(10000)).await;
+            let mut sub = name.on();
+            if let GunValue::Text(str) = sub.recv().await.unwrap() {
+                assert_eq!(&str, "Ainu"); // stuff by our public key should remain
+            }
+
             gun.stop();
         }
         std::fs::remove_dir_all(path);

@@ -1,4 +1,5 @@
 use std::collections::{HashSet, BTreeMap};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::message::{Message, Put, Get};
 use crate::actor::{Actor, ActorContext};
@@ -10,6 +11,8 @@ use serde::{Serialize, Deserialize};
 use async_trait::async_trait;
 use log::{debug, error, info};
 use sled;
+
+static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 macro_rules! unwrap_or_return {
     ( $e:expr ) => {
@@ -23,9 +26,17 @@ macro_rules! unwrap_or_return {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+struct NodesByPriorityEntry {
+    pub node_id: String,
+    pub child_key: String,
+    pub size: u64,
+}
+
 // can be extended later with defaults https://serde.rs/attr-default.html
 #[derive(Serialize, Deserialize, Debug)]
 struct SledNodeData {
+    pub id: u64,
     pub node_id: String,
     pub child_key: String,
     pub data: NodeData,
@@ -37,26 +48,32 @@ struct SledNodeData {
 
 impl SledNodeData {
     pub fn new(node_id: String, child_key: String, data: NodeData, store: &SledStorage) -> Self {
-        let size = (child_key.len() + data.value.size()) as u64;
         let mut s = SledNodeData {
+            id: COUNTER.fetch_add(1, Ordering::Relaxed) as u64,
             node_id,
             child_key,
             data,
-            size,
+            size: 0,
             priority: 0,
             last_opened: 0,
             times_opened: 0
         };
+        s.update_size();
         s.update_priority(store, true);
         s
     }
 
-    pub fn update_priority(&mut self, store: &SledStorage, force_index: bool) { // TODO update prio only once per sec? or once per 10 times_opened?
-        let old_prio = self.priority; // handle case where
+    fn update_size(&mut self) {
+        let size = (self.node_id.len() + self.child_key.len() + self.data.value.size()) as u64;
+        self.size = size;
+    }
+
+    pub fn update_priority(&mut self, storage: &SledStorage, force_index: bool) { // TODO update prio only once per sec? or once per 10 times_opened?
+        let old_prio = self.priority;
         let mut changed = false;
         if let Some(first_letter) = self.node_id.chars().next() {
             if (first_letter == '~') || (self.node_id == "#") { // signed or content addressed data
-                let base_prio = match store.config.my_pub {
+                let base_prio = match storage.config.my_pub {
                     Some(ref my_pub) => {
                         match self.node_id.find(my_pub) {
                             Some(1) => 110, // prioritize our own stuff. TODO: prioritize our follows also
@@ -76,14 +93,17 @@ impl SledNodeData {
         }
         if force_index || (self.priority != old_prio) {
             // update index
-            let index = store.get_index();
-            let node_id = str::replace(&self.node_id, ":", "::");
-            let child_key = str::replace(&self.child_key, ":", "::");
-            let old_index_key = format!("{:0>9}{}:{}", old_prio, node_id, child_key);
+            let index = storage.get_index();
+            let old_index_key = format!("{:0>9}{}", old_prio, self.id);
             index.remove(&old_index_key);
-            let new_index_key = format!("{:0>9}{}:{}", self.priority, node_id, child_key);
+            let new_index_key = format!("{:0>9}{}", self.priority, self.id);
             debug!("old {} new {}", old_index_key, new_index_key);
-            index.insert(new_index_key, vec![1]);
+            let entry = NodesByPriorityEntry {
+                node_id: self.node_id.clone(),
+                child_key: self.child_key.clone(),
+                size: self.size
+            };
+            let _ = index.insert(new_index_key, bincode::serialize(&entry).unwrap());
         }
     }
 }
@@ -100,6 +120,10 @@ impl SledStorage {
             config,
             store
         }
+    }
+
+    pub fn size_on_disk(&self) -> Result<u64, sled::Error> {
+        self.store.size_on_disk()
     }
 
     fn open_child(&self, node_id: &String, child_key: &String, bytes: &[u8], update_times_opened: bool) -> Result<SledNodeData, ()> {
@@ -128,7 +152,7 @@ impl SledStorage {
         res
     }
 
-    fn get_index(&self) -> sled::Tree {
+    fn get_index(&self) -> sled::Tree { // sqlite could do the indexing automatically
         self.store.open_tree("_nodes_by_priority").unwrap()
     }
 
@@ -184,6 +208,7 @@ impl SledStorage {
                         let mut existing: SledNodeData = unwrap_or_return!(self.open_child(&node_id, &child_id, &existing, false));
                         if child_data.updated_at >= existing.data.updated_at {
                             existing.data = child_data;
+                            existing.update_size();
                             existing.update_priority(&self, false);
                             let _ = children.insert(child_id.clone(), bincode::serialize(&existing).unwrap());
                         }
@@ -201,6 +226,28 @@ impl SledStorage {
                 }
             }
         }
+    }
+
+    fn evict(store: &sled::Db, amount: u64) {
+        let mut evicted = 0;
+        let index = store.open_tree("_nodes_by_priority").unwrap();
+        while evicted < amount {
+            match index.pop_min() { // TODO transaction? don't pop unless the actual data was removed
+                Ok(opt) => {
+                    if let Some((key, entry)) = opt {
+                        let entry = bincode::deserialize::<NodesByPriorityEntry>(&entry).unwrap();
+                        let key = String::from_utf8(key.to_vec()).unwrap();
+                        //debug!("should evict {} {} {}", key, entry.node_id, entry.child_key);
+                        //debug!("  evicted {} of {}", evicted, amount);
+                        let node = unwrap_or_return!(store.open_tree(&entry.node_id));
+                        node.remove(&entry.child_key);
+                        evicted += entry.size * 100; // quite a disparity between size on disk and our estimate?
+                    }
+                },
+                _ => {}
+            }
+        }
+        debug!("evict done");
     }
 }
 
@@ -221,12 +268,16 @@ impl Actor for SledStorage {
             let store = self.store.clone();
             ctx.abort_on_stop(tokio::spawn(async move {
                 loop {
-                    sleep(Duration::from_millis(500)).await;
+                    sleep(Duration::from_millis(2000)).await;
                     match store.size_on_disk() {
                         Ok(size) => {
                             if size >= limit {
-                                debug!("sled db too big, evicting lowest priority data");
-                                // TODO evict
+                                let excess = size - limit;
+                                info!("sled db too big ({}), evicting lowest priority data", size);
+                                //Self::evict(&store, excess); // TODO: size_on_disk() not shrinking (enough)
+                                sleep(Duration::from_millis(1000)).await;
+                                let new_size = store.size_on_disk().unwrap();
+                                info!("size on disk {} after eviction (was {})", size, new_size);
                             }
                         },
                         _ => {}
