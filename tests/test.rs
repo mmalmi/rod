@@ -97,8 +97,33 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sync_over_multicast() {
+    async fn sled_storage() {
         enable_logger();
+        let path = std::path::Path::new("./cargo_test_sled_db");
+        std::fs::remove_dir_all(path);
+        {
+            let mut gun = Node::new_with_config(Config {
+                memory_storage: false,
+                sled_storage: true,
+                sled_config: sled::Config::default().path(path),
+                sled_storage_limit: Some(0),
+                my_pub: Some("asdf".to_string()),
+                ..Config::default()
+            });
+            let mut node = gun.get("~asdf").get("name");
+            node.put("Ainu".into());
+            sleep(Duration::from_millis(2000)).await;
+            let mut sub = node.on();
+            if let GunValue::Text(str) = sub.recv().await.unwrap() {
+                assert_eq!(&str, "Ainu");
+            }
+            gun.stop();
+        }
+        std::fs::remove_dir_all(path);
+    }
+
+    #[tokio::test]
+    async fn sync_over_multicast() {
         let mut peer1 = Node::new_with_config(Config {
             websocket_server: false,
             multicast: true,

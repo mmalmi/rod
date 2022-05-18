@@ -27,8 +27,10 @@ pub struct Config {
     pub rust_channel_size: usize,
     /// Enable sled.rs storage (disk + memory cache)? Default: true
     pub sled_storage: bool,
-    /// Sled.rs config
+    /// Sled.rs config. Default: sled::Config defaults + db path "sled_db".
     pub sled_config: sled::Config,
+    /// Limit for the sled database size on disk in bytes. Default: None
+    pub sled_storage_limit: Option<u64>,
     /// Enable in-memory storage? Default: false
     pub memory_storage: bool,
     /// Enable multicast? Default: false
@@ -41,6 +43,9 @@ pub struct Config {
     pub websocket_server_port: u16,
     /// Default: `8 * 1000 * 1000`
     pub websocket_frame_max_size: usize,
+    /// Prioritize data storage for this Gun public key. Format: x.y where x and y are base64 encoded ECDSA public key coordinates.
+    /// Example: hyECQHwSo7fgr2MVfPyakvayPeixxsaAWVtZ-vbaiSc.TXIp8MnCtrnW6n2MrYquWPcc-DTmZzMBmc2yaGv9gIU
+    pub my_pub: Option<String>,
     /// TLS certificate path. Default: `None`
     pub cert_path: Option<String>,
     /// TLS key path. Default: `None`
@@ -55,6 +60,7 @@ impl Default for Config {
             rust_channel_size: 1000,
             sled_storage: true,
             sled_config: sled::Config::new().path("sled_db"),
+            sled_storage_limit: None,
             memory_storage: false,
             multicast: false,
             outgoing_websocket_peers: Vec::new(),
@@ -64,6 +70,7 @@ impl Default for Config {
             cert_path: None,
             key_path: None,
             stats: true,
+            my_pub: None,
         }
     }
 }

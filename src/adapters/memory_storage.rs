@@ -12,7 +12,7 @@ use std::sync::{Arc, RwLock};
 pub struct MemoryStorage {
     config: Config,
     graph_size_bytes: Arc<RwLock<usize>>,
-    store: Arc<RwLock<HashMap<String, Children>>>,
+    store: Arc<RwLock<HashMap<String, Children>>>, // could use an LRU cache or other existing option
 }
 
 impl MemoryStorage {
