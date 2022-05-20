@@ -30,7 +30,10 @@ fn criterion_benchmark(c: &mut Criterion) {
         });
     });
 
-    c.bench_function("sled_storage get-put", |b| {
+    let mut group = c.benchmark_group("fewer samples");
+    group.sample_size(10);
+
+    group.bench_function("sled_storage get-put", |b| {
         let path = std::path::Path::new("./benchmark_db");
         std::fs::remove_dir_all(path);
         rt.block_on(async {
@@ -60,7 +63,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         std::fs::remove_dir_all(path);
     });
 
-    c.bench_function("websocket get-put", |b| {
+    group.bench_function("websocket get-put", |b| {
         let path1 = std::path::Path::new("./benchmark1_db");
         let path2 = std::path::Path::new("./benchmark2_db");
         std::fs::remove_dir_all(path1);
@@ -90,8 +93,8 @@ fn criterion_benchmark(c: &mut Criterion) {
                 let mut peer2 = peer2.clone();
                 let key = counter.fetch_add(1, Ordering::Relaxed).to_string();
                 async move {
-                    peer1.get(&key).put("hello".into());
-                    let mut sub = peer2.get(&key).on();
+                    peer1.get("a").get(&key).put("hello".into());
+                    let mut sub = peer2.get("a").get(&key).on();
                     //sub.recv().await; // TODO enable
                 }
             });
@@ -103,6 +106,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         std::fs::remove_dir_all(path1);
         std::fs::remove_dir_all(path2);
     });
+    group.finish();
 }
 
 criterion_group!(benches, criterion_benchmark);
