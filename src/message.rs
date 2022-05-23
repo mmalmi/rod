@@ -1,14 +1,15 @@
-use serde_json::{json, Value as SerdeJsonValue};
+use serde_json::{json, Value};
 use crate::utils::random_string;
 use std::collections::{HashSet, BTreeMap};
 use crate::types::*;
-use log::{debug, info};
+use log::{debug, error};
 use std::convert::TryFrom;
 use crate::actor::Addr;
 use java_utils::HashCode;
 use ring::signature::{self, KeyPair};
 use jsonwebtoken::jwk::*;
-use jsonwebtoken::{Header, Algorithm};
+use jsonwebtoken::Algorithm;
+use jsonwebtoken::crypto::verify;
 use ring::digest::{digest, SHA256};
 use jsonwebkey as jwk;
 
@@ -151,63 +152,62 @@ impl Message {
         }
     }
 
-    fn verify_sig(node_id: &str, value: &GunValue) -> Result<(), &'static str> {
-        let text = match value {
-            GunValue::Text(t) => t,
-            _ => { return Err("Values in user space must be signed strings"); }
-        };
-        let json: SerdeJsonValue = serde_json::from_str(text).or(Err("Failed to parse signature as JSON"))?;
-        let obj = json.as_object().ok_or("signature json was not an object")?;
-        let signed_data = obj.get(":").ok_or("no signed data (:) in signature json")?;
+    fn verify_sig(node_id: &str, node_data: &serde_json::Map<String, Value>) -> Result<(), &'static str> {
+        let mut has_children = false;
+        for (child_key, timestamp) in node_data["_"][">"].as_object().ok_or("not an object")?.iter() {
+            has_children = true;
+            let value = node_data.get(child_key).ok_or("no matching key in object and _")?;
+            let text = value.as_str().ok_or("not a string")?;
+            let json: Value = serde_json::from_str(text).or(Err("Failed to parse signature as JSON"))?;
+            let signature_obj = json.as_object().ok_or("signature json was not an object")?;
+            let signed_data = signature_obj.get(":").ok_or("no signed data (:) in signature json")?;
 
-        let signed_str;
-        if let Some(str) = signed_data.as_str() {
-            signed_str = str.to_string();
-        } else if let Some(signed_data_obj) = signed_data.as_object() {
-            signed_str = signed_data.to_string();
-        } else {
-            return Err("signed data was not a string or a link object");
-        }
+            let signed_obj = json!({
+                "#": node_id,
+                ".": child_key,
+                ":": signed_data,
+                ">": timestamp
+            });
 
-        let signature = obj.get("~").ok_or("no signature (~) in signature json")?;
-        let signature = signature.as_str().ok_or("signature (~) in signature json was not a string")?;
-        let signature64 = base64::decode(signature).or(Err("signature (~) in signature json was not base64"))?;
+            let signature = signature_obj.get("~").ok_or("no signature (~) in signature json")?;
+            let signature = signature.as_str().ok_or("signature (~) in signature json was not a string")?;
+            let signature64 = base64::decode(signature).or(Err("signature (~) in signature json was not base64"))?;
+            let signature = base64::encode_config(signature64, base64::URL_SAFE_NO_PAD);
+            // TODO use jsonwebtoken underlying ring::signature functions directly, instead of having to re-encode
 
-        let key = &node_id.split("/").next().unwrap()[1..];
-        let mut split = key.split(".");
-        let x = split.next().unwrap().to_string();
-        let y = split.next().ok_or("invalid key string: must be in format x.y")?;
-        let y = y.to_string();
+            let key = &node_id.split("/").next().unwrap()[1..];
+            let mut split = key.split(".");
+            let x = split.next().unwrap().to_string();
+            let y = split.next().ok_or("invalid key string: must be in format x.y")?;
+            let y = y.to_string();
 
-        let jwk_str = format!("{{\"kty\": \"EC\", \"crv\": \"P-256\", \"x\": \"{}\", \"y\": \"{}\", \"ext\": \"true\"}}", x, y).to_string();
-        let my_jwk: jwk::JsonWebKey = jwk_str.parse().or(Err("failed to parse JsonWebKey from string"))?;
-        //info!("jwk: {:?}", my_jwk);
-        //info!("jwk as der {:?}", my_jwk.key.to_der());
+            let jwk_str = format!("{{\"kty\": \"EC\", \"crv\": \"P-256\", \"x\": \"{}\", \"y\": \"{}\", \"ext\": \"true\"}}", x, y).to_string();
+            let my_jwk: jwk::JsonWebKey = jwk_str.parse().or(Err("failed to parse JsonWebKey from string"))?;
 
-        // https://github.com/amark/gun/blob/ced9cde41b2781ef3f89ffafd4417405eb473f8a/sea.js#L1413
+            // https://github.com/amark/gun/blob/ced9cde41b2781ef3f89ffafd4417405eb473f8a/sea.js#L1413
 
-        // try ecdsa crate?
+            let hash = digest(&SHA256, signed_obj.to_string().as_bytes()); // is verify already doing the hashing?
 
-        let peer_public_key = signature::UnparsedPublicKey::new(
-            &signature::ECDSA_P256_SHA256_ASN1,
-            my_jwk.key.to_der()
-        );
-
-        let hash = digest(&SHA256, signed_str.as_bytes()); // is verify already doing the hashing?
-
-        match peer_public_key.verify(hash.as_ref(), &signature64) {
-            Ok(_) => {
-                info!("good signature :)");
-                Ok(())
-            },
-            Err(_) => {
-                info!("bad signature {} of {}", signature, signed_str);
-                Err("bad signature")
+            match verify(&signature, hash.as_ref(), &my_jwk.key.to_decoding_key(), Algorithm::ES256) {
+                Ok(is_good) => {
+                    match is_good {
+                        true => continue,
+                        _ => { return Err("bad signature") }
+                    }
+                },
+                Err(_) => {
+                    error!("could not verify signature {} of {}", signature, signed_obj.to_string());
+                    return Err("could not verify signature");
+                }
             }
+        }
+        match has_children {
+            true => Ok(()),
+            false => Err("put message must have children")
         }
     }
 
-    fn from_put_obj(json: &SerdeJsonValue, json_str: String, msg_id: String, from: Addr) -> Result<Self, &'static str> {
+    fn from_put_obj(json: &Value, json_str: String, msg_id: String, from: Addr) -> Result<Self, &'static str> {
         let obj = json.get("put").unwrap().as_object().ok_or("invalid message: msg.put was not an object")?;
         let in_response_to = match json.get("@") {
             Some(in_response_to) => match in_response_to.as_str() {
@@ -227,6 +227,17 @@ impl Message {
         for (node_id, node_data) in obj.iter() {
             let node_data = node_data.as_object().ok_or("put node data was not an object")?;
             let updated_at_times = node_data["_"][">"].as_object().ok_or("no metadata _ in Put node object")?;
+
+            if let Some(first_letter) = node_id.chars().next() {
+                if first_letter == '~' { // signed data
+                    if let Err(e) = Self::verify_sig(node_id, node_data) {
+                        error!("invalid sig: {}", e);
+                        return Err(e);
+                    }
+                    debug!("valid sig");
+                }
+            }
+
             let mut children = Children::default();
             for (child_key, child_val) in node_data.iter() {
                 if child_key == "_" { continue; }
@@ -235,15 +246,7 @@ impl Message {
                 let value = GunValue::try_from(child_val.clone())?;
 
                 if let Some(first_letter) = node_id.chars().next() {
-                    if first_letter == '~' { // signed data
-                        /*
-                        if let Err(e) = Self::verify_sig(node_id, &value) {
-                            info!("invalid sig: {}", e);
-                            return Err(e);
-                        }
-                        info!("valid sig");
-                         */
-                    } else if node_id == "#" { // content-hash addressed data
+                    if node_id == "#" { // content-hash addressed data
                         let content_hash = digest(&SHA256, value.to_string().as_bytes());
                         if *child_key != base64::encode(content_hash.as_ref()) {
                             return Err("invalid content hash");
@@ -267,7 +270,7 @@ impl Message {
         Ok(Message::Put(put))
     }
 
-    fn from_get_obj(json: &SerdeJsonValue, json_str: String, msg_id: String, from: Addr) -> Result<Self, &'static str> {
+    fn from_get_obj(json: &Value, json_str: String, msg_id: String, from: Addr) -> Result<Self, &'static str> {
         /* TODO: other types of child_key selectors than equality.
 
         node.get({'.': {'<': cursor, '-': true}, '%': 20 * 1000}).once().map().on((value, key) => { ...
@@ -301,7 +304,7 @@ impl Message {
         Ok(Message::Get(get))
     }
     
-    pub fn from_json_obj(json: &SerdeJsonValue, json_str: String, from: Addr) -> Result<Self, &'static str> {
+    pub fn from_json_obj(json: &Value, json_str: String, from: Addr) -> Result<Self, &'static str> {
         let obj = match json.as_object() {
             Some(obj) => obj,
             _ => { return Err("not a json object"); }
@@ -328,7 +331,7 @@ impl Message {
     }
 
     pub fn try_from(s: &str, from: Addr) -> Result<Vec<Self>, &str> {
-        let json: SerdeJsonValue = match serde_json::from_str(s) {
+        let json: Value = match serde_json::from_str(s) {
             Ok(json) => json,
             Err(_) => { return Err("Failed to parse message as JSON"); }
         };
