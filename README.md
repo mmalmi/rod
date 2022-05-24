@@ -46,8 +46,8 @@ if let GunValue::Text(str) = sub.recv().await.unwrap() {
 - [x] Publish & subscribe (network messages only relayed to relevant peers)
 - [x] Disk storage ([sled.rs](https://sled.rs))
 - [x] Hash verification for content-addressed data (`db.get('#').get(data_hash).put(data)`)
-- [ ] Signature verification of user data (`db.get('~' + pubkey).get('profile') ...`)
-- [ ] Encryption & decryption (usually done on the client side in js, like [iris](https://github.com/iris-lib/iris-messenger) private messaging)
+- [x] Signature verification of user data (`db.get('~' + pubkey).get('profile') ...`)
+- [ ] Encryption & decryption (usually not needed on the server, but used on the client side in js, like [iris](https://github.com/iris-lib/iris-messenger) private messaging)
 
 ### Issues
 - Multicast doesn't relay large messages like Iris posts with photos
