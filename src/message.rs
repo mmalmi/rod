@@ -1,7 +1,7 @@
-use serde_json::{json, Value};
+use serde_json::{json, Value as JsonValue};
 use crate::utils::random_string;
 use std::collections::{HashSet, BTreeMap};
-use crate::types::*;
+use crate::types::{Value, NodeData, Children};
 use log::{debug, error};
 use std::convert::TryFrom;
 use crate::actor::Addr;
@@ -152,13 +152,13 @@ impl Message {
         }
     }
 
-    fn verify_sig(node_id: &str, node_data: &serde_json::Map<String, Value>) -> Result<(), &'static str> {
+    fn verify_sig(node_id: &str, node_data: &serde_json::Map<String, JsonValue>) -> Result<(), &'static str> {
         let mut has_children = false;
         for (child_key, timestamp) in node_data["_"][">"].as_object().ok_or("not an object")?.iter() {
             has_children = true;
             let value = node_data.get(child_key).ok_or("no matching key in object and _")?;
             let text = value.as_str().ok_or("not a string")?;
-            let json: Value = serde_json::from_str(text).or(Err("Failed to parse signature as JSON"))?;
+            let json: JsonValue = serde_json::from_str(text).or(Err("Failed to parse signature as JSON"))?;
             let signature_obj = json.as_object().ok_or("signature json was not an object")?;
             let signed_data = signature_obj.get(":").ok_or("no signed data (:) in signature json")?;
 
@@ -207,7 +207,7 @@ impl Message {
         }
     }
 
-    fn from_put_obj(json: &Value, json_str: String, msg_id: String, from: Addr) -> Result<Self, &'static str> {
+    fn from_put_obj(json: &JsonValue, json_str: String, msg_id: String, from: Addr) -> Result<Self, &'static str> {
         let obj = json.get("put").unwrap().as_object().ok_or("invalid message: msg.put was not an object")?;
         let in_response_to = match json.get("@") {
             Some(in_response_to) => match in_response_to.as_str() {
@@ -243,7 +243,7 @@ impl Message {
                 if child_key == "_" { continue; }
                 let updated_at = updated_at_times.get(child_key).ok_or("no updated_at found for Put key")?;
                 let updated_at = updated_at.as_f64().ok_or("updated_at was not a number")?;
-                let value = GunValue::try_from(child_val.clone())?;
+                let value = Value::try_from(child_val.clone())?;
 
                 if let Some(first_letter) = node_id.chars().next() {
                     if node_id == "#" { // content-hash addressed data
@@ -270,7 +270,7 @@ impl Message {
         Ok(Message::Put(put))
     }
 
-    fn from_get_obj(json: &Value, json_str: String, msg_id: String, from: Addr) -> Result<Self, &'static str> {
+    fn from_get_obj(json: &JsonValue, json_str: String, msg_id: String, from: Addr) -> Result<Self, &'static str> {
         /* TODO: other types of child_key selectors than equality.
 
         node.get({'.': {'<': cursor, '-': true}, '%': 20 * 1000}).once().map().on((value, key) => { ...
@@ -304,7 +304,7 @@ impl Message {
         Ok(Message::Get(get))
     }
     
-    pub fn from_json_obj(json: &Value, json_str: String, from: Addr) -> Result<Self, &'static str> {
+    pub fn from_json_obj(json: &JsonValue, json_str: String, from: Addr) -> Result<Self, &'static str> {
         let obj = match json.as_object() {
             Some(obj) => obj,
             _ => { return Err("not a json object"); }
@@ -331,7 +331,7 @@ impl Message {
     }
 
     pub fn try_from(s: &str, from: Addr) -> Result<Vec<Self>, &str> {
-        let json: Value = match serde_json::from_str(s) {
+        let json: JsonValue = match serde_json::from_str(s) {
             Ok(json) => json,
             Err(_) => { return Err("Failed to parse message as JSON"); }
         };

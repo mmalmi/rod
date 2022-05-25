@@ -9,22 +9,22 @@ pub type Children = BTreeMap<String, NodeData>;
 /// Data in a leaf node
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct NodeData {
-    pub value: GunValue,
+    pub value: Value,
     pub updated_at: f64
 }
 
 impl NodeData {
     pub fn default() -> Self {
         Self {
-            value: GunValue::Null,
+            value: Value::Null,
             updated_at: 0.0
         }
     }
 }
 
-/// Value types supported by gun.
+/// Value types supported by rod & gun.js.
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub enum GunValue {
+pub enum Value {
     Null,
     Bit(bool),
     Number(f64),
@@ -32,89 +32,89 @@ pub enum GunValue {
     Link(String),
 }
 
-impl GunValue {
+impl Value {
     pub fn size(&self) -> usize {
         match self {
-            GunValue::Text(s) => s.len(),
+            Value::Text(s) => s.len(),
             _ => std::mem::size_of_val(self)
         }
     }
 
     pub fn to_string(&self) -> String {
         match self {
-            GunValue::Null => "null".to_string(),
-            GunValue::Bit(bool) => {
+            Value::Null => "null".to_string(),
+            Value::Bit(bool) => {
                 if *bool {
                     "true".to_string()
                 } else {
                     "false".to_string()
                 }
             }
-            GunValue::Number(n) => n.to_string(),
-            GunValue::Text(t) => t.clone(),
-            GunValue::Link(l) => l.clone(),
+            Value::Number(n) => n.to_string(),
+            Value::Text(t) => t.clone(),
+            Value::Link(l) => l.clone(),
         }
     }
 }
 
-impl TryFrom<SerdeJsonValue> for GunValue {
+impl TryFrom<SerdeJsonValue> for Value {
     type Error = &'static str;
 
-    fn try_from(v: SerdeJsonValue) -> Result<GunValue, Self::Error> {
+    fn try_from(v: SerdeJsonValue) -> Result<Value, Self::Error> {
         match v {
-            SerdeJsonValue::Null => Ok(GunValue::Null),
-            SerdeJsonValue::Bool(b) => Ok(GunValue::Bit(b)),
-            SerdeJsonValue::String(s) => Ok(GunValue::Text(s)),
+            SerdeJsonValue::Null => Ok(Value::Null),
+            SerdeJsonValue::Bool(b) => Ok(Value::Bit(b)),
+            SerdeJsonValue::String(s) => Ok(Value::Text(s)),
             SerdeJsonValue::Number(n) => {
                 match n.as_f64() {
-                    Some(n) => Ok(GunValue::Number(n)),
+                    Some(n) => Ok(Value::Number(n)),
                     _ => Err("not convertible to f64")
                 }
             },
-            SerdeJsonValue::Object(_) => Err("cannot convert json object into GunValue"),
-            SerdeJsonValue::Array(_) => Err("cannot convert array into GunValue")
+            SerdeJsonValue::Object(_) => Err("cannot convert json object into Value"),
+            SerdeJsonValue::Array(_) => Err("cannot convert array into Value")
         }
     }
 }
 
-impl From<GunValue> for SerdeJsonValue {
-    fn from (v: GunValue) -> SerdeJsonValue {
+impl From<Value> for SerdeJsonValue {
+    fn from (v: Value) -> SerdeJsonValue {
         match v {
-            GunValue::Null => SerdeJsonValue::Null,
-            GunValue::Text(t) => SerdeJsonValue::String(t),
-            GunValue::Bit(b) => SerdeJsonValue::Bool(b),
-            GunValue::Number(n) => json!(n),
-            GunValue::Link(l) => SerdeJsonValue::String(l) // TODO fix. Object?
+            Value::Null => SerdeJsonValue::Null,
+            Value::Text(t) => SerdeJsonValue::String(t),
+            Value::Bit(b) => SerdeJsonValue::Bool(b),
+            Value::Number(n) => json!(n),
+            Value::Link(l) => SerdeJsonValue::String(l) // TODO fix. Object?
         }
     }
 }
 
-impl From<usize> for GunValue {
-    fn from(n: usize) -> GunValue {
-        GunValue::Number(n as f64)
+impl From<usize> for Value {
+    fn from(n: usize) -> Value {
+        Value::Number(n as f64)
     }
 }
 
-impl From<f32> for GunValue {
-    fn from(n: f32) -> GunValue {
-        GunValue::Number(n as f64)
+impl From<f32> for Value {
+    fn from(n: f32) -> Value {
+        Value::Number(n as f64)
     }
 }
 
-impl From<u64> for GunValue {
-    fn from(n: u64) -> GunValue {
-        GunValue::Number(n as f64)
+impl From<u64> for Value {
+    fn from(n: u64) -> Value {
+        Value::Number(n as f64)
     }
 }
 
-impl From<&str> for GunValue {
-    fn from(s: &str) -> GunValue {
-        GunValue::Text(s.to_string())
+impl From<&str> for Value {
+    fn from(s: &str) -> Value {
+        Value::Text(s.to_string())
     }
 }
 
-impl From<String> for GunValue {
-    fn from(s: String) -> GunValue {
-        GunValue::Text(s)
+impl From<String> for Value {
+    fn from(s: String) -> Value {
+        Value::Text(s)
     }
 }

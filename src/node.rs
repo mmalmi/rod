@@ -6,7 +6,7 @@ use std::sync::{
 use std::time::SystemTime;
 use crate::router::Router;
 use crate::message::{Message, Put, Get};
-use crate::types::*;
+use crate::types::{Value, NodeData, Children};
 use crate::actor::{Addr, ActorContext};
 use crate::utils::random_string;
 use log::{debug, info};
@@ -41,9 +41,7 @@ pub struct Config {
     pub websocket_server: bool,
     /// Default: `4944`
     pub websocket_server_port: u16,
-    /// Default: `8 * 1000 * 1000`
-    pub websocket_frame_max_size: usize,
-    /// Prioritize data storage for this Gun public key. Format: x.y where x and y are base64 encoded ECDSA public key coordinates.
+    /// Prioritize data storage for this public key. Format: x.y where x and y are base64 encoded ECDSA public key coordinates.
     /// Example: hyECQHwSo7fgr2MVfPyakvayPeixxsaAWVtZ-vbaiSc.TXIp8MnCtrnW6n2MrYquWPcc-DTmZzMBmc2yaGv9gIU
     pub my_pub: Option<String>,
     /// TLS certificate path. Default: `None`
@@ -66,7 +64,6 @@ impl Default for Config {
             outgoing_websocket_peers: Vec::new(),
             websocket_server: true,
             websocket_server_port: 4944,
-            websocket_frame_max_size: 8 * 1000 * 1000,
             cert_path: None,
             key_path: None,
             stats: true,
@@ -84,8 +81,8 @@ pub struct Node {
     path: Vec<String>,
     children: Arc<RwLock<BTreeMap<String, Node>>>,
     parent: Arc<RwLock<Option<(String, Node)>>>,
-    on_sender: broadcast::Sender<GunValue>,
-    map_sender: broadcast::Sender<(String, GunValue)>,
+    on_sender: broadcast::Sender<Value>,
+    map_sender: broadcast::Sender<(String, Value)>,
     actor_context: ActorContext,
     addr: Arc<RwLock<Addr>>,
     router: Arc<RwLock<Option<Addr>>>,
@@ -104,15 +101,15 @@ impl Node {
     /// ```
     /// tokio_test::block_on(async {
     ///
-    ///     use gundb::{Node, Config, GunValue};
+    ///     use rod::{Node, Config, Value};
     ///
     ///     let mut db = Node::new_with_config(Config {
-    ///         outgoing_websocket_peers: vec!["wss://some-server-to-sync.with/gun".to_string()],
+    ///         outgoing_websocket_peers: vec!["wss://some-server-to-sync.with/ws".to_string()],
     ///         ..Config::default()
     ///     });
     ///     let mut sub = db.get("greeting").on();
     ///     db.get("greeting").put("Hello World!".into());
-    ///     if let GunValue::Text(str) = sub.recv().await.unwrap() {
+    ///     if let Value::Text(str) = sub.recv().await.unwrap() {
     ///         assert_eq!(&str, "Hello World!");
     ///     }
     ///
@@ -127,8 +124,8 @@ impl Node {
             config: Arc::new(RwLock::new(config.clone())),
             children: Arc::new(RwLock::new(BTreeMap::new())),
             parent: Arc::new(RwLock::new(None)),
-            on_sender: broadcast::channel::<GunValue>(config.rust_channel_size).0,
-            map_sender: broadcast::channel::<(String, GunValue)>(config.rust_channel_size).0,
+            on_sender: broadcast::channel::<Value>(config.rust_channel_size).0,
+            map_sender: broadcast::channel::<(String, Value)>(config.rust_channel_size).0,
             addr: Arc::new(RwLock::new(addr)),
             router: Arc::new(RwLock::new(None)),
             actor_context: ActorContext::new(random_string(16))
@@ -186,8 +183,8 @@ impl Node {
             config: self.config.clone(),
             children: Arc::new(RwLock::new(BTreeMap::new())),
             parent: Arc::new(RwLock::new(Some((self.uid.read().unwrap().clone(), self.clone())))),
-            on_sender: broadcast::channel::<GunValue>(config.rust_channel_size).0,
-            map_sender: broadcast::channel::<(String, GunValue)>(config.rust_channel_size).0,
+            on_sender: broadcast::channel::<Value>(config.rust_channel_size).0,
+            map_sender: broadcast::channel::<(String, Value)>(config.rust_channel_size).0,
             uid: Arc::new(RwLock::new(new_child_uid)),
             router: self.router.clone(),
             addr: Arc::new(RwLock::new(Addr::new(sender))),
@@ -199,7 +196,7 @@ impl Node {
     }
 
     /// Subscribe to the Node's value.
-    pub fn on(&mut self) -> broadcast::Receiver<GunValue> {
+    pub fn on(&mut self) -> broadcast::Receiver<Value> {
         let key;
         if self.path.len() > 1 {
             key = self.path.iter().nth(self.path.len() - 1).cloned();
@@ -237,7 +234,7 @@ impl Node {
     }
 
     /// Subscribe to all children of this Node.
-    pub fn map(&self) -> broadcast::Receiver<(String, GunValue)> {
+    pub fn map(&self) -> broadcast::Receiver<(String, Value)> {
         /*
         for (key, child) in self.children.read().unwrap().iter() { // TODO can be faster with rayon multithreading?
             if let Some(child_data) = child.clone().get_stored_data() {
@@ -249,8 +246,8 @@ impl Node {
         // TODO: send get messages to adapters!!
     }
 
-    /// Set a GunValue for the Node.
-    pub fn put(&mut self, value: GunValue) {
+    /// Set a Value for the Node.
+    pub fn put(&mut self, value: Value) {
         let updated_at: f64 = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis() as f64;
         self.on_sender.send(value.clone()).ok();
         debug!("put {}", value.to_string());

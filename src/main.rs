@@ -1,16 +1,16 @@
 extern crate clap;
 use clap::{Arg, App, SubCommand};
-use gundb::{Node, Config};
+use rod::{Node, Config};
 use std::env;
 use ctrlc;
 
 #[tokio::main]
 async fn main() {
     let default_port = Config::default().websocket_server_port.to_string();
-    let matches = App::new("Gun")
+    let matches = App::new("Rod")
     .version("1.0")
     .author("Martti Malmi")
-    .about("Gun node runner")
+    .about("Rod node runner")
     .arg(Arg::with_name("config")
         .short("c")
         .long("config")
@@ -18,7 +18,7 @@ async fn main() {
         .help("Sets a custom config file")
         .takes_value(true))
     .subcommand(SubCommand::with_name("start")
-        .about("runs the gun server")
+        .about("runs the rod server")
         .arg(Arg::with_name("ws-server")
             .long("ws-server")
             .env("WS_SERVER")
@@ -122,7 +122,7 @@ async fn main() {
             println!("Node starting...");
             println!("Iris UI:      {}", url);
             println!("Stats:        {}/stats", url);
-            println!("Gun endpoint: {}/gun", url);
+            println!("Websocket endpoint: {}/ws", url);
         }
 
         let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();

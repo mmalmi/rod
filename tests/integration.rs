@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use gundb::{Node, Config, GunValue};
+    use rod::{Node, Config, Value};
     use tokio::time::{sleep, Duration};
     use std::sync::Once;
     use log::{debug};
@@ -36,7 +36,7 @@ mod tests {
         let mut node = gun.get("Anborn");
         let mut sub = node.on();
         node.put("Ancalagon".into());
-        if let GunValue::Text(str) = sub.recv().await.unwrap() {
+        if let Value::Text(str) = sub.recv().await.unwrap() {
             assert_eq!(&str, "Ancalagon");
         }
     }
@@ -51,7 +51,7 @@ mod tests {
         let mut node = gun.get("Finglas");
         node.put("Fingolfin".into());
         let mut sub = node.on();
-        if let GunValue::Text(str) = sub.recv().await.unwrap() {
+        if let Value::Text(str) = sub.recv().await.unwrap() {
             assert_eq!(&str, "Fingolfin");
         }
     }
@@ -81,16 +81,16 @@ mod tests {
         peer1.get("alpha").get("name").put("Amandil".into());
         peer2.get("beta").get("name").put("Beregond".into());
         match sub1.recv().await.unwrap() {
-            GunValue::Text(str) => {
+            Value::Text(str) => {
                 assert_eq!(&str, "Beregond");
             },
-            _ => panic!("Expected GunValue::Text")
+            _ => panic!("Expected Value::Text")
         }
         match sub2.recv().await.unwrap() {
-            GunValue::Text(str) => {
+            Value::Text(str) => {
                 assert_eq!(&str, "Amandil");
             },
-            _ => panic!("Expected GunValue::Text")
+            _ => panic!("Expected Value::Text")
         }
         peer1.stop();
         peer2.stop();
@@ -120,7 +120,7 @@ mod tests {
 
             sleep(Duration::from_millis(10000)).await;
             let mut sub = name.on();
-            if let GunValue::Text(str) = sub.recv().await.unwrap() {
+            if let Value::Text(str) = sub.recv().await.unwrap() {
                 assert_eq!(&str, "Ainu"); // stuff by our public key should remain
             }
 
@@ -151,16 +151,16 @@ mod tests {
         let mut sub1 = peer1.get("sigma").on();
         let mut sub2 = peer2.get("gamma").on();
         match sub1.recv().await.unwrap() {
-            GunValue::Text(str) => {
+            Value::Text(str) => {
                 assert_eq!(&str, "Smaug");
             },
-            _ => panic!("Expected GunValue::Text")
+            _ => panic!("Expected Value::Text")
         };
         match sub2.recv().await.unwrap() {
-            GunValue::Text(str) => {
+            Value::Text(str) => {
                 assert_eq!(&str, "Gorlim");
             },
-            _ => panic!("Expected GunValue::Text")
+            _ => panic!("Expected Value::Text")
         };
         peer1.stop();
         peer2.stop();

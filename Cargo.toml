@@ -1,9 +1,9 @@
 [package]
-name = "gundb"
+name = "rod"
 version = "0.2.1"
 edition = "2018"
-repository = "https://github.com/mmalmi/gun-rs"
-description = "Distributed graph database that syncs over websockets and multicast"
+repository = "https://github.com/mmalmi/rod"
+description = "Distributed graph database that syncs over websockets and multicast. Gun.js compatible."
 license = "MIT"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

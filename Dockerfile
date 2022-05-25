@@ -1,6 +1,6 @@
 FROM rust:latest
 
-WORKDIR /usr/src/gun-rs
+WORKDIR /usr/src/rod
 
 COPY Cargo.toml .
 COPY Cargo.lock .
@@ -9,4 +9,4 @@ COPY src src
 
 RUN cargo build --release
 
-CMD ["./target/release/gundb", "start"]
+CMD ["./target/release/rod", "start"]
