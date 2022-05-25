@@ -15,7 +15,7 @@
         <div class="row">
             <div class="col-md-4">
                 <div class="card card-chart">
-                    <div class="card-header"><h4 class="card-title">Gun relay stats</h4></div>
+                    <div class="card-header"><h4 class="card-title">Rod relay stats</h4></div>
                     <div class="card-body">
                         <div class="table-responsive">
                             <table class="table tablesorter " id="">
@@ -101,7 +101,7 @@
         <div class="container-fluid">
           <ul class="nav">
             <li class="nav-item">
-              <a href="https://github.com/mmalmi/gun-rs" class="nav-link">
+              <a href="https://github.com/mmalmi/rod" class="nav-link">
                 GitHub
               </a>
             </li>
@@ -114,7 +114,7 @@
 
 <script src="/stats/gun.js"></script>
 <script>
-const gun = window.gun = GUN(document.location.origin + '/gun');
+const gun = window.gun = GUN(document.location.origin + '/ws');
 
 fetch("/peer_id", {method:"get"}).then(async res => {
     if (res.ok) {
