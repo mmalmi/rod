@@ -3,7 +3,7 @@ name = "rod"
 version = "0.2.2"
 edition = "2018"
 repository = "https://github.com/mmalmi/rod"
-description = "Distributed graph database that syncs over websockets and multicast. Gun.js compatible."
+description = "Distributed graph database that syncs over websockets and multicast"
 license = "MIT"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
