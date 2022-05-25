@@ -182,8 +182,6 @@ impl Message {
             let jwk_str = format!("{{\"kty\": \"EC\", \"crv\": \"P-256\", \"x\": \"{}\", \"y\": \"{}\", \"ext\": \"true\"}}", x, y).to_string();
             let my_jwk: jwk::JsonWebKey = jwk_str.parse().or(Err("failed to parse JsonWebKey from string"))?;
 
-            // https://github.com/amark/gun/blob/ced9cde41b2781ef3f89ffafd4417405eb473f8a/sea.js#L1413
-
             let hash = digest(&SHA256, signed_obj.to_string().as_bytes()); // is verify already doing the hashing?
 
             match verify(&signature, hash.as_ref(), &my_jwk.key.to_decoding_key(), Algorithm::ES256) {
