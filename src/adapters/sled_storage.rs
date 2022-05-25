@@ -108,22 +108,60 @@ impl SledNodeData {
     }
 }
 
+#[derive(Clone)]
 pub struct SledStorage {
     pub config: Config,
     store: sled::Db,
+    meta: sled::Tree
 }
 
 impl SledStorage {
     pub fn new(config: Config) -> Self {
         let store = config.sled_config.open().unwrap();
-        SledStorage {
+        let meta = store.open_tree("_meta").unwrap();
+        meta.set_merge_operator(Self::merge_meta);
+        let s = SledStorage {
             config,
-            store
+            store,
+            meta
+        };
+        s.change_size(0);
+        s
+    }
+
+    fn merge_meta(
+        key: &[u8],
+        old_value: Option<&[u8]>,
+        new_value: &[u8]
+        ) -> Option<Vec<u8>> {
+
+        let key = std::str::from_utf8(key).unwrap();
+        if key == "size" {
+            let mut new_size: u64;
+            let new_value = bincode::deserialize::<i64>(new_value).unwrap();
+            if let Some(old_value) = old_value {
+                let old_value = bincode::deserialize::<u64>(old_value).unwrap();
+                new_size = ((old_value as i64) + new_value).max(0) as u64;
+            } else {
+                new_size = new_value.max(0) as u64;
+            }
+            return Some(bincode::serialize(&new_size).unwrap())
+        }
+        Some(new_value.to_vec())
+    }
+
+    pub fn get_size(&self) -> Result<u64, &'static str> {
+        match self.meta.get(b"size") {
+            Ok(size) => {
+                let size = size.ok_or("no size found")?;
+                bincode::deserialize::<u64>(&size).or(Err("could not deserialize db size"))
+            },
+            _ => Err("sled read failed")
         }
     }
 
-    pub fn size_on_disk(&self) -> Result<u64, sled::Error> {
-        self.store.size_on_disk()
+    fn change_size(&self, change: i64) {
+        self.meta.merge(b"size", bincode::serialize(&change).unwrap());
     }
 
     fn open_child(&self, node_id: &String, child_key: &String, bytes: &[u8], update_times_opened: bool) -> Result<SledNodeData, ()> {
@@ -199,6 +237,9 @@ impl SledStorage {
 
     fn handle_put(&self, put: Put) {
         for (node_id, update_data) in put.updated_nodes.into_iter().rev() {
+            if (node_id.len() > 0) && node_id.chars().next().unwrap() == '_' {
+                continue; // _ paths reserved for our metadata. we can add escaping if needed.
+            }
             debug!("saving k-v {}: {:?}", node_id, update_data);
             let res = unwrap_or_return!(self.store.get(&node_id));
             if let Some(_children) = res {
@@ -208,13 +249,16 @@ impl SledStorage {
                         let mut existing: SledNodeData = unwrap_or_return!(self.open_child(&node_id, &child_id, &existing, false));
                         if child_data.updated_at >= existing.data.updated_at {
                             existing.data = child_data;
+                            let old_size = existing.size as i64;
                             existing.update_size();
                             existing.update_priority(&self, false);
                             let _ = children.insert(child_id.clone(), bincode::serialize(&existing).unwrap());
+                            self.change_size((existing.size as i64) - old_size);
                         }
                     } else {
                         let child = SledNodeData::new(node_id.clone(), child_id.clone(), child_data, &self);
                         let _ = children.insert(child_id, bincode::serialize(&child).unwrap());
+                        self.change_size(child.size as i64);
                     }
                 }
             } else {
@@ -223,25 +267,25 @@ impl SledStorage {
                 for (child_id, child_data) in update_data {
                     let child = SledNodeData::new(node_id.clone(), child_id.clone(), child_data, &self);
                     let _ = children.insert(child_id, bincode::serialize(&child).unwrap());
+                    self.change_size(child.size as i64);
                 }
             }
         }
     }
 
-    fn evict(store: &sled::Db, amount: u64) {
+    fn evict(&self, amount: u64) {
         let mut evicted = 0;
-        let index = store.open_tree("_nodes_by_priority").unwrap();
+        let index = self.store.open_tree("_nodes_by_priority").unwrap();
         while evicted < amount {
             match index.pop_min() { // TODO transaction? don't pop unless the actual data was removed
                 Ok(opt) => {
                     if let Some((key, entry)) = opt {
                         let entry = bincode::deserialize::<NodesByPriorityEntry>(&entry).unwrap();
                         let key = String::from_utf8(key.to_vec()).unwrap();
-                        //debug!("should evict {} {} {}", key, entry.node_id, entry.child_key);
-                        //debug!("  evicted {} of {}", evicted, amount);
-                        let node = unwrap_or_return!(store.open_tree(&entry.node_id));
+                        let node = unwrap_or_return!(self.store.open_tree(&entry.node_id));
                         node.remove(&entry.child_key);
-                        evicted += entry.size * 100; // quite a disparity between size on disk and our estimate?
+                        self.change_size(0 - (entry.size as i64));
+                        evicted += entry.size;
                     }
                 },
                 _ => {}
@@ -265,19 +309,19 @@ impl Actor for SledStorage {
     async fn pre_start(&mut self, ctx: &ActorContext) {
         info!("SledStorage adapter starting");
         if let Some(limit) = self.config.sled_storage_limit.clone() {
-            let store = self.store.clone();
+            let storage = self.clone();
             ctx.abort_on_stop(tokio::spawn(async move {
                 loop {
                     sleep(Duration::from_millis(2000)).await;
-                    match store.size_on_disk() {
+                    match storage.get_size() {
                         Ok(size) => {
                             if size >= limit {
                                 let excess = size - limit;
-                                info!("sled db too big ({}), evicting lowest priority data", size);
-                                //Self::evict(&store, excess); // TODO: size_on_disk() not shrinking (enough)
+                                info!("sled db too big ({} bytes), evicting lowest priority data", size);
+                                storage.evict(excess); // TODO: size_on_disk() not shrinking (enough)
                                 sleep(Duration::from_millis(1000)).await;
-                                let new_size = store.size_on_disk().unwrap();
-                                info!("size on disk {} after eviction (was {})", size, new_size);
+                                let new_size = storage.get_size().unwrap();
+                                info!("size after eviction {} (was {} bytes)", new_size, size);
                             }
                         },
                         _ => {}

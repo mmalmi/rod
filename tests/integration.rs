@@ -114,7 +114,7 @@ mod tests {
             let mut name = gun.get("~asdf").get("name");
             name.put("Ainu".into());
 
-            for i in 0..100 {
+            for i in 0..1000 {
                 gun.get("something").get(&i.to_string()).put("I just want to fill your disk.".into());
             }
 
