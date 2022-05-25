@@ -49,7 +49,7 @@ impl Actor for Router {
             self.storage_adapters.insert(addr);
         }
         if config.memory_storage {
-            let addr = ctx.start_actor(Box::new(MemoryStorage::new(config.clone())));
+            let addr = ctx.start_actor(Box::new(MemoryStorage::new()));
             self.storage_adapters.insert(addr);
         }
         if config.outgoing_websocket_peers.len() > 0 {
@@ -73,7 +73,7 @@ impl Actor for Router {
         match msg {
             Message::Put(put) => self.handle_put(put),
             Message::Get(get) => self.handle_get(get),
-            Message::Hi { from, peer_id } => { self.known_peers.insert(from); }
+            Message::Hi { from, peer_id: _ } => { self.known_peers.insert(from); }
         };
     }
 }
@@ -178,11 +178,15 @@ impl Router {
             }
         }
         if sent_to < 1 {
+            let mut errored = HashSet::new();
             while let Some(addr) = self.known_peers.iter().choose(&mut rng) {
                 match addr.sender.send(Message::Get(get.clone())) {
                     Ok(_) => { break },
-                    _=> { self.known_peers.remove(&addr.clone()); }
+                    _=> { errored.insert(addr.clone()); }
                 }
+            }
+            for addr in errored {
+                self.known_peers.remove(&addr);
             }
         }
     }
@@ -242,11 +246,15 @@ impl Router {
                 }
                 if sent_to < 1 {
                     let mut rng = thread_rng();
+                    let mut errored = HashSet::new();
                     while let Some(addr) = self.known_peers.iter().choose(&mut rng) {
                         match addr.sender.send(Message::Put(put.clone())) {
                             Ok(_) => { break },
-                            _=> { self.known_peers.remove(&addr.clone()); }
+                            _=> { errored.insert(addr.clone()); }
                         }
+                    }
+                    for addr in errored {
+                        self.known_peers.remove(&addr);
                     }
                 }
             }

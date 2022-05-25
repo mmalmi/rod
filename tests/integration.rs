@@ -3,7 +3,7 @@ mod tests {
     use rod::{Node, Config, Value};
     use tokio::time::{sleep, Duration};
     use std::sync::Once;
-    use log::{debug};
+    //use log::{debug};
 
     static INIT: Once = Once::new();
 
@@ -100,7 +100,7 @@ mod tests {
     async fn sled_storage() {
         enable_logger();
         let path = std::path::Path::new("./cargo_test_sled_db");
-        std::fs::remove_dir_all(path);
+        std::fs::remove_dir_all(path).ok();
         {
             let mut gun = Node::new_with_config(Config {
                 memory_storage: false,
@@ -126,7 +126,7 @@ mod tests {
 
             gun.stop();
         }
-        std::fs::remove_dir_all(path);
+        std::fs::remove_dir_all(path).ok();
     }
 
     #[tokio::test]

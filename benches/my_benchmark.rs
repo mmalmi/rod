@@ -1,6 +1,6 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
 use criterion::async_executor::FuturesExecutor;
-use gundb::{Node, Config};
+use rod::{Node, Config};
 use tokio::runtime::Runtime;
 use tokio::time::{sleep, Duration};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -23,7 +23,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                     let mut node = db.get("a").get(&key);
                     node.put("hello".into());
                     let mut sub = node.on();
-                    sub.recv().await;
+                    sub.recv().await.ok();
                 }
             });
             db.stop();
@@ -35,7 +35,7 @@ fn criterion_benchmark(c: &mut Criterion) {
 
     group.bench_function("sled_storage get-put", |b| {
         let path = std::path::Path::new("./benchmark_db");
-        std::fs::remove_dir_all(path);
+        std::fs::remove_dir_all(path).ok();
         rt.block_on(async {
             sleep(Duration::from_millis(100)).await;
             let mut db = Node::new_with_config(Config {
@@ -53,21 +53,21 @@ fn criterion_benchmark(c: &mut Criterion) {
                     let mut node = db.get("a").get(&key);
                     node.put("hello".into());
                     let mut sub = node.on();
-                    sub.recv().await;
+                    sub.recv().await.ok();
                 }
             });
             db.stop(); // should this be awaitable?
             sleep(Duration::from_millis(100)).await;
         });
         // https://bheisler.github.io/criterion.rs/book/user_guide/timing_loops.html
-        std::fs::remove_dir_all(path);
+        std::fs::remove_dir_all(path).ok();
     });
 
     group.bench_function("websocket get-put", |b| {
         let path1 = std::path::Path::new("./benchmark1_db");
         let path2 = std::path::Path::new("./benchmark2_db");
-        std::fs::remove_dir_all(path1);
-        std::fs::remove_dir_all(path2);
+        std::fs::remove_dir_all(path1).ok();
+        std::fs::remove_dir_all(path2).ok();
         rt.block_on(async {
             //sleep(Duration::from_millis(100)).await;
             let mut peer1 = Node::new_with_config(Config {
@@ -83,7 +83,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                 sled_config: sled::Config::default().path(path2),
                 memory_storage: true,
                 websocket_server: false,
-                outgoing_websocket_peers: vec!["ws://localhost:4944/gun".to_string()],
+                outgoing_websocket_peers: vec!["ws://localhost:4944/ws".to_string()],
                 ..Config::default()
             });
             //sleep(Duration::from_millis(1000)).await; // let the ws connect
@@ -103,8 +103,8 @@ fn criterion_benchmark(c: &mut Criterion) {
             sleep(Duration::from_millis(100)).await;
         });
         // https://bheisler.github.io/criterion.rs/book/user_guide/timing_loops.html
-        std::fs::remove_dir_all(path1);
-        std::fs::remove_dir_all(path2);
+        std::fs::remove_dir_all(path1).ok();
+        std::fs::remove_dir_all(path2).ok();
     });
     group.finish();
 }

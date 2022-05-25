@@ -95,7 +95,7 @@ impl SledNodeData {
             // update index
             let index = storage.get_index();
             let old_index_key = format!("{:0>9}{}", old_prio, self.id);
-            index.remove(&old_index_key);
+            index.remove(&old_index_key).expect("failed to remove old index key");
             let new_index_key = format!("{:0>9}{}", self.priority, self.id);
             debug!("old {} new {}", old_index_key, new_index_key);
             let entry = NodesByPriorityEntry {
@@ -103,7 +103,7 @@ impl SledNodeData {
                 child_key: self.child_key.clone(),
                 size: self.size
             };
-            let _ = index.insert(new_index_key, bincode::serialize(&entry).unwrap());
+            index.insert(new_index_key, bincode::serialize(&entry).unwrap()).expect("failed to write into node priority index");
         }
     }
 }
@@ -137,7 +137,7 @@ impl SledStorage {
 
         let key = std::str::from_utf8(key).unwrap();
         if key == "size" {
-            let mut new_size: u64;
+            let new_size: u64;
             let new_value = bincode::deserialize::<i64>(new_value).unwrap();
             if let Some(old_value) = old_value {
                 let old_value = bincode::deserialize::<u64>(old_value).unwrap();
@@ -161,7 +161,7 @@ impl SledStorage {
     }
 
     fn change_size(&self, change: i64) {
-        self.meta.merge(b"size", bincode::serialize(&change).unwrap());
+        self.meta.merge(b"size", bincode::serialize(&change).unwrap()).expect("sled db size update failed");
     }
 
     fn open_child(&self, node_id: &String, child_key: &String, bytes: &[u8], update_times_opened: bool) -> Result<SledNodeData, ()> {
@@ -279,16 +279,15 @@ impl SledStorage {
         while evicted < amount {
             match index.pop_min() { // TODO transaction? don't pop unless the actual data was removed
                 Ok(opt) => {
-                    if let Some((key, entry)) = opt {
+                    if let Some((_key, entry)) = opt {
                         let entry = bincode::deserialize::<NodesByPriorityEntry>(&entry).unwrap();
-                        let key = String::from_utf8(key.to_vec()).unwrap();
                         let node = unwrap_or_return!(self.store.open_tree(&entry.node_id));
-                        node.remove(&entry.child_key);
+                        node.remove(&entry.child_key).expect("evict failed");
                         self.change_size(0 - (entry.size as i64));
                         evicted += entry.size;
                     }
                 },
-                _ => {}
+                _ => break
             }
         }
         debug!("evict done");

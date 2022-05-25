@@ -66,6 +66,14 @@ cargo install cargo-watch
 RUST_LOG=debug cargo watch -x 'run -- start'
 ```
 
+```
+cargo test
+```
+
+```
+cargo bench
+```
+
 ## Run on Heroku
 
 ```

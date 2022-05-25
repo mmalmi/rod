@@ -6,8 +6,6 @@ use log::{debug, error};
 use std::convert::TryFrom;
 use crate::actor::Addr;
 use java_utils::HashCode;
-use ring::signature::{self, KeyPair};
-use jsonwebtoken::jwk::*;
 use jsonwebtoken::Algorithm;
 use jsonwebtoken::crypto::verify;
 use ring::digest::{digest, SHA256};
@@ -245,12 +243,10 @@ impl Message {
                 let updated_at = updated_at.as_f64().ok_or("updated_at was not a number")?;
                 let value = Value::try_from(child_val.clone())?;
 
-                if let Some(first_letter) = node_id.chars().next() {
-                    if node_id == "#" { // content-hash addressed data
-                        let content_hash = digest(&SHA256, value.to_string().as_bytes());
-                        if *child_key != base64::encode(content_hash.as_ref()) {
-                            return Err("invalid content hash");
-                        }
+                if node_id == "#" { // content-hash addressed data
+                    let content_hash = digest(&SHA256, value.to_string().as_bytes());
+                    if *child_key != base64::encode(content_hash.as_ref()) {
+                        return Err("invalid content hash");
                     }
                 }
 

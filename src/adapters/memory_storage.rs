@@ -2,7 +2,6 @@ use std::collections::{HashMap, HashSet, BTreeMap};
 
 use crate::message::{Message, Put, Get};
 use crate::actor::{Actor, ActorContext};
-use crate::Config;
 use crate::types::*;
 
 use async_trait::async_trait;
@@ -10,16 +9,12 @@ use log::{debug, info};
 use std::sync::{Arc, RwLock};
 
 pub struct MemoryStorage {
-    config: Config,
-    graph_size_bytes: Arc<RwLock<usize>>,
     store: Arc<RwLock<HashMap<String, Children>>>, // could use an LRU cache or other existing option
 }
 
 impl MemoryStorage {
-    pub fn new(config: Config) -> Self {
+    pub fn new() -> Self {
         MemoryStorage {
-            config,
-            graph_size_bytes: Arc::new(RwLock::new(0)),
             store: Arc::new(RwLock::new(HashMap::new())),
         }
     }
