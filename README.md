@@ -2,27 +2,20 @@
 
 Rust Object Database.
 
-Pure Rust implementation of [Gun.js](https://github.com/amark/gun). For a wasm version, check out [gun-rs-wasm](https://github.com/mmalmi/gun-rs-wasm).
-
-[Iris-messenger](https://github.com/irislib/iris-messenger) uses the gun-rs node at wss://gun-rs.iris.to/gun
-
-## Why?
-
-- Rust can be compiled into high-performing native binaries on many platforms, including embedded systems.
-- Maintaining and contributing to the codebase is easier than in [Gun.js](https://github.com/amark/gun). Gun.js doesn't have compilation or minification steps, and the code is kind of manually minified 😄
+The decentralized social networking application [Iris-messenger](https://github.com/irislib/iris-messenger) syncs over Rod peers by default.
 
 ## Use
 
 Install [Rust](https://doc.rust-lang.org/book/ch01-01-installation.html) first.
 
-### Gun relay
+### Install & run
 
 ```
 cargo install rod
 rod start
 ```
 
-### Gun library
+### Library
 
 ```rust
 use rod::{Node, Config, Value};
@@ -41,7 +34,7 @@ if let Value::Text(str) = sub.recv().await.unwrap() {
 
 15/5/2022:
 
-- [x] Gun basic API
+- [x] Basic 
 - [x] CLI for running the server
 - [x] Incoming websockets
 - [x] Outgoing websockets (env PEERS=wss://some-server-url.herokuapp.com/ws)
