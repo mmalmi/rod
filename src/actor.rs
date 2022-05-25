@@ -19,7 +19,6 @@ pub trait Actor: Send + Sync + 'static {
     async fn handle(&mut self, message: Message, context: &ActorContext);
     async fn pre_start(&mut self, _context: &ActorContext) {}
     async fn stopping(&mut self, _context: &ActorContext) {}
-
 }
 impl dyn Actor {
     async fn run(&mut self, mut receiver: UnboundedReceiver<Message>, mut stop_receiver: Receiver<()>, context: ActorContext) {
