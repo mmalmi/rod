@@ -1,10 +1,10 @@
 {
-  "name": "gun-rs",
+  "name": "rod",
   "stack": "heroku-20",
-  "website": "https://github.com/mmalmi/gun-rs",
-  "repository": "https://github.com/mmalmi/gun-rs",
+  "website": "https://github.com/mmalmi/rod",
+  "repository": "https://github.com/mmalmi/rod",
   "logo": "https://avatars3.githubusercontent.com/u/8811914",
-  "keywords": ["rust", "gun", "gunDB", "database","graph","offline-first"],
+  "keywords": ["rust", "gun", "rod", "gunDB", "database","graph","offline-first"],
   "description": "Offline-First Rust Graph Database Server Peer",
   "buildpacks": [
     {

@@ -1,1 +1,1 @@
-web: ./target/release/gundb start
+web: ./target/release/rod start
