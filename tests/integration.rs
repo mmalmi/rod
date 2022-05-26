@@ -106,7 +106,7 @@ mod tests {
                 memory_storage: false,
                 sled_storage: true,
                 sled_config: sled::Config::default().path(path),
-                sled_storage_limit: Some(10000),
+                sled_max_size: Some(10000),
                 my_pub: Some("asdf".to_string()),
                 ..Config::default()
             });
