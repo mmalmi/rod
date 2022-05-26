@@ -151,9 +151,7 @@ impl Message {
     }
 
     fn verify_sig(node_id: &str, node_data: &serde_json::Map<String, JsonValue>) -> Result<(), &'static str> {
-        let mut has_children = false;
         for (child_key, timestamp) in node_data["_"][">"].as_object().ok_or("not an object")?.iter() {
-            has_children = true;
             let value = node_data.get(child_key).ok_or("no matching key in object and _")?;
             let text = value.as_str().ok_or("not a string")?;
             let json: JsonValue = serde_json::from_str(text).or(Err("Failed to parse signature as JSON"))?;
@@ -197,10 +195,7 @@ impl Message {
                 }
             }
         }
-        match has_children {
-            true => Ok(()),
-            false => Err("put message must have children")
-        }
+        Ok(())
     }
 
     fn from_put_obj(json: &JsonValue, json_str: String, msg_id: String, from: Addr) -> Result<Self, &'static str> {
@@ -227,7 +222,7 @@ impl Message {
             if let Some(first_letter) = node_id.chars().next() {
                 if first_letter == '~' { // signed data
                     if let Err(e) = Self::verify_sig(node_id, node_data) {
-                        error!("invalid sig: {}", e);
+                        error!("invalid sig: {} for msg {}", e, json_str);
                         return Err(e);
                     }
                     debug!("valid sig");

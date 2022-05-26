@@ -307,7 +307,7 @@ impl Actor for SledStorage {
 
     async fn pre_start(&mut self, ctx: &ActorContext) {
         info!("SledStorage adapter starting");
-        if let Some(limit) = self.config.sled_storage_limit.clone() {
+        if let Some(limit) = self.config.sled_max_size.clone() {
             let storage = self.clone();
             ctx.abort_on_stop(tokio::spawn(async move {
                 loop {

@@ -73,6 +73,12 @@ async fn main() {
             .help("Sled storage (disk+mem)")
             .default_value("true")
             .takes_value(true))
+        .arg(Arg::with_name("sled-max-size")
+            .long("sled-max-size")
+            .env("SLED_MAX_SIZE")
+            .value_name("BYTES")
+            .help("Data in excess of this will be evicted based on priority")
+            .takes_value(true))
         .arg(Arg::with_name("stats")
             .long("stats")
             .env("STATS")
@@ -101,6 +107,11 @@ async fn main() {
             _ => 10
         };
 
+        let sled_max_size: Option<u64> = match matches.value_of("sled-max-size") {
+            Some(v) => Some(v.parse::<u64>().unwrap()),
+            _ => None
+        };
+
         let websocket_server = matches.value_of("ws-server").unwrap() == "true";
 
         let node = Node::new_with_config(Config {
@@ -109,6 +120,7 @@ async fn main() {
             websocket_server,
             websocket_server_port,
             sled_storage: matches.value_of("sled-storage").unwrap() != "false",
+            sled_max_size,
             memory_storage: matches.value_of("memory-storage").unwrap() == "true",
             multicast: matches.value_of("multicast").unwrap() == "true",
             cert_path: matches.value_of("cert-path").map(|s| s.to_string()),

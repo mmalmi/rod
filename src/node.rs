@@ -30,7 +30,7 @@ pub struct Config {
     /// Sled.rs config. Default: sled::Config defaults + db path "sled_db".
     pub sled_config: sled::Config,
     /// Limit for the sled database size on disk in bytes. Default: None
-    pub sled_storage_limit: Option<u64>,
+    pub sled_max_size: Option<u64>,
     /// Enable in-memory storage? Default: false
     pub memory_storage: bool,
     /// Enable multicast? Default: false
@@ -58,7 +58,7 @@ impl Default for Config {
             rust_channel_size: 1000,
             sled_storage: true,
             sled_config: sled::Config::new().path("sled_db"),
-            sled_storage_limit: None,
+            sled_max_size: None,
             memory_storage: false,
             multicast: false,
             outgoing_websocket_peers: Vec::new(),
