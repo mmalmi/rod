@@ -17,6 +17,7 @@ pub struct Get {
     pub from: Addr,
     pub recipients: Option<HashSet<String>>,
     pub node_id: String,
+    pub checksum: Option<i32>,
     pub child_key: Option<String>,
     pub json_str: Option<String>
 }
@@ -28,7 +29,8 @@ impl Get {
             recipients: None,
             node_id,
             child_key,
-            json_str: None
+            json_str: None,
+            checksum: None
         }
     }
 
@@ -79,7 +81,7 @@ impl Put {
         Put::new(updated_nodes, None, from)
     }
 
-    pub fn to_string(&self) -> String {
+    pub fn to_string(&mut self) -> String {
         if let Some(json_str) = self.json_str.clone() {
             return json_str;
         }
@@ -109,12 +111,16 @@ impl Put {
             Some(s) => *s,
             _ => {
                 let put_str = json["put"].to_string();
-                put_str.hash_code()
+                let checksum = put_str.hash_code();
+                self.checksum = Some(checksum);
+                checksum
             }
         };
         json["##"] = json!(checksum);
 
-        json.to_string()
+        let s = json.to_string();
+        self.json_str = Some(s.clone());
+        s
     }
 }
 
@@ -129,7 +135,7 @@ impl Message {
     pub fn to_string(self) -> String {
         match self {
             Message::Get(get) => get.to_string(),
-            Message::Put(put) => put.to_string(),
+            Message::Put(mut put) => put.to_string(),
             Message::Hi { from: _, peer_id } => json!({"dam": "hi","#": peer_id}).to_string()
         }
     }
@@ -277,6 +283,13 @@ impl Message {
             Some(str) => str,
             _ => { return Err("no node id (#) found in get message"); }
         };
+        let checksum = match json.get("##") {
+            Some(checksum) => match checksum.as_i64() {
+                Some(checksum) => Some(checksum as i32),
+                _ => None,
+            },
+            _ => None
+        };
         let child_key = match get.get(".") {
             Some(child_key) => match child_key.as_str() {
                 Some(child_key) => Some(child_key.to_string()),
@@ -292,7 +305,8 @@ impl Message {
             recipients: None,
             node_id: node_id.to_string(),
             child_key,
-            json_str: Some(json_str)
+            json_str: Some(json_str),
+            checksum
         };
         Ok(Message::Get(get))
     }

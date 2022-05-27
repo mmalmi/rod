@@ -131,7 +131,7 @@ impl Router {
         if self.is_message_seen(&get.id) {
             return;
         }
-        let seen_get_message = SeenGetMessage { from: get.from.clone(), last_reply_checksum: None };
+        let seen_get_message = SeenGetMessage { from: get.from.clone(), last_reply_checksum: get.checksum.clone() };
         self.seen_get_messages.insert(get.id.clone(), seen_get_message);
 
         // Record subscriber

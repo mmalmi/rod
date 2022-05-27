@@ -132,7 +132,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                 "#": "yvd2vk4338i"
               }
             ]
-            "##, addr.clone()).unwrap();
+            "##, addr.clone(), true).unwrap();
         })
     });
 
@@ -157,7 +157,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                 "#": "yvd2vk4338i"
               }
             ]
-            "##, addr.clone()).unwrap();
+            "##, addr.clone(), false).unwrap();
         })
     });
 
@@ -189,7 +189,7 @@ fn criterion_benchmark(c: &mut Criterion) {
               },
               "#": "issWkzotF"
             }
-            "##, addr.clone()).unwrap();
+            "##, addr.clone(), false).unwrap();
         })
     });
 }

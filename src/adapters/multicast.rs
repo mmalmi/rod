@@ -62,7 +62,7 @@ impl Actor for Multicast {
         debug!("out {}", msg.get_id());
         if msg.is_from(&ctx.addr) { return; } // should this be in Actor?
         match msg {
-            Message::Put(put) => {
+            Message::Put(mut put) => {
                 if let Err(e) = self.socket.read().await.broadcast(put.to_string().as_bytes()) {
                     error!("multicast send error {}", e);
                 }

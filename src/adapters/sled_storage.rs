@@ -231,8 +231,13 @@ impl SledStorage {
         recipients.insert(get.from.clone());
         debug!("direct replying to {}", get.from);
         let my_addr = ctx.addr.clone();
-        let put = Put::new(reply_with_nodes, Some(get.id.clone()), my_addr);
-        let _ = get.from.sender.send(Message::Put(put));
+        let mut put = Put::new(reply_with_nodes, Some(get.id.clone()), my_addr);
+        put.to_string();
+        if put.checksum != get.checksum {
+            let _ = get.from.sender.send(Message::Put(put));
+        } else {
+            debug!("put.checksum == get.checksum, not replying with the same data");
+        }
     }
 
     fn handle_put(&self, put: Put) {
@@ -335,4 +340,54 @@ impl Actor for SledStorage {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use crate::message::{Message, Put, Get};
+    use crate::actor::{Addr, ActorContext};
+    use crate::Config;
+    use crate::adapters::sled_storage::SledStorage;
+    use crate::types::{Children, NodeData, Value};
+    use tokio::sync::mpsc::unbounded_channel;
+    use tokio::time::{Duration, sleep};
+
+    #[tokio::test]
+    async fn should_not_reply_with_put_when_checksum_same_as_in_get() {
+        let path = std::path::Path::new("./sled_checksum_test_db");
+        let (sender, mut receiver) = unbounded_channel::<Message>();
+        let return_addr = Addr::new(sender);
+        let sled_storage = SledStorage::new(Config {
+            sled_config: sled::Config::default().path(path),
+           ..Config::default()
+        });
+        let ctx = ActorContext::new("peer_id".to_string());
+        let sled_addr = ctx.start_actor(Box::new(sled_storage));
+
+        let mut children = Children::default();
+        children.insert("about".to_string(), NodeData { value: Value::Text("Jesus Built My Hot Rod".to_string()), updated_at: 0 as f64 });
+        let mut put = Put::new_from_kv("profile".to_string(), children, return_addr.clone());
+        put.to_string();
+        let checksum = put.checksum.clone().unwrap();
+        sled_addr.sender.send(Message::Put(put)).ok();
+        sleep(Duration::from_millis(10)).await;
+        let mut get = Get::new(
+            "profile".to_string(),
+            Some("about".to_string()),
+            return_addr.clone()
+        );
+
+        get.checksum = Some(checksum);
+        sled_addr.sender.send(Message::Get(get.clone())).ok();
+        sleep(Duration::from_millis(10)).await;
+        assert!(receiver.try_recv().is_err());
+
+        get.checksum = None;
+        sled_addr.sender.send(Message::Get(get)).ok();
+        sleep(Duration::from_millis(10)).await;
+        assert!(receiver.try_recv().is_ok());
+
+        std::fs::remove_dir_all(path).ok();
+
+        ctx.stop();
+    }
+}
 
