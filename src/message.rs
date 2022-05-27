@@ -198,7 +198,7 @@ impl Message {
         Ok(())
     }
 
-    fn from_put_obj(json: &JsonValue, json_str: String, msg_id: String, from: Addr) -> Result<Self, &'static str> {
+    fn from_put_obj(json: &JsonValue, json_str: String, msg_id: String, from: Addr, allow_public_space: bool) -> Result<Self, &'static str> {
         let obj = json.get("put").unwrap().as_object().ok_or("invalid message: msg.put was not an object")?;
         let in_response_to = match json.get("@") {
             Some(in_response_to) => match in_response_to.as_str() {
@@ -219,12 +219,14 @@ impl Message {
             let node_data = node_data.as_object().ok_or("put node data was not an object")?;
             let updated_at_times = node_data["_"][">"].as_object().ok_or("no metadata _ in Put node object")?;
 
+            let mut is_public_space = true;
             if let Some(first_letter) = node_id.chars().next() {
                 if first_letter == '~' { // signed data
                     if let Err(e) = Self::verify_sig(node_id, node_data) {
                         error!("invalid sig: {} for msg {}", e, json_str);
                         return Err(e);
                     }
+                    is_public_space = false;
                     debug!("valid sig");
                 }
             }
@@ -241,6 +243,8 @@ impl Message {
                     if *child_key != base64::encode(content_hash.as_ref()) {
                         return Err("invalid content hash");
                     }
+                } else if is_public_space && !allow_public_space {
+                    return Err("public space writes not allowed (allow_public_space == false)");
                 }
 
                 children.insert(child_key.to_string(), NodeData { updated_at, value });
@@ -293,7 +297,7 @@ impl Message {
         Ok(Message::Get(get))
     }
     
-    pub fn from_json_obj(json: &JsonValue, json_str: String, from: Addr) -> Result<Self, &'static str> {
+    pub fn from_json_obj(json: &JsonValue, json_str: String, from: Addr, allow_public_space: bool) -> Result<Self, &'static str> {
         let obj = match json.as_object() {
             Some(obj) => obj,
             _ => { return Err("not a json object"); }
@@ -309,7 +313,7 @@ impl Message {
             return Err("msg_id must be alphanumeric");
         }
         if obj.contains_key("put") {
-            Self::from_put_obj(json, json_str, msg_id, from)
+            Self::from_put_obj(json, json_str, msg_id, from, allow_public_space)
         } else if obj.contains_key("get") {
             Self::from_get_obj(json, json_str, msg_id, from)
         } else if let Some(_dam) = obj.get("dam") {
@@ -319,7 +323,7 @@ impl Message {
         }
     }
 
-    pub fn try_from(s: &str, from: Addr) -> Result<Vec<Self>, &str> {
+    pub fn try_from(s: &str, from: Addr, allow_public_space: bool) -> Result<Vec<Self>, &str> {
         let json: JsonValue = match serde_json::from_str(s) {
             Ok(json) => json,
             Err(_) => { return Err("Failed to parse message as JSON"); }
@@ -328,11 +332,11 @@ impl Message {
         if let Some(arr) = json.as_array() {
             let mut vec = Vec::<Self>::new();
             for msg in arr {
-                vec.push(Self::from_json_obj(msg, msg.to_string(), from.clone())?);
+                vec.push(Self::from_json_obj(msg, msg.to_string(), from.clone(), allow_public_space)?);
             }
             Ok(vec)
         } else {
-            match Self::from_json_obj(&json, s.to_string(), from) {
+            match Self::from_json_obj(&json, s.to_string(), from, allow_public_space) {
                 Ok(msg) => Ok(vec![msg]),
                 Err(e) => Err(e)
             }
@@ -345,6 +349,53 @@ mod tests {
     use crate::message::Message;
     use crate::actor::Addr;
     use tokio::sync::mpsc::unbounded_channel;
+
+    #[test]
+    fn public_space_write_allowed() {
+        let (sender, _receiver) = unbounded_channel::<Message>();
+        Message::try_from(r##"
+        [
+          {
+            "put": {
+              "something": {
+                "_": {
+                  "#": "something",
+                  ">": {
+                    "else": 1653465227430
+                  }
+                },
+                "else": "{\"sig\":\"aSEA{\\\"m\\\":{\\\"text\\\":\\\"test post\\\",\\\"time\\\":\\\"2022-05-25T07:53:47.424Z\\\",\\\"type\\\":\\\"post\\\",\\\"author\\\":{\\\"keyID\\\":\\\"U2CjHOxXiF7Giyjr_V5Mb2VoyWnRJCyFqEuwObn3pdM.UtCpoyYTG7JJTitZVJhSpxXtD0eHE45iT2Zj--P_n-U\\\"}},\\\"s\\\":\\\"WttDQegXyXILtB1nhNq7Jn69MZ0JD/b1LQrIybQ9UuHn86KvKXg9Lg7+ESmeqSQNaQy7KYvfBEEKbd/ClagQOQ==\\\"}\",\"pubKey\":\"U2CjHOxXiF7Giyjr_V5Mb2VoyWnRJCyFqEuwObn3pdM.UtCpoyYTG7JJTitZVJhSpxXtD0eHE45iT2Zj--P_n-U\"}"
+              }
+            },
+            "#": "yvd2vk4338i"
+          }
+        ]
+        "##, Addr::new(sender), true).unwrap();
+    }
+
+    #[test]
+    fn public_space_write_disallowed() {
+        let (sender, _receiver) = unbounded_channel::<Message>();
+        let res = Message::try_from(r##"
+        [
+          {
+            "put": {
+              "something": {
+                "_": {
+                  "#": "something",
+                  ">": {
+                    "else": 1653465227430
+                  }
+                },
+                "else": "{\"sig\":\"aSEA{\\\"m\\\":{\\\"text\\\":\\\"test post\\\",\\\"time\\\":\\\"2022-05-25T07:53:47.424Z\\\",\\\"type\\\":\\\"post\\\",\\\"author\\\":{\\\"keyID\\\":\\\"U2CjHOxXiF7Giyjr_V5Mb2VoyWnRJCyFqEuwObn3pdM.UtCpoyYTG7JJTitZVJhSpxXtD0eHE45iT2Zj--P_n-U\\\"}},\\\"s\\\":\\\"WttDQegXyXILtB1nhNq7Jn69MZ0JD/b1LQrIybQ9UuHn86KvKXg9Lg7+ESmeqSQNaQy7KYvfBEEKbd/ClagQOQ==\\\"}\",\"pubKey\":\"U2CjHOxXiF7Giyjr_V5Mb2VoyWnRJCyFqEuwObn3pdM.UtCpoyYTG7JJTitZVJhSpxXtD0eHE45iT2Zj--P_n-U\"}"
+              }
+            },
+            "#": "yvd2vk4338i"
+          }
+        ]
+        "##, Addr::new(sender), false);
+        assert!(res.is_err());
+    }
 
     #[test]
     fn valid_content_addressed_data() {
@@ -366,7 +417,7 @@ mod tests {
             "#": "yvd2vk4338i"
           }
         ]
-        "##, Addr::new(sender)).unwrap();
+        "##, Addr::new(sender), false).unwrap();
     }
 
     #[test]
@@ -389,7 +440,7 @@ mod tests {
             "#": "yvd2vk4338i"
           }
         ]
-        "##, Addr::new(sender));
+        "##, Addr::new(sender), false);
         assert!(res.is_err());
     }
 
@@ -420,7 +471,7 @@ mod tests {
           },
           "#": "issWkzotF"
         }
-        "##, Addr::new(sender)).unwrap();
+        "##, Addr::new(sender), false).unwrap();
     }
 
     #[test]
@@ -450,7 +501,7 @@ mod tests {
           },
           "#": "issWkzotF"
         }
-        "##, Addr::new(sender));
+        "##, Addr::new(sender), false);
         assert!(res.is_err());
     }
 }

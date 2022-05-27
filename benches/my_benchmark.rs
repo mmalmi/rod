@@ -111,6 +111,56 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     group.finish();
 
+    c.bench_function("parse and verify public space put json", |b| {
+        let (sender, _receiver) = unbounded_channel::<Message>();
+        let addr = Addr::new(sender);
+        b.iter(|| {
+            Message::try_from(r##"
+            [
+              {
+                "put": {
+                  "something": {
+                    "_": {
+                      "#": "something",
+                      ">": {
+                        "else": 1653465227430
+                      }
+                    },
+                    "else": "{\"sig\":\"aSEA{\\\"m\\\":{\\\"text\\\":\\\"test post\\\",\\\"time\\\":\\\"2022-05-25T07:53:47.424Z\\\",\\\"type\\\":\\\"post\\\",\\\"author\\\":{\\\"keyID\\\":\\\"U2CjHOxXiF7Giyjr_V5Mb2VoyWnRJCyFqEuwObn3pdM.UtCpoyYTG7JJTitZVJhSpxXtD0eHE45iT2Zj--P_n-U\\\"}},\\\"s\\\":\\\"WttDQegXyXILtB1nhNq7Jn69MZ0JD/b1LQrIybQ9UuHn86KvKXg9Lg7+ESmeqSQNaQy7KYvfBEEKbd/ClagQOQ==\\\"}\",\"pubKey\":\"U2CjHOxXiF7Giyjr_V5Mb2VoyWnRJCyFqEuwObn3pdM.UtCpoyYTG7JJTitZVJhSpxXtD0eHE45iT2Zj--P_n-U\"}"
+                  }
+                },
+                "#": "yvd2vk4338i"
+              }
+            ]
+            "##, addr.clone()).unwrap();
+        })
+    });
+
+    c.bench_function("parse and verify content addressed put json", |b| {
+        let (sender, _receiver) = unbounded_channel::<Message>();
+        let addr = Addr::new(sender);
+        b.iter(|| {
+            Message::try_from(r##"
+            [
+              {
+                "put": {
+                  "#": {
+                    "_": {
+                      "#": "#",
+                      ">": {
+                        "rkHfUdMssQ8Ln9LtiuPTb/ntNxR6HZiVdVsn9DdnKZs=": 1653465227430
+                      }
+                    },
+                    "rkHfUdMssQ8Ln9LtiuPTb/ntNxR6HZiVdVsn9DdnKZs=": "{\"sig\":\"aSEA{\\\"m\\\":{\\\"text\\\":\\\"test post\\\",\\\"time\\\":\\\"2022-05-25T07:53:47.424Z\\\",\\\"type\\\":\\\"post\\\",\\\"author\\\":{\\\"keyID\\\":\\\"U2CjHOxXiF7Giyjr_V5Mb2VoyWnRJCyFqEuwObn3pdM.UtCpoyYTG7JJTitZVJhSpxXtD0eHE45iT2Zj--P_n-U\\\"}},\\\"s\\\":\\\"WttDQegXyXILtB1nhNq7Jn69MZ0JD/b1LQrIybQ9UuHn86KvKXg9Lg7+ESmeqSQNaQy7KYvfBEEKbd/ClagQOQ==\\\"}\",\"pubKey\":\"U2CjHOxXiF7Giyjr_V5Mb2VoyWnRJCyFqEuwObn3pdM.UtCpoyYTG7JJTitZVJhSpxXtD0eHE45iT2Zj--P_n-U\"}"
+                  }
+                },
+                "#": "yvd2vk4338i"
+              }
+            ]
+            "##, addr.clone()).unwrap();
+        })
+    });
+
     c.bench_function("parse and verify signed put json", |b| {
         let (sender, _receiver) = unbounded_channel::<Message>();
         let addr = Addr::new(sender);
@@ -139,31 +189,6 @@ fn criterion_benchmark(c: &mut Criterion) {
               },
               "#": "issWkzotF"
             }
-            "##, addr.clone()).unwrap();
-        })
-    });
-
-    c.bench_function("parse and verify content addressed put json", |b| {
-        let (sender, _receiver) = unbounded_channel::<Message>();
-        let addr = Addr::new(sender);
-        b.iter(|| {
-            Message::try_from(r##"
-            [
-              {
-                "put": {
-                  "#": {
-                    "_": {
-                      "#": "#",
-                      ">": {
-                        "rkHfUdMssQ8Ln9LtiuPTb/ntNxR6HZiVdVsn9DdnKZs=": 1653465227430
-                      }
-                    },
-                    "rkHfUdMssQ8Ln9LtiuPTb/ntNxR6HZiVdVsn9DdnKZs=": "{\"sig\":\"aSEA{\\\"m\\\":{\\\"text\\\":\\\"test post\\\",\\\"time\\\":\\\"2022-05-25T07:53:47.424Z\\\",\\\"type\\\":\\\"post\\\",\\\"author\\\":{\\\"keyID\\\":\\\"U2CjHOxXiF7Giyjr_V5Mb2VoyWnRJCyFqEuwObn3pdM.UtCpoyYTG7JJTitZVJhSpxXtD0eHE45iT2Zj--P_n-U\\\"}},\\\"s\\\":\\\"WttDQegXyXILtB1nhNq7Jn69MZ0JD/b1LQrIybQ9UuHn86KvKXg9Lg7+ESmeqSQNaQy7KYvfBEEKbd/ClagQOQ==\\\"}\",\"pubKey\":\"U2CjHOxXiF7Giyjr_V5Mb2VoyWnRJCyFqEuwObn3pdM.UtCpoyYTG7JJTitZVJhSpxXtD0eHE45iT2Zj--P_n-U\"}"
-                  }
-                },
-                "#": "yvd2vk4338i"
-              }
-            ]
             "##, addr.clone()).unwrap();
         })
     });

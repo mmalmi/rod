@@ -45,7 +45,7 @@ impl Actor for OutgoingWebsocketManager { // TODO: support multiple outbound web
                     let (socket, _) = tuple;
                     debug!("outgoing websocket opened to {}", url);
                     let (sender, receiver) = socket.split();
-                    let client = WsConn::new(sender, receiver);
+                    let client = WsConn::new(sender, receiver, self.config.allow_public_space);
                     let addr = ctx.start_actor(Box::new(client));
                     self.clients.insert(url.clone(), addr);
                 }

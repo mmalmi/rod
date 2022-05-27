@@ -79,6 +79,13 @@ async fn main() {
             .value_name("BYTES")
             .help("Data in excess of this will be evicted based on priority")
             .takes_value(true))
+        .arg(Arg::with_name("allow-public-space")
+            .long("allow-public-space")
+            .env("ALLOW_PUBLIC_SPACE")
+            .value_name("BOOL")
+            .help("Allow writes that are not content hash addressed or user-signed")
+            .default_value("true")
+            .takes_value(true))
         .arg(Arg::with_name("stats")
             .long("stats")
             .env("STATS")
@@ -119,6 +126,7 @@ async fn main() {
             rust_channel_size,
             websocket_server,
             websocket_server_port,
+            allow_public_space: matches.value_of("allow-public-space").unwrap() != "false",
             sled_storage: matches.value_of("sled-storage").unwrap() != "false",
             sled_max_size,
             memory_storage: matches.value_of("memory-storage").unwrap() == "true",

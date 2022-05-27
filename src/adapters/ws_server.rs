@@ -31,7 +31,7 @@ impl WsServer {
         }
     }
 
-    async fn handle_stream(stream: MaybeTlsStream<tokio::net::TcpStream>, ctx: &ActorContext, clients: Clients) {
+    async fn handle_stream(stream: MaybeTlsStream<tokio::net::TcpStream>, ctx: &ActorContext, clients: Clients, allow_public_space: bool) {
         let ws_stream = match tokio_tungstenite::accept_async(stream).await {
             Ok(s) => s,
             Err(_e) => {
@@ -43,7 +43,7 @@ impl WsServer {
 
         let (sender, receiver) = ws_stream.split();
 
-        let conn = WsConn::new(sender, receiver);
+        let conn = WsConn::new(sender, receiver, allow_public_space);
         let addr = ctx.start_actor(Box::new(conn));
         clients.write().await.insert(addr);
     }
@@ -71,6 +71,7 @@ impl Actor for WsServer {
         let listener = try_socket.expect("Failed to bind");
         info!("Listening on: {}", addr);
 
+        let allow_public_space = self.config.allow_public_space;
         if let Some(cert_path) = &self.config.cert_path {
             let mut cert_file = File::open(cert_path).unwrap();
             let mut cert = vec![];
@@ -96,7 +97,7 @@ impl Actor for WsServer {
                             let stream = acceptor.accept(stream).await;
                             match stream {
                                 Ok(stream) => {
-                                    Self::handle_stream(MaybeTlsStream::NativeTls(stream), &ctx, clients.clone()).await;
+                                    Self::handle_stream(MaybeTlsStream::NativeTls(stream), &ctx, clients.clone(), allow_public_space).await;
                                 },
                                 _ => {}
                             }
@@ -107,7 +108,7 @@ impl Actor for WsServer {
         } else {
             ctx.clone().abort_on_stop(tokio::spawn(async move {
                 while let Ok((stream, _)) = listener.accept().await {
-                    Self::handle_stream(MaybeTlsStream::Plain(stream), &ctx, clients.clone()).await;
+                    Self::handle_stream(MaybeTlsStream::Plain(stream), &ctx, clients.clone(), allow_public_space).await;
                 }
             }));
         }

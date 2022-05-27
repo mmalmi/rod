@@ -37,7 +37,7 @@ impl Actor for Router {
     async fn pre_start(&mut self, ctx: &ActorContext) {
         let config = &self.config;
         if config.multicast {
-            let addr = ctx.start_actor(Box::new(Multicast::new()));
+            let addr = ctx.start_actor(Box::new(Multicast::new(config.clone())));
             self.server_peers.insert(addr);
         }
         if config.websocket_server {

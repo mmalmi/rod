@@ -17,14 +17,16 @@ type WsReceiver = SplitStream<WsStream>;
 
 pub struct WsConn {
     sender: WsSender,
-    receiver: Option<WsReceiver>
+    receiver: Option<WsReceiver>,
+    allow_public_space: bool
 }
 
 impl WsConn {
-    pub fn new(sender: WsSender, receiver: WsReceiver) -> Self {
+    pub fn new(sender: WsSender, receiver: WsReceiver, allow_public_space: bool) -> Self {
         Self {
             sender: sender,
-            receiver: Some(receiver)
+            receiver: Some(receiver),
+            allow_public_space
         }
     }
 }
@@ -41,10 +43,11 @@ impl Actor for WsConn {
         let _ = self.sender.send(WsMessage::Text(hi.to_string())).await;
         let receiver = self.receiver.take().unwrap();
         let ctx2 = ctx.clone();
+        let allow_public_space = self.allow_public_space;
         ctx.abort_on_stop(tokio::spawn(async move {
             let _ = receiver.try_for_each(|msg| {
                 if let Ok(s) = msg.to_text() {
-                    match Message::try_from(s, ctx2.addr.clone()) {
+                    match Message::try_from(s, ctx2.addr.clone(), allow_public_space) {
                         Ok(msgs) => {
                             debug!("ws_conn in {}", s);
                             for msg in msgs.into_iter() {
