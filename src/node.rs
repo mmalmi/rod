@@ -31,6 +31,11 @@ pub struct Config {
     pub sled_config: sled::Config,
     /// Limit for the sled database size on disk in bytes. Default: None
     pub sled_max_size: Option<u64>,
+    /// Allow public space writes such as db.get("a").put("b").
+    /// If false, only signed (`db.get(~ + pubkey).put(data)`) or content addressed (`db.get("#").get(hash).put(data)`) data is allowed.
+    /// If you're running a public network, you might want to disable this in order to prevent spam.
+    /// Default: true
+    pub allow_public_space: bool,
     /// Enable in-memory storage? Default: false
     pub memory_storage: bool,
     /// Enable multicast? Default: false
@@ -59,6 +64,7 @@ impl Default for Config {
             sled_storage: true,
             sled_config: sled::Config::new().path("sled_db"),
             sled_max_size: None,
+            allow_public_space: true,
             memory_storage: false,
             multicast: false,
             outgoing_websocket_peers: Vec::new(),
