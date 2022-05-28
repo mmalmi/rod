@@ -95,7 +95,7 @@ impl Router {
         let mut stats = node.get("node_stats").get(&peer_id);
         let start_time = Instant::now();
         let msg_counter = self.msg_counter;
-        tokio::task::spawn(async move {
+        ctx.child_task(async move {
             let mut sys = System::new_all();
             loop { // TODO break
                 sys.refresh_all();
