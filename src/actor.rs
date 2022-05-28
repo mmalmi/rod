@@ -10,16 +10,18 @@ use tokio::task::JoinHandle;
 use futures_util::Future;
 
 // TODO: stop signal. Or just call tokio runtime stop / abort? https://docs.rs/tokio/1.18.2/tokio/task/struct.JoinHandle.html#method.abort
+// TODO make this a trait. Move platform / runtime specific stuff here, so different versions can be used on wasm.
 
 /// Our very own actor framework. Kudos to https://ryhl.io/blog/actors-with-tokio/
 ///
 /// Actors should relay messages to [Node::get_router_addr]
 #[async_trait]
 pub trait Actor: Send + Sync + 'static {
-    /// This is called on node.start_adapters()
     async fn handle(&mut self, message: Message, context: &ActorContext);
     async fn pre_start(&mut self, _context: &ActorContext) {}
     async fn stopping(&mut self, _context: &ActorContext) {}
+    /// Tells the router if this Actor wants to receive all messages (like the Multicast adapter)
+    fn subscribe_to_everything(&self) -> bool { false }
 }
 impl dyn Actor {
     async fn run(&mut self, mut receiver: UnboundedReceiver<Message>, mut stop_receiver: Receiver<()>, context: ActorContext) {
