@@ -362,11 +362,9 @@ impl Message {
 mod tests {
     use crate::message::Message;
     use crate::actor::Addr;
-    use tokio::sync::mpsc::unbounded_channel;
 
     #[test]
     fn public_space_write_allowed() {
-        let (sender, _receiver) = unbounded_channel::<Message>();
         Message::try_from(r##"
         [
           {
@@ -384,12 +382,11 @@ mod tests {
             "#": "yvd2vk4338i"
           }
         ]
-        "##, Addr::new(sender), true).unwrap();
+        "##, Addr::noop(), true).unwrap();
     }
 
     #[test]
     fn public_space_write_disallowed() {
-        let (sender, _receiver) = unbounded_channel::<Message>();
         let res = Message::try_from(r##"
         [
           {
@@ -407,13 +404,12 @@ mod tests {
             "#": "yvd2vk4338i"
           }
         ]
-        "##, Addr::new(sender), false);
+        "##, Addr::noop(), false);
         assert!(res.is_err());
     }
 
     #[test]
     fn valid_content_addressed_data() {
-        let (sender, _receiver) = unbounded_channel::<Message>();
         Message::try_from(r##"
         [
           {
@@ -431,12 +427,11 @@ mod tests {
             "#": "yvd2vk4338i"
           }
         ]
-        "##, Addr::new(sender), false).unwrap();
+        "##, Addr::noop(), false).unwrap();
     }
 
     #[test]
     fn invalid_content_addressed_data() {
-        let (sender, _receiver) = unbounded_channel::<Message>();
         let res = Message::try_from(r##"
         [
           {
@@ -454,13 +449,12 @@ mod tests {
             "#": "yvd2vk4338i"
           }
         ]
-        "##, Addr::new(sender), false);
+        "##, Addr::noop(), false);
         assert!(res.is_err());
     }
 
     #[test]
     fn valid_user_signed_data() {
-        let (sender, _receiver) = unbounded_channel::<Message>();
         Message::try_from(r##"
         {
           "put": {
@@ -485,12 +479,11 @@ mod tests {
           },
           "#": "issWkzotF"
         }
-        "##, Addr::new(sender), false).unwrap();
+        "##, Addr::noop(), false).unwrap();
     }
 
     #[test]
     fn invalid_user_signed_data() {
-        let (sender, _receiver) = unbounded_channel::<Message>();
         let res = Message::try_from(r##"
         {
           "put": {
@@ -515,7 +508,7 @@ mod tests {
           },
           "#": "issWkzotF"
         }
-        "##, Addr::new(sender), false);
+        "##, Addr::noop(), false);
         assert!(res.is_err());
     }
 }

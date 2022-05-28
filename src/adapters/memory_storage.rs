@@ -41,7 +41,7 @@ impl MemoryStorage {
             recipients.insert(get.from.clone());
             let my_addr = ctx.addr.clone();
             let put = Put::new(reply_with_nodes, Some(get.id.clone()), my_addr);
-            let _ = get.from.sender.send(Message::Put(put));
+            let _ = get.from.send(Message::Put(put));
         } else {
             debug!("have not {}", get.node_id);
         }

@@ -234,7 +234,7 @@ impl SledStorage {
         let mut put = Put::new(reply_with_nodes, Some(get.id.clone()), my_addr);
         put.to_string();
         if put.checksum != get.checksum {
-            let _ = get.from.sender.send(Message::Put(put));
+            let _ = get.from.send(Message::Put(put));
         } else {
             debug!("put.checksum == get.checksum, not replying with the same data");
         }
@@ -314,7 +314,7 @@ impl Actor for SledStorage {
         info!("SledStorage adapter starting");
         if let Some(limit) = self.config.sled_max_size.clone() {
             let storage = self.clone();
-            ctx.abort_on_stop(tokio::spawn(async move {
+            ctx.child_task(async move {
                 loop {
                     sleep(Duration::from_millis(2000)).await;
                     match storage.get_size() {
@@ -331,7 +331,7 @@ impl Actor for SledStorage {
                         _ => {}
                     }
                 }
-            }));
+            });
         }
     }
 
@@ -367,7 +367,7 @@ mod tests {
         let mut put = Put::new_from_kv("profile".to_string(), children, return_addr.clone());
         put.to_string();
         let checksum = put.checksum.clone().unwrap();
-        sled_addr.sender.send(Message::Put(put)).ok();
+        sled_addr.send(Message::Put(put)).ok();
         sleep(Duration::from_millis(10)).await;
         let mut get = Get::new(
             "profile".to_string(),
@@ -376,12 +376,12 @@ mod tests {
         );
 
         get.checksum = Some(checksum);
-        sled_addr.sender.send(Message::Get(get.clone())).ok();
+        sled_addr.send(Message::Get(get.clone())).ok();
         sleep(Duration::from_millis(10)).await;
         assert!(receiver.try_recv().is_err());
 
         get.checksum = None;
-        sled_addr.sender.send(Message::Get(get)).ok();
+        sled_addr.send(Message::Get(get)).ok();
         sleep(Duration::from_millis(10)).await;
         assert!(receiver.try_recv().is_ok());
 

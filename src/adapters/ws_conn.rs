@@ -44,15 +44,15 @@ impl Actor for WsConn {
         let receiver = self.receiver.take().unwrap();
         let ctx2 = ctx.clone();
         let allow_public_space = self.allow_public_space;
-        ctx.abort_on_stop(tokio::spawn(async move {
+        ctx.child_task(async move {
             let _ = receiver.try_for_each(|msg| {
                 if let Ok(s) = msg.to_text() {
                     match Message::try_from(s, ctx2.addr.clone(), allow_public_space) {
                         Ok(msgs) => {
                             debug!("ws_conn in {}", s);
                             for msg in msgs.into_iter() {
-                                if let Err(e) = ctx2.router.sender.send(msg) {
-                                    error!("failed to send incoming message to node: {}", e);
+                                if ctx2.router.send(msg).is_err() {
+                                    error!("failed to send incoming message to node");
                                 }
                             }
                         },
@@ -61,7 +61,7 @@ impl Actor for WsConn {
                 }
                 future::ok(())
             }).await;
-        }));
+        });
     }
 
     async fn stopping(&mut self, _context: &ActorContext) {

@@ -55,7 +55,7 @@ impl Actor for WsServer {
             if msg.is_from(conn) {
                 continue;
             }
-            if let Err(_) = conn.sender.send(msg.clone()) {
+            if let Err(_) = conn.send(msg.clone()) {
                 self.clients.write().await.remove(conn);
             }
         }
@@ -87,7 +87,7 @@ impl Actor for WsServer {
             let acceptor = tokio_native_tls::TlsAcceptor::from(acceptor);
             let acceptor = Arc::new(acceptor);
 
-            ctx.clone().abort_on_stop(tokio::spawn(async move {
+            ctx.clone().child_task(async move {
                 loop {
                     if let Ok((stream, _)) = listener.accept().await {
                         let acceptor = acceptor.clone();
@@ -104,13 +104,13 @@ impl Actor for WsServer {
                         });
                     }
                 }
-            }));
+            });
         } else {
-            ctx.clone().abort_on_stop(tokio::spawn(async move {
+            ctx.clone().child_task(async move {
                 while let Ok((stream, _)) = listener.accept().await {
                     Self::handle_stream(MaybeTlsStream::Plain(stream), &ctx, clients.clone(), allow_public_space).await;
                 }
-            }));
+            });
         }
     }
 

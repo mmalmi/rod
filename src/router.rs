@@ -4,9 +4,6 @@ use crate::{Config};
 use crate::utils::{BoundedHashSet, BoundedHashMap};
 use crate::adapters::{SledStorage, MemoryStorage, WsServer, OutgoingWebsocketManager, Multicast};
 use std::sync::atomic::{AtomicUsize, Ordering};
-//use std::time::Instant;
-//use sysinfo::{ProcessorExt, System, SystemExt};
-//use tokio::time::{sleep, Duration};
 use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};
 use log::{debug, error, info};
@@ -142,13 +139,13 @@ impl Router {
 
         // Ask storage
         for addr in self.storage_adapters.iter() {
-            let _ = addr.sender.send(Message::Get(get.clone()));
+            let _ = addr.send(Message::Get(get.clone()));
         }
 
         // Send to server peers
         for addr in self.server_peers.iter() {
             debug!("send to server peer");
-            let _ = addr.sender.send(Message::Get(get.clone()));
+            let _ = addr.send(Message::Get(get.clone()));
         }
 
         // Ask network
@@ -162,7 +159,7 @@ impl Router {
                 if get.from == *addr {
                     continue;
                 }
-                match addr.sender.send(Message::Get(get.clone())) {
+                match addr.send(Message::Get(get.clone())) {
                     Ok(_) => { sent_to += 1; },
                     _=> { errored.insert(addr.clone()); }
                 }
@@ -180,7 +177,7 @@ impl Router {
         if sent_to < 1 {
             let mut errored = HashSet::new();
             while let Some(addr) = self.known_peers.iter().choose(&mut rng) {
-                match addr.sender.send(Message::Get(get.clone())) {
+                match addr.send(Message::Get(get.clone())) {
                     Ok(_) => { break },
                     _=> { errored.insert(addr.clone()); }
                 }
@@ -205,7 +202,7 @@ impl Router {
                         return;
                     } // failing these conditions, should we still send the ack to someone?
                     seen_get_message.last_reply_checksum = put.checksum.clone();
-                    let _ = seen_get_message.from.sender.send(Message::Put(put));
+                    let _ = seen_get_message.from.send(Message::Put(put));
                 }
             },
             _ => {
@@ -215,12 +212,12 @@ impl Router {
                         continue;
                     }
                     // TODO send Gets to... someone, not everyone
-                    let _ = addr.sender.send(Message::Put(put.clone()));
+                    let _ = addr.send(Message::Put(put.clone()));
                 }
 
                 // Send to server peers
                 for addr in self.server_peers.iter() {
-                    let _ = addr.sender.send(Message::Put(put.clone()));
+                    let _ = addr.send(Message::Put(put.clone()));
                 }
 
                 // Relay to subscribers
@@ -237,7 +234,7 @@ impl Router {
                                 return true;
                             }
                             already_sent_to.insert(addr.clone());
-                            match addr.sender.send(Message::Put(put.clone())) {
+                            match addr.send(Message::Put(put.clone())) {
                                 Ok(_) => { sent_to += 1; true },
                                 _=> { false }
                             }
@@ -248,7 +245,7 @@ impl Router {
                     let mut rng = thread_rng();
                     let mut errored = HashSet::new();
                     while let Some(addr) = self.known_peers.iter().choose(&mut rng) {
-                        match addr.sender.send(Message::Put(put.clone())) {
+                        match addr.send(Message::Put(put.clone())) {
                             Ok(_) => { break },
                             _=> { errored.insert(addr.clone()); }
                         }

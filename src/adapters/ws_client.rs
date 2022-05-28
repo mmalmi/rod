@@ -55,7 +55,7 @@ impl Actor for OutgoingWebsocketManager { // TODO: support multiple outbound web
 
     async fn handle(&mut self, message: Message, _ctx: &ActorContext) {
         self.clients.retain(|_url,client| {
-            client.sender.send(message.clone()).is_ok()
+            client.send(message.clone()).is_ok()
         });
     }
 }

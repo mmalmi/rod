@@ -37,14 +37,14 @@ impl Multicast {
                     match msg {
                         Message::Put(put) => {
                             let put = put.clone();
-                            if let Err(e) = ctx.router.sender.send(Message::Put(put)) {
-                                error!("failed to send message to node: {}", e);
+                            if let Err(e) = ctx.router.send(Message::Put(put)) {
+                                error!("failed to send message to node: {:?}", e);
                             }
                         },
                         Message::Get(get) => {
                             let get = get.clone();
-                            if let Err(e) = ctx.router.sender.send(Message::Get(get)) {
-                                error!("failed to send message to node: {}", e);
+                            if let Err(e) = ctx.router.send(Message::Get(get)) {
+                                error!("failed to send message to node: {:?}", e);
                             }
                         },
                         _ => {}
@@ -91,7 +91,7 @@ impl Actor for Multicast {
             .expect("could not create and bind multicast socket");
 
         let allow_public_space = self.config.allow_public_space;
-        ctx.abort_on_stop(tokio::task::spawn_blocking(move || { // blocking — not optimal!
+        ctx.blocking_child_task(move || { // blocking — not optimal!
             loop {
                 if let Ok(message) = socket.receive() { // this blocks
                     // TODO if message.from == multicast_[interface], don't resend to [interface]
@@ -103,7 +103,7 @@ impl Actor for Multicast {
                     break;
                 }
             }
-        }));
+        });
     }
 }
 

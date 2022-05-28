@@ -5,7 +5,6 @@ use tokio::runtime::Runtime;
 use tokio::time::{sleep, Duration};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use rod::actor::Addr;
-use tokio::sync::mpsc::unbounded_channel;
 use rod::message::Message;
 
 fn criterion_benchmark(c: &mut Criterion) {
@@ -112,8 +111,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     group.finish();
 
     c.bench_function("parse and verify public space put json", |b| {
-        let (sender, _receiver) = unbounded_channel::<Message>();
-        let addr = Addr::new(sender);
+        let addr = Addr::noop();
         b.iter(|| {
             Message::try_from(r##"
             [
@@ -137,8 +135,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
 
     c.bench_function("parse and verify content addressed put json", |b| {
-        let (sender, _receiver) = unbounded_channel::<Message>();
-        let addr = Addr::new(sender);
+        let addr = Addr::noop();
         b.iter(|| {
             Message::try_from(r##"
             [
@@ -162,8 +159,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
 
     c.bench_function("parse and verify signed put json", |b| {
-        let (sender, _receiver) = unbounded_channel::<Message>();
-        let addr = Addr::new(sender);
+        let addr = Addr::noop();
         b.iter(|| {
             Message::try_from(r##"
             {

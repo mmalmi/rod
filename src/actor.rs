@@ -5,8 +5,9 @@ use std::marker::Send;
 use std::sync::{Arc, RwLock};
 use crate::message::Message;
 use crate::utils::random_string;
-use tokio::sync::mpsc::{UnboundedSender, UnboundedReceiver, Receiver, Sender, channel, unbounded_channel};
+use tokio::sync::mpsc::{Sender, Receiver, UnboundedReceiver, UnboundedSender, unbounded_channel, channel};
 use tokio::task::JoinHandle;
+use futures_util::Future;
 
 // TODO: stop signal. Or just call tokio runtime stop / abort? https://docs.rs/tokio/1.18.2/tokio/task/struct.JoinHandle.html#method.abort
 
@@ -54,14 +55,12 @@ pub struct ActorContext {
 }
 impl ActorContext {
     pub fn new(peer_id: String) -> Self {
-        let (sender, _receiver) = unbounded_channel::<Message>();
-        let noop = Addr::new(sender);
         Self {
-            addr: noop.clone(),
+            addr: Addr::noop(),
             stop_signals: Arc::new(RwLock::new(Vec::new())),
             task_handles: Arc::new(RwLock::new(Vec::new())),
             peer_id: Arc::new(RwLock::new(peer_id)),
-            router: noop,
+            router: Addr::noop(),
             is_stopped: Arc::new(RwLock::new(false))
         }
     }
@@ -85,7 +84,19 @@ impl ActorContext {
         self.start_actor_or_router(actor, true)
     }
 
-    pub fn abort_on_stop(&self, handle: JoinHandle<()>) {
+    pub fn child_task<T>(&self, task: T)
+    where
+        T: Future<Output = ()> + Send + 'static,
+    {
+        let handle = tokio::spawn(task);
+        self.task_handles.write().unwrap().push(handle);
+    }
+
+    pub fn blocking_child_task<F>(&self, task: F)
+    where
+        F: FnOnce() -> () + Send + 'static,
+    {
+        let handle = tokio::task::spawn_blocking(task);
         self.task_handles.write().unwrap().push(handle);
     }
 
@@ -116,7 +127,7 @@ impl ActorContext {
 #[derive(Clone, Debug)]
 pub struct Addr {
     id: String,
-    pub sender: UnboundedSender<Message>
+    sender: UnboundedSender<Message>
 }
 impl Addr {
     pub fn new(sender: UnboundedSender<Message>) -> Self {
@@ -124,6 +135,19 @@ impl Addr {
             id: random_string(32),
             sender
         }
+    }
+
+    pub fn send(&self, msg: Message) -> Result<(), ()> {
+        match self.sender.send(msg) {
+            Ok(_) => Ok(()),
+            Err(_) => Err(())
+        }
+    }
+
+    /// Returns a no-op address
+    pub fn noop() -> Addr {
+        let (sender, _receiver) = unbounded_channel::<Message>();
+        Addr::new(sender)
     }
 }
 impl PartialEq for Addr {

@@ -7,11 +7,11 @@ use std::time::SystemTime;
 use crate::router::Router;
 use crate::message::{Message, Put, Get};
 use crate::types::{Value, NodeData, Children};
-use crate::actor::{Addr, ActorContext};
+use crate::actor::{Addr, ActorContext, Actor};
 use crate::utils::random_string;
 use log::{debug, info};
 use tokio::sync::broadcast;
-use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
+use async_trait::async_trait;
 
 // TODO extract networking to struct Mesh
 // TODO proper automatic tests
@@ -90,8 +90,18 @@ pub struct Node {
     on_sender: broadcast::Sender<Value>,
     map_sender: broadcast::Sender<(String, Value)>,
     actor_context: ActorContext,
-    addr: Arc<RwLock<Addr>>,
+    addr: Arc<RwLock<Option<Addr>>>,
     router: Arc<RwLock<Option<Addr>>>,
+}
+
+#[async_trait]
+impl Actor for Node {
+    async fn handle(&mut self, msg: Message, _context: &ActorContext) {
+        match msg {
+            Message::Put(put) => self.handle_put(put),
+            _ => {}
+        }
+    }
 }
 
 impl Node {
@@ -122,9 +132,8 @@ impl Node {
     /// })
     /// ```
     pub fn new_with_config(config: Config) -> Self {
-        let (incoming_tx, incoming_rx) = unbounded_channel::<Message>();
-        let addr = Addr::new(incoming_tx);
-        let mut node = Self {
+        let actor_context = ActorContext::new(random_string(16));
+        let node = Self {
             path: vec![],
             uid: Arc::new(RwLock::new("".to_string())),
             config: Arc::new(RwLock::new(config.clone())),
@@ -132,17 +141,19 @@ impl Node {
             parent: Arc::new(RwLock::new(None)),
             on_sender: broadcast::channel::<Value>(config.rust_channel_size).0,
             map_sender: broadcast::channel::<(String, Value)>(config.rust_channel_size).0,
-            addr: Arc::new(RwLock::new(addr)),
+            addr: Arc::new(RwLock::new(None)),
             router: Arc::new(RwLock::new(None)),
-            actor_context: ActorContext::new(random_string(16))
+            actor_context: actor_context.clone()
         };
+
+        let addr = actor_context.start_actor(Box::new(node.clone()));
+        *node.addr.write().unwrap() = Some(addr);
 
         let router = Box::new(Router::new(config.clone())); // actually, we should communicate with
         // MemoryStorage, which has a special role in maintaining our version of the current state?
         // MemoryStorage can then communicate with router as needed.
         let router_addr = node.actor_context.start_router(router);
         *node.router.write().unwrap() = Some(router_addr);
-        node.listen(incoming_rx);
 
         node
     }
@@ -162,19 +173,6 @@ impl Node {
         }
     }
 
-    fn listen(&mut self, mut receiver: UnboundedReceiver<Message>) {
-        let mut clone = self.clone();
-        self.actor_context.abort_on_stop(tokio::spawn(async move {
-            while let Some(msg) = receiver.recv().await { // TODO shutdown
-                debug!("incoming message");
-                match msg {
-                    Message::Put(put) => clone.handle_put(put),
-                    _ => {}
-                }
-            }
-        }));
-    }
-
     fn new_child(&self, key: String) -> Node {
         assert!(key.len() > 0, "Key length must be greater than zero");
         debug!("new child {}", key);
@@ -183,8 +181,7 @@ impl Node {
         path.push(key.clone());
         let new_child_uid = path.join("/");
         debug!("new_child_uid {}", new_child_uid);
-        let (sender, receiver) = unbounded_channel::<Message>();
-        let mut node = Self {
+        let node = Self {
             path,
             config: self.config.clone(),
             children: Arc::new(RwLock::new(BTreeMap::new())),
@@ -193,10 +190,11 @@ impl Node {
             map_sender: broadcast::channel::<(String, Value)>(config.rust_channel_size).0,
             uid: Arc::new(RwLock::new(new_child_uid)),
             router: self.router.clone(),
-            addr: Arc::new(RwLock::new(Addr::new(sender))),
+            addr: Arc::new(RwLock::new(None)),
             actor_context: self.actor_context.clone()
         };
-        node.listen(receiver);
+        let addr = self.actor_context.start_actor(Box::new(node.clone()));
+        *node.addr.write().unwrap() = Some(addr);
         self.children.write().unwrap().insert(key, node.clone());
         node
     }
@@ -213,14 +211,14 @@ impl Node {
         let node_id;
         if let Some((parent_id, parent)) = &*self.parent.read().unwrap() {
             node_id = parent_id.clone();
-            addr = parent.addr.read().unwrap().clone();
+            addr = parent.addr.read().unwrap().clone().unwrap();
         } else {
             node_id = self.uid.read().unwrap().to_string();
-            addr = self.addr.read().unwrap().clone();
+            addr = self.addr.read().unwrap().clone().unwrap();
         }
         let get = Get::new(node_id, key, addr);
         if let Some(router) = self.router.read().unwrap().clone() {
-            let _ = router.sender.send(Message::Get(get));
+            let _ = router.send(Message::Get(get));
         }
         self.on_sender.subscribe()
     }
@@ -263,10 +261,10 @@ impl Node {
         if let Some((parent_id, _parent)) = &*self.parent.read().unwrap() {
             let mut children = Children::default();
             children.insert(self.path.last().unwrap().clone(), NodeData { value: value.clone(), updated_at });
-            let my_addr = self.addr.read().unwrap().clone();
+            let my_addr = self.addr.read().unwrap().clone().unwrap();
             let put = Put::new_from_kv(parent_id.to_string(), children, my_addr);
             if let Some(router) = &*self.router.read().unwrap() {
-                let _ = router.sender.send(Message::Put(put));
+                let _ = router.send(Message::Put(put));
             }
         }
     }
