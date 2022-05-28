@@ -2,7 +2,6 @@ use crate::message::{Message, Put, Get};
 use crate::actor::{Actor, ActorContext, Addr};
 use crate::{Config};
 use crate::utils::{BoundedHashSet, BoundedHashMap};
-use crate::adapters::{SledStorage, MemoryStorage, WsServer, OutgoingWebsocketManager, Multicast};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};
@@ -21,6 +20,8 @@ pub struct Router {
     known_peers: HashSet<Addr>, // ping them periodically to remove closed addrs? and sort by timestamp & prefer long-lasting conns
     storage_adapters: HashSet<Addr>,
     network_adapters: HashSet<Addr>,
+    storage_adapter_actors: Vec<Box<dyn Actor>>,
+    network_adapter_actors: Vec<Box<dyn Actor>>,
     server_peers: HashSet<Addr>, // temporary, so we can forward stuff to outgoing websocket peers (servers)
     seen_messages: BoundedHashSet,
     seen_get_messages: BoundedHashMap<String, SeenGetMessage>,
@@ -32,28 +33,17 @@ pub struct Router {
 impl Actor for Router {
     /// Listen to incoming messages and start [Actor]s
     async fn pre_start(&mut self, ctx: &ActorContext) {
-        let config = &self.config;
-        if config.multicast {
-            let addr = ctx.start_actor(Box::new(Multicast::new(config.clone())));
-            self.server_peers.insert(addr);
-        }
-        if config.websocket_server {
-            let addr = ctx.start_actor(Box::new(WsServer::new(config.clone())));
-            self.network_adapters.insert(addr);
-        }
-        if config.sled_storage {
-            let addr = ctx.start_actor(Box::new(SledStorage::new(config.clone())));
+        while let Some(adapter) = self.storage_adapter_actors.pop() {
+            let addr = ctx.start_actor(adapter);
             self.storage_adapters.insert(addr);
         }
-        if config.memory_storage {
-            let addr = ctx.start_actor(Box::new(MemoryStorage::new()));
-            self.storage_adapters.insert(addr);
-        }
-        if config.outgoing_websocket_peers.len() > 0 {
-            let actor = OutgoingWebsocketManager::new(config.clone());
-            let addr = ctx.start_actor(Box::new(actor));
-            self.server_peers.insert(addr.clone());
-            self.network_adapters.insert(addr);
+        while let Some(adapter) = self.network_adapter_actors.pop() {
+            let subscribe_to_everything = adapter.subscribe_to_everything();
+            let addr = ctx.start_actor(adapter);
+            self.network_adapters.insert(addr.clone());
+            if subscribe_to_everything {
+                self.server_peers.insert(addr);
+            }
         }
 
         if self.config.stats {
@@ -76,12 +66,14 @@ impl Actor for Router {
 }
 
 impl Router {
-    pub fn new(config: Config) -> Self {
+    pub fn new(config: Config, storage_adapter_actors: Vec<Box<dyn Actor>>, network_adapter_actors: Vec<Box<dyn Actor>>) -> Self {
         Self {
             config,
             known_peers: HashSet::new(),
             storage_adapters: HashSet::new(),
             network_adapters: HashSet::new(),
+            storage_adapter_actors,
+            network_adapter_actors,
             server_peers: HashSet::new(),
             seen_messages: BoundedHashSet::new(SEEN_MSGS_MAX_SIZE),
             seen_get_messages: BoundedHashMap::new(SEEN_MSGS_MAX_SIZE),

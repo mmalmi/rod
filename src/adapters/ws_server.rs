@@ -19,14 +19,35 @@ use tokio_tungstenite::MaybeTlsStream;
 
 type Clients = Arc<RwLock<HashSet<Addr>>>;
 
+pub struct WsServerConfig {
+    pub port: u16,
+    pub cert_path: Option<String>,
+    pub key_path: Option<String>,
+}
+impl Default for WsServerConfig {
+    fn default() -> Self {
+        WsServerConfig {
+            port: 4944,
+            cert_path: None,
+            key_path: None,
+        }
+    }
+}
+
 pub struct WsServer {
     config: Config,
+    ws_config: WsServerConfig,
     clients: Clients
 }
 impl WsServer {
     pub fn new(config: Config) -> Self {
+        Self::new_with_config(config, WsServerConfig::default())
+    }
+
+    pub fn new_with_config(config: Config, ws_config: WsServerConfig) -> Self {
         Self {
             config,
+            ws_config,
             clients: Clients::default()
         }
     }
@@ -62,7 +83,7 @@ impl Actor for WsServer {
     }
 
     async fn pre_start(&mut self, ctx: &ActorContext) {
-        let addr = format!("0.0.0.0:{}", self.config.websocket_server_port).to_string();
+        let addr = format!("0.0.0.0:{}", self.ws_config.port).to_string();
         let clients = self.clients.clone();
         let ctx = ctx.clone();
 
@@ -72,12 +93,12 @@ impl Actor for WsServer {
         info!("Listening on: {}", addr);
 
         let allow_public_space = self.config.allow_public_space;
-        if let Some(cert_path) = &self.config.cert_path {
+        if let Some(cert_path) = &self.ws_config.cert_path {
             let mut cert_file = File::open(cert_path).unwrap();
             let mut cert = vec![];
             cert_file.read_to_end(&mut cert).unwrap();
 
-            let key_path = self.config.key_path.as_ref().unwrap();
+            let key_path = self.ws_config.key_path.as_ref().unwrap();
             let mut key_file = File::open(key_path).unwrap();
             let mut key = vec![];
             key_file.read_to_end(&mut key).unwrap();

@@ -14,15 +14,17 @@ use log::{debug, info};
 use tokio::time::{sleep, Duration};
 
 pub struct OutgoingWebsocketManager {
+    config: Config,
     clients: HashMap<String, Addr>,
-    config: Config
+    urls: Vec<String>,
 }
 
 impl OutgoingWebsocketManager {
-    pub fn new(config: Config) -> Self {
+    pub fn new(config: Config, urls: Vec<String>) -> Self {
         OutgoingWebsocketManager {
-            config,
-            clients: HashMap::new()
+            urls,
+            clients: HashMap::new(),
+            config
         }
     }
 }
@@ -31,11 +33,10 @@ impl OutgoingWebsocketManager {
 impl Actor for OutgoingWebsocketManager { // TODO: support multiple outbound websockets
     async fn pre_start(&mut self, ctx: &ActorContext) {
         info!("OutgoingWebsocketManager starting");
-        for url in self.config.outgoing_websocket_peers.iter() {
-            let url = url.to_string();
+        for url in self.urls.iter() {
             loop { // TODO break on actor shutdown
                 sleep(Duration::from_millis(1000)).await;
-                if self.clients.contains_key(&url) {
+                if self.clients.contains_key(url) {
                     continue;
                 }
                 let result = connect_async(
@@ -52,6 +53,8 @@ impl Actor for OutgoingWebsocketManager { // TODO: support multiple outbound web
             }
         }
     }
+
+    fn subscribe_to_everything(&self) -> bool { true }
 
     async fn handle(&mut self, message: Message, _ctx: &ActorContext) {
         self.clients.retain(|_url,client| {

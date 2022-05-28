@@ -7,6 +7,6 @@ mod multicast;
 pub use memory_storage::MemoryStorage;
 pub use sled_storage::SledStorage;
 pub use multicast::Multicast;
-pub use ws_server::WsServer;
+pub use ws_server::{WsServer, WsServerConfig};
 pub use ws_conn::WsConn;
 pub use ws_client::OutgoingWebsocketManager;

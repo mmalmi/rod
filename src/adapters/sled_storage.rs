@@ -3,8 +3,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::message::{Message, Put, Get};
 use crate::actor::{Actor, ActorContext};
-use crate::Config;
 use crate::types::*;
+use crate::Config;
 
 use tokio::time::{Duration, sleep};
 use serde::{Serialize, Deserialize};
@@ -110,20 +110,30 @@ impl SledNodeData {
 
 #[derive(Clone)]
 pub struct SledStorage {
-    pub config: Config,
     store: sled::Db,
-    meta: sled::Tree
+    meta: sled::Tree,
+    max_size: Option<u64>,
+    pub config: Config
 }
 
 impl SledStorage {
-    pub fn new(config: Config) -> Self {
-        let store = config.sled_config.open().unwrap();
+    pub fn new() -> Self {
+        Self::new_with_config(
+            Config::default(),
+            sled::Config::default().path("sled_db"),
+            None,
+        )
+    }
+
+    pub fn new_with_config(config: Config, sled_config: sled::Config, max_size: Option<u64>) -> Self {
+        let store = sled_config.open().unwrap();
         let meta = store.open_tree("_meta").unwrap();
         meta.set_merge_operator(Self::merge_meta);
         let s = SledStorage {
             config,
             store,
-            meta
+            meta,
+            max_size,
         };
         s.change_size(0);
         s
@@ -312,7 +322,7 @@ impl Actor for SledStorage {
 
     async fn pre_start(&mut self, ctx: &ActorContext) {
         info!("SledStorage adapter starting");
-        if let Some(limit) = self.config.sled_max_size.clone() {
+        if let Some(limit) = self.max_size {
             let storage = self.clone();
             ctx.child_task(async move {
                 loop {
@@ -344,9 +354,9 @@ impl Actor for SledStorage {
 mod tests {
     use crate::message::{Message, Put, Get};
     use crate::actor::{Addr, ActorContext};
-    use crate::Config;
     use crate::adapters::sled_storage::SledStorage;
     use crate::types::{Children, NodeData, Value};
+    use crate::Config;
     use tokio::sync::mpsc::unbounded_channel;
     use tokio::time::{Duration, sleep};
 
@@ -355,10 +365,7 @@ mod tests {
         let path = std::path::Path::new("./sled_checksum_test_db");
         let (sender, mut receiver) = unbounded_channel::<Message>();
         let return_addr = Addr::new(sender);
-        let sled_storage = SledStorage::new(Config {
-            sled_config: sled::Config::default().path(path),
-           ..Config::default()
-        });
+        let sled_storage = SledStorage::new_with_config(Config::default(), sled::Config::default().path(path), None);
         let ctx = ActorContext::new("peer_id".to_string());
         let sled_addr = ctx.start_actor(Box::new(sled_storage));
 

@@ -76,6 +76,8 @@ impl Actor for Multicast {
         }
     }
 
+    fn subscribe_to_everything(&self) -> bool { true }
+
     async fn pre_start(&mut self, ctx: &ActorContext) {
         info!("Syncing over multicast\n");
 

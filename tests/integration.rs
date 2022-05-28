@@ -3,6 +3,7 @@ mod tests {
     use rod::{Node, Config, Value};
     use tokio::time::{sleep, Duration};
     use std::sync::Once;
+    use rod::adapters::*;
     //use log::{debug};
 
     static INIT: Once = Once::new();
@@ -18,22 +19,14 @@ mod tests {
     // TODO benchmark
     #[tokio::test]
     async fn it_doesnt_error() {
-        let mut gun = Node::new_with_config(Config {
-            memory_storage: true,
-            sled_storage: false,
-            ..Config::default()
-        });
-        let _ = gun.get("Meneldor"); // Pick Tolkien names from https://www.behindthename.com/namesakes/list/tolkien/alpha
+        let mut db = Node::new();
+        let _ = db.get("Meneldor"); // Pick Tolkien names from https://www.behindthename.com/namesakes/list/tolkien/alpha
     }
 
     #[tokio::test]
     async fn first_get_then_put() {
-        let mut gun = Node::new_with_config(Config {
-            memory_storage: true,
-            sled_storage: false,
-            ..Config::default()
-        });
-        let mut node = gun.get("Anborn");
+        let mut db = Node::new();
+        let mut node = db.get("Anborn");
         let mut sub = node.on();
         node.put("Ancalagon".into());
         if let Value::Text(str) = sub.recv().await.unwrap() {
@@ -43,12 +36,8 @@ mod tests {
 
     #[tokio::test]
     async fn first_put_then_get() {
-        let mut gun = Node::new_with_config(Config {
-            memory_storage: true,
-            sled_storage: false,
-            ..Config::default()
-        });
-        let mut node = gun.get("Finglas");
+        let mut db = Node::new_with_config(Config::default(), vec![Box::new(MemoryStorage::new())], vec![]);
+        let mut node = db.get("Finglas");
         node.put("Fingolfin".into());
         let mut sub = node.on();
         if let Value::Text(str) = sub.recv().await.unwrap() {
@@ -58,23 +47,10 @@ mod tests {
 
     #[tokio::test]
     async fn connect_and_sync_over_websocket() {
-        let mut peer1 = Node::new_with_config(Config {
-            memory_storage: true,
-            sled_storage: false,
-            websocket_server: true,
-            multicast: false,
-            stats: false,
-            ..Config::default()
-        });
-        let mut peer2 = Node::new_with_config(Config {
-            memory_storage: true,
-            sled_storage: false,
-            websocket_server: false,
-            multicast: false,
-            stats: false,
-            outgoing_websocket_peers: vec!["ws://localhost:4944/gun".to_string()],
-            ..Config::default()
-        });
+        let config = Config::default();
+        let mut peer1 = Node::new_with_config(config.clone(), vec![], vec![Box::new(WsServer::new(config.clone()))]);
+        let ws_client = OutgoingWebsocketManager::new(config.clone(), vec!["ws://localhost:4944/db".to_string()]);
+        let mut peer2 = Node::new_with_config(config.clone(), vec![], vec![Box::new(ws_client)]);
         sleep(Duration::from_millis(2000)).await;
         let mut sub1 = peer1.get("beta").get("name").on();
         let mut sub2 = peer2.get("alpha").get("name").on();
@@ -98,24 +74,21 @@ mod tests {
 
     #[tokio::test]
     async fn sled_storage() {
-        enable_logger();
         let path = std::path::Path::new("./cargo_test_sled_db");
         std::fs::remove_dir_all(path).ok();
         {
-            let mut gun = Node::new_with_config(Config {
-                memory_storage: false,
-                sled_storage: true,
-                sled_config: sled::Config::default().path(path),
-                sled_max_size: Some(10000),
+            let config = Config {
                 my_pub: Some("asdf".to_string()),
                 ..Config::default()
-            });
+            };
+            let sled = SledStorage::new_with_config(config.clone(), sled::Config::default().path(path), None);
+            let mut db = Node::new_with_config(config.clone(), vec![Box::new(sled)], vec![]);
 
-            let mut name = gun.get("~asdf").get("name");
+            let mut name = db.get("~asdf").get("name");
             name.put("Ainu".into());
 
             for i in 0..1000 {
-                gun.get("something").get(&i.to_string()).put("I just want to fill your disk.".into());
+                db.get("something").get(&i.to_string()).put("I just want to fill your disk.".into());
             }
 
             sleep(Duration::from_millis(10000)).await;
@@ -124,27 +97,17 @@ mod tests {
                 assert_eq!(&str, "Ainu"); // stuff by our public key should remain
             }
 
-            gun.stop();
+            db.stop();
         }
         std::fs::remove_dir_all(path).ok();
     }
 
     #[tokio::test]
     async fn sync_over_multicast() {
-        let mut peer1 = Node::new_with_config(Config {
-            websocket_server: false,
-            multicast: true,
-            stats: false,
-            sled_storage: false,
-            ..Config::default()
-        });
-        let mut peer2 = Node::new_with_config(Config {
-            websocket_server: false,
-            multicast: true,
-            stats: false,
-            sled_storage: false,
-            ..Config::default()
-        });
+        enable_logger();
+        let config = Config::default();
+        let mut peer1 = Node::new_with_config(config.clone(), vec![Box::new(MemoryStorage::new())], vec![Box::new(Multicast::new(config.clone()))]);
+        let mut peer2 = Node::new_with_config(config.clone(), vec![Box::new(MemoryStorage::new())], vec![Box::new(Multicast::new(config.clone()))]);
         sleep(Duration::from_millis(1000)).await;
         peer1.get("gamma").put("Gorlim".into());
         peer2.get("sigma").put("Smaug".into());
@@ -171,15 +134,15 @@ mod tests {
     fn write_benchmark() { // to see the result with optimized binary, run: cargo test --release -- --nocapture
         setup();
         let start = Instant::now();
-        let mut gun = Node::new();
+        let mut db = Node::new();
         let n = 1000;
         for i in 0..n {
-            gun.get(&format!("a{:?}", i)).get("Pelendur").put(format!("{:?}b", i).into());
+            db.get(&format!("a{:?}", i)).get("Pelendur").put(format!("{:?}b", i).into());
         }
         let duration = start.elapsed();
         let per_second = (n as f64) / (duration.as_nanos() as f64) * 1000000000.0;
         println!("Wrote {} entries in {:?} ({} / second)", n, duration, per_second);
-        // compare with gun.js: var i = 100000, j = i, s = +new Date; while(--i){ gun.get('a'+i).get('lol').put(i+'yo') } console.log(j / ((+new Date - s) / 1000), 'ops/sec');
+        // compare with db.js: var i = 100000, j = i, s = +new Date; while(--i){ db.get('a'+i).get('lol').put(i+'yo') } console.log(j / ((+new Date - s) / 1000), 'ops/sec');
     }
      */
 }

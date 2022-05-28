@@ -1,12 +1,13 @@
 extern crate clap;
 use clap::{Arg, App, SubCommand};
 use rod::{Node, Config};
-use std::env;
+use rod::adapters::{SledStorage, MemoryStorage, WsServer, WsServerConfig, OutgoingWebsocketManager, Multicast};
+use rod::actor::Actor;
 use ctrlc;
 
 #[tokio::main]
 async fn main() {
-    let default_port = Config::default().websocket_server_port.to_string();
+    let default_port = WsServerConfig::default().port.to_string();
     let matches = App::new("Rod")
     .version("1.0")
     .author("Martti Malmi")
@@ -96,9 +97,6 @@ async fn main() {
     )
     .get_matches();
 
-    //let config = matches.value_of("config").unwrap_or("default.conf");
-    //println!("Value for config: {}", config);
-
     if let Some(matches) = matches.subcommand_matches("start") { // TODO: write fn to convert matches into Config
         let mut outgoing_websocket_peers = Vec::new();
         if let Some(peers) = matches.value_of("peers") {
@@ -109,33 +107,53 @@ async fn main() {
 
         let websocket_server_port: u16 = matches.value_of("port").unwrap().parse::<u16>().unwrap();
 
-        let rust_channel_size: usize = match env::var("RUST_CHANNEL_SIZE") {
-            Ok(p) => p.parse::<usize>().unwrap(),
-            _ => 10
-        };
-
         let sled_max_size: Option<u64> = match matches.value_of("sled-max-size") {
             Some(v) => Some(v.parse::<u64>().unwrap()),
             _ => None
         };
 
+        let mut network_adapters: Vec<Box<dyn Actor>> = Vec::new();
+        let mut storage_adapters: Vec<Box<dyn Actor>> = Vec::new();
+
         let websocket_server = matches.value_of("ws-server").unwrap() == "true";
 
-        let node = Node::new_with_config(Config {
-            outgoing_websocket_peers,
-            rust_channel_size,
-            websocket_server,
-            websocket_server_port,
+        let config = Config {
             allow_public_space: matches.value_of("allow-public-space").unwrap() != "false",
-            sled_storage: matches.value_of("sled-storage").unwrap() != "false",
-            sled_max_size,
-            memory_storage: matches.value_of("memory-storage").unwrap() == "true",
-            multicast: matches.value_of("multicast").unwrap() == "true",
-            cert_path: matches.value_of("cert-path").map(|s| s.to_string()),
-            key_path: matches.value_of("key-path").map(|s| s.to_string()),
             stats: matches.value_of("stats").unwrap() == "true",
             ..Config::default()
-        });
+        };
+
+        // TODO init adapters here
+        if matches.value_of("multicast").unwrap() == "true" {
+            network_adapters.push(Box::new(Multicast::new(config.clone())));
+        }
+        if websocket_server {
+            let cert_path = matches.value_of("cert-path").map(|s| s.to_string());
+            let key_path = matches.value_of("key-path").map(|s| s.to_string());
+            network_adapters.push(Box::new(WsServer::new_with_config(
+                config.clone(),
+                WsServerConfig {
+                    port: websocket_server_port,
+                    cert_path,
+                    key_path
+                }
+            )));
+        }
+        if matches.value_of("sled-storage").unwrap() != "false" {
+            storage_adapters.push(Box::new(SledStorage::new_with_config(
+                config.clone(),
+                sled::Config::default().path("sled_db"),
+                sled_max_size
+            )));
+        }
+        if matches.value_of("memory-storage").unwrap() == "true" {
+            storage_adapters.push(Box::new(MemoryStorage::new()));
+        }
+        if outgoing_websocket_peers.len() > 0 {
+            network_adapters.push(Box::new(OutgoingWebsocketManager::new(config.clone(), outgoing_websocket_peers)));
+        }
+
+        let node = Node::new_with_config(config, storage_adapters, network_adapters);
 
         if websocket_server {
             let url = format!("http://localhost:{}", websocket_server_port);

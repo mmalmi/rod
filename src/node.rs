@@ -1,19 +1,20 @@
 use std::collections::BTreeMap;
 use std::sync::{
     Arc,
-    RwLock // TODO: could we use async RwLock? Would require some changes to the chaining api (.get()).
+    RwLock
 };
-use std::time::SystemTime;
+use std::time::SystemTime; // TODO get time from ActorContext
 use crate::router::Router;
 use crate::message::{Message, Put, Get};
 use crate::types::{Value, NodeData, Children};
 use crate::actor::{Addr, ActorContext, Actor};
 use crate::utils::random_string;
 use log::{debug, info};
-use tokio::sync::broadcast;
+use tokio::sync::broadcast; // TODO replace with generics: Sender and Receiver traits?
 use async_trait::async_trait;
 
-// TODO extract networking to struct Mesh
+static BROADCAST_CHANNEL_SIZE: usize = 10;
+
 // TODO proper automatic tests
 // Node { node: Arc<RwLock<NodeInner>> } instead of Arc<RwLock> for each member? compare performance
 // TODO connections don't seem to be closed / timeouted properly when client has disconnected
@@ -23,36 +24,10 @@ use async_trait::async_trait;
 /// [Node] configuration object.
 #[derive(Clone)]
 pub struct Config {
-    /// [tokio::sync::broadcast] channel size for Node::map() and on(). Default: 10
-    pub rust_channel_size: usize,
-    /// Enable sled.rs storage (disk + memory cache)? Default: true
-    pub sled_storage: bool,
-    /// Sled.rs config. Default: sled::Config defaults + db path "sled_db".
-    pub sled_config: sled::Config,
-    /// Limit for the sled database size on disk in bytes. Default: None
-    pub sled_max_size: Option<u64>,
-    /// Allow public space writes such as db.get("a").put("b").
-    /// If false, only signed (`db.get(~ + pubkey).put(data)`) or content addressed (`db.get("#").get(hash).put(data)`) data is allowed.
-    /// If you're running a public network, you might want to disable this in order to prevent spam.
-    /// Default: true
     pub allow_public_space: bool,
-    /// Enable in-memory storage? Default: false
-    pub memory_storage: bool,
-    /// Enable multicast? Default: false
-    pub multicast: bool, // should we have (adapters: Vector<String>) instead, so you can be sure there's no unwanted sync happening?
-    /// Outgoing websocket peers. Urls must use wss: prefix, not https:. Default: empty list.
-    pub outgoing_websocket_peers: Vec<String>,
-    /// Run the websocket server? Default: `true`
-    pub websocket_server: bool,
-    /// Default: `4944`
-    pub websocket_server_port: u16,
     /// Prioritize data storage for this public key. Format: x.y where x and y are base64 encoded ECDSA public key coordinates.
     /// Example: hyECQHwSo7fgr2MVfPyakvayPeixxsaAWVtZ-vbaiSc.TXIp8MnCtrnW6n2MrYquWPcc-DTmZzMBmc2yaGv9gIU
     pub my_pub: Option<String>,
-    /// TLS certificate path. Default: `None`
-    pub cert_path: Option<String>,
-    /// TLS key path. Default: `None`
-    pub key_path: Option<String>,
     /// Show node stats at /stats?
     pub stats: bool,
 }
@@ -60,18 +35,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Config {
-            rust_channel_size: 1000,
-            sled_storage: true,
-            sled_config: sled::Config::new().path("sled_db"),
-            sled_max_size: None,
             allow_public_space: true,
-            memory_storage: false,
-            multicast: false,
-            outgoing_websocket_peers: Vec::new(),
-            websocket_server: true,
-            websocket_server_port: 4944,
-            cert_path: None,
-            key_path: None,
             stats: true,
             my_pub: None,
         }
@@ -82,7 +46,6 @@ impl Default for Config {
 /// Sends, processes and relays Put & Get messages between storage and transport adapters.
 #[derive(Clone)]
 pub struct Node {
-    config: Arc<RwLock<Config>>,
     uid: Arc<RwLock<String>>,
     path: Vec<String>,
     children: Arc<RwLock<BTreeMap<String, Node>>>,
@@ -105,9 +68,9 @@ impl Actor for Node {
 }
 
 impl Node {
-    /// Create a new root-level Node using default configuration. Starts the default network and storage adapters.
+    /// Create a new root-level Node using default configuration. No network or storage adapters are started.
     pub fn new() -> Self {
-        Self::new_with_config(Config::default())
+        Self::new_with_config(Config::default(), Vec::new(), Vec::new())
     }
 
     /// Create a new root-level Node using custom configuration. Starts the default or configured network and storage adapters.
@@ -118,11 +81,12 @@ impl Node {
     /// tokio_test::block_on(async {
     ///
     ///     use rod::{Node, Config, Value};
+    ///     use rod::adapters::{MemoryStorage, OutgoingWebsocketManager};
     ///
-    ///     let mut db = Node::new_with_config(Config {
-    ///         outgoing_websocket_peers: vec!["wss://some-server-to-sync.with/ws".to_string()],
-    ///         ..Config::default()
-    ///     });
+    ///     let config = Config::default();
+    ///     let memory_storage = Box::new(MemoryStorage::new());
+    ///     let ws_client = Box::new(OutgoingWebsocketManager::new(config.clone(), vec!["wss://some-rod-server.com/ws".to_string()]));
+    ///     let mut db = Node::new_with_config(config.clone(), vec![memory_storage], vec![ws_client]);
     ///     let mut sub = db.get("greeting").on();
     ///     db.get("greeting").put("Hello World!".into());
     ///     if let Value::Text(str) = sub.recv().await.unwrap() {
@@ -131,16 +95,15 @@ impl Node {
     ///
     /// })
     /// ```
-    pub fn new_with_config(config: Config) -> Self {
+    pub fn new_with_config(config: Config, storage_adapters: Vec<Box<dyn Actor>>, network_adapters: Vec<Box<dyn Actor>>) -> Self {
         let actor_context = ActorContext::new(random_string(16));
         let node = Self {
             path: vec![],
             uid: Arc::new(RwLock::new("".to_string())),
-            config: Arc::new(RwLock::new(config.clone())),
             children: Arc::new(RwLock::new(BTreeMap::new())),
             parent: Arc::new(RwLock::new(None)),
-            on_sender: broadcast::channel::<Value>(config.rust_channel_size).0,
-            map_sender: broadcast::channel::<(String, Value)>(config.rust_channel_size).0,
+            on_sender: broadcast::channel::<Value>(BROADCAST_CHANNEL_SIZE).0,
+            map_sender: broadcast::channel::<(String, Value)>(BROADCAST_CHANNEL_SIZE).0,
             addr: Arc::new(RwLock::new(None)),
             router: Arc::new(RwLock::new(None)),
             actor_context: actor_context.clone()
@@ -149,8 +112,8 @@ impl Node {
         let addr = actor_context.start_actor(Box::new(node.clone()));
         *node.addr.write().unwrap() = Some(addr);
 
-        let router = Box::new(Router::new(config.clone())); // actually, we should communicate with
-        // MemoryStorage, which has a special role in maintaining our version of the current state?
+        let router = Box::new(Router::new(config, storage_adapters, network_adapters)); // actually, we should communicate with
+        // MemoryStorage (or sled), which has a special role in maintaining our version of the current state?
         // MemoryStorage can then communicate with router as needed.
         let router_addr = node.actor_context.start_router(router);
         *node.router.write().unwrap() = Some(router_addr);
@@ -159,8 +122,8 @@ impl Node {
     }
 
     fn handle_put(&mut self, put: Put) {
-        // TODO accept puts only from our memory adapter, which is supposed to serve the latest version.
-        // Or store latest NodeData in Node?
+        // TODO accept puts only from our memory/sled adapter, which is supposed to serve the latest version.
+        // Or store latest NodeData in Node? Would eat up memory though.
         for (node_id, node_data) in put.updated_nodes {
             if node_id == *self.uid.read().unwrap() {
                 for (child, child_data) in node_data {
@@ -176,18 +139,16 @@ impl Node {
     fn new_child(&self, key: String) -> Node {
         assert!(key.len() > 0, "Key length must be greater than zero");
         debug!("new child {}", key);
-        let config = self.config.read().unwrap();
         let mut path = self.path.clone();
         path.push(key.clone());
         let new_child_uid = path.join("/");
         debug!("new_child_uid {}", new_child_uid);
         let node = Self {
             path,
-            config: self.config.clone(),
             children: Arc::new(RwLock::new(BTreeMap::new())),
             parent: Arc::new(RwLock::new(Some((self.uid.read().unwrap().clone(), self.clone())))),
-            on_sender: broadcast::channel::<Value>(config.rust_channel_size).0,
-            map_sender: broadcast::channel::<(String, Value)>(config.rust_channel_size).0,
+            on_sender: broadcast::channel::<Value>(BROADCAST_CHANNEL_SIZE).0,
+            map_sender: broadcast::channel::<(String, Value)>(BROADCAST_CHANNEL_SIZE).0,
             uid: Arc::new(RwLock::new(new_child_uid)),
             router: self.router.clone(),
             addr: Arc::new(RwLock::new(None)),
@@ -239,15 +200,8 @@ impl Node {
 
     /// Subscribe to all children of this Node.
     pub fn map(&self) -> broadcast::Receiver<(String, Value)> {
-        /*
-        for (key, child) in self.children.read().unwrap().iter() { // TODO can be faster with rayon multithreading?
-            if let Some(child_data) = child.clone().get_stored_data() {
-                self.map_sender.send((key.to_string(), child_data.value)).ok(); // TODO first return Receiver and then do this in another thread?
-            }
-        }
-         */
-        self.map_sender.subscribe()
         // TODO: send get messages to adapters!!
+        self.map_sender.subscribe()
     }
 
     /// Set a Value for the Node.
