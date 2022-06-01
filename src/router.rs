@@ -166,11 +166,16 @@ impl Router {
                 }
             }
         }
-        if sent_to < 1 {
+        if sent_to < 4 {
             let mut errored = HashSet::new();
             while let Some(addr) = self.known_peers.iter().choose(&mut rng) {
+                sent_to += 1;
                 match addr.send(Message::Get(get.clone())) {
-                    Ok(_) => { break },
+                    Ok(_) => {
+                        if sent_to >= 4 {
+                            break;
+                        }
+                    },
                     _=> { errored.insert(addr.clone()); }
                 }
             }
@@ -203,7 +208,6 @@ impl Router {
                     if put.from == *addr {
                         continue;
                     }
-                    // TODO send Gets to... someone, not everyone
                     let _ = addr.send(Message::Put(put.clone()));
                 }
 
