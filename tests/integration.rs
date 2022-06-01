@@ -49,7 +49,7 @@ mod tests {
     async fn connect_and_sync_over_websocket() {
         let config = Config::default();
         let mut peer1 = Node::new_with_config(config.clone(), vec![], vec![Box::new(WsServer::new(config.clone()))]);
-        let ws_client = OutgoingWebsocketManager::new(config.clone(), vec!["ws://localhost:4944/db".to_string()]);
+        let ws_client = OutgoingWebsocketManager::new(config.clone(), vec!["ws://localhost:4944/ws".to_string()]);
         let mut peer2 = Node::new_with_config(config.clone(), vec![], vec![Box::new(ws_client)]);
         sleep(Duration::from_millis(2000)).await;
         let mut sub1 = peer1.get("beta").get("name").on();
@@ -70,6 +70,86 @@ mod tests {
         }
         peer1.stop();
         peer2.stop();
+    }
+
+    #[tokio::test]
+    async fn websocket_sync_over_relay_peer() {
+        let config = Config::default();
+
+        let mut relay = Node::new_with_config(config.clone(), vec![], vec![Box::new(WsServer::new(config.clone()))]);
+
+        let ws_client = OutgoingWebsocketManager::new(config.clone(), vec!["ws://localhost:4944/ws".to_string()]);
+        let mut peer1 = Node::new_with_config(config.clone(), vec![], vec![Box::new(ws_client)]);
+
+        let ws_client = OutgoingWebsocketManager::new(config.clone(), vec!["ws://localhost:4944/ws".to_string()]);
+        let mut peer2 = Node::new_with_config(config.clone(), vec![], vec![Box::new(ws_client)]);
+
+        sleep(Duration::from_millis(2000)).await;
+
+        let mut sub1 = peer1.get("beta").get("name").on();
+        let mut sub2 = peer2.get("alpha").get("name").on();
+        peer1.get("alpha").get("name").put("Amandil".into());
+        peer2.get("beta").get("name").put("Beregond".into());
+        match sub1.recv().await.unwrap() {
+            Value::Text(str) => {
+                assert_eq!(&str, "Beregond");
+            },
+            _ => panic!("Expected Value::Text")
+        }
+        match sub2.recv().await.unwrap() {
+            Value::Text(str) => {
+                assert_eq!(&str, "Amandil");
+            },
+            _ => panic!("Expected Value::Text")
+        }
+        peer1.stop();
+        peer2.stop();
+        relay.stop();
+    }
+
+    #[tokio::test]
+    async fn websocket_sync_over_2_relay_peers() {
+        enable_logger();
+        let config = Config::default();
+
+        let ws_server1 = WsServer::new(config.clone());
+        let ws_server2 = WsServer::new_with_config(
+            config.clone(),
+            WsServerConfig { port: 4945, ..WsServerConfig::default() }
+        );
+        let ws_client = OutgoingWebsocketManager::new(config.clone(), vec!["ws://localhost:4944/ws".to_string()]);
+        let mut relay1 = Node::new_with_config(config.clone(), vec![], vec![Box::new(ws_server1)]);
+        let mut relay2 = Node::new_with_config(config.clone(), vec![], vec![Box::new(ws_server2), Box::new(ws_client)]);
+
+        let ws_client = OutgoingWebsocketManager::new(config.clone(), vec!["ws://localhost:4944/ws".to_string()]);
+        let mut peer1 = Node::new_with_config(config.clone(), vec![], vec![Box::new(ws_client)]);
+
+        let ws_client = OutgoingWebsocketManager::new(config.clone(), vec!["ws://localhost:4945/ws".to_string()]);
+        let mut peer2 = Node::new_with_config(config.clone(), vec![], vec![Box::new(ws_client)]);
+
+        sleep(Duration::from_millis(2000)).await;
+
+        let mut sub1 = peer1.get("beta").get("name").on();
+        let mut sub2 = peer2.get("alpha").get("name").on();
+        sleep(Duration::from_millis(100)).await;
+        peer1.get("alpha").get("name").put("Amandil".into());
+        peer2.get("beta").get("name").put("Beregond".into());
+        match sub1.recv().await.unwrap() {
+            Value::Text(str) => {
+                assert_eq!(&str, "Beregond");
+            },
+            _ => panic!("Expected Value::Text")
+        }
+        match sub2.recv().await.unwrap() {
+            Value::Text(str) => {
+                assert_eq!(&str, "Amandil");
+            },
+            _ => panic!("Expected Value::Text")
+        }
+        peer1.stop();
+        peer2.stop();
+        relay1.stop();
+        relay2.stop();
     }
 
     #[tokio::test]
@@ -104,7 +184,6 @@ mod tests {
 
     #[tokio::test]
     async fn sync_over_multicast() {
-        enable_logger();
         let config = Config::default();
         let mut peer1 = Node::new_with_config(config.clone(), vec![Box::new(MemoryStorage::new())], vec![Box::new(Multicast::new(config.clone()))]);
         let mut peer2 = Node::new_with_config(config.clone(), vec![Box::new(MemoryStorage::new())], vec![Box::new(Multicast::new(config.clone()))]);

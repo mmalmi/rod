@@ -207,13 +207,18 @@ impl Router {
                     let _ = addr.send(Message::Put(put.clone()));
                 }
 
+                let mut already_sent_to = HashSet::new();
+
                 // Send to server peers
                 for addr in self.server_peers.iter() {
+                    if put.from == *addr {
+                        continue;
+                    }
                     let _ = addr.send(Message::Put(put.clone()));
+                    already_sent_to.insert(addr.clone());
                 }
 
                 // Relay to subscribers
-                let mut already_sent_to = HashSet::new();
                 let mut sent_to = 0;
                 for node_id in put.clone().updated_nodes.keys() {
                     let topic = node_id.split("/").next().unwrap_or("");
@@ -228,17 +233,30 @@ impl Router {
                             already_sent_to.insert(addr.clone());
                             match addr.send(Message::Put(put.clone())) {
                                 Ok(_) => { sent_to += 1; true },
-                                _=> { false }
+                                _=> false
                             }
                         })
                     }
                 }
-                if sent_to < 1 {
+                debug!("sent put to {} subscribers", already_sent_to.len());
+                if already_sent_to.len() < 4 {
                     let mut rng = thread_rng();
                     let mut errored = HashSet::new();
                     while let Some(addr) = self.known_peers.iter().choose(&mut rng) {
+                        sent_to += 1;
+                        /* TODO: seems like the following is necessary, but it causes a test to fail
+                        if already_sent_to.contains(addr) {
+                            continue;
+                        }
+                        already_sent_to.insert(addr.clone());
+                         */
                         match addr.send(Message::Put(put.clone())) {
-                            Ok(_) => { break },
+                            Ok(_) => {
+                                debug!("sent put to random dude");
+                                if sent_to >= 4 {
+                                    break;
+                                }
+                            },
                             _=> { errored.insert(addr.clone()); }
                         }
                     }

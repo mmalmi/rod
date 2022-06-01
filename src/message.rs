@@ -156,6 +156,14 @@ impl Message {
         }
     }
 
+    pub fn from(&self) -> Addr {
+        match self {
+            Message::Get(get) => get.from.clone(),
+            Message::Put(put) => put.from.clone(),
+            Message::Hi { from: _, peer_id: _ } => Addr::noop()
+        }
+    }
+
     fn verify_sig(node_id: &str, node_data: &serde_json::Map<String, JsonValue>) -> Result<(), &'static str> {
         for (child_key, timestamp) in node_data["_"][">"].as_object().ok_or("not an object")?.iter() {
             let value = node_data.get(child_key).ok_or("no matching key in object and _")?;
