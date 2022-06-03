@@ -17,13 +17,11 @@ use tokio::net::TcpListener;
 
 use tokio_tungstenite::MaybeTlsStream;
 
-use hyper::{Body, Request, Response, Server, http};
+use hyper::{Body, Request, Response};
 use hyper::service::{make_service_fn, service_fn};
 use hyper_staticfile::Static;
 use std::io::Error as IoError;
 use std::path::Path;
-use http::response::Builder as ResponseBuilder;
-use http::StatusCode;
 
 type Clients = Arc<RwLock<HashSet<Addr>>>;
 

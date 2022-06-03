@@ -170,6 +170,9 @@ impl Router {
             let mut errored = HashSet::new();
             while let Some(addr) = self.known_peers.iter().choose(&mut rng) {
                 sent_to += 1;
+                if get.from == *addr {
+                    continue;
+                }
                 match addr.send(Message::Get(get.clone())) {
                     Ok(_) => {
                         if sent_to >= 4 {
@@ -254,6 +257,9 @@ impl Router {
                         }
                         already_sent_to.insert(addr.clone());
                          */
+                        if put.from == *addr {
+                            continue;
+                        }
                         match addr.send(Message::Put(put.clone())) {
                             Ok(_) => {
                                 debug!("sent put to random dude");

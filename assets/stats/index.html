@@ -114,7 +114,9 @@
 
 <script src="/stats/gun.js"></script>
 <script>
-const gun = window.gun = GUN(document.location.origin + '/ws');
+const l = document.location;
+const url = `${l.protocol}//${l.hostname}:${parseInt(l.port) - 1}/ws`;
+const gun = window.gun = GUN(url);
 
 fetch("/peer_id", {method:"get"}).then(async res => {
     if (res.ok) {
