@@ -155,13 +155,7 @@ async fn main() {
 
         let node = Node::new_with_config(config, storage_adapters, network_adapters);
 
-        if websocket_server {
-            let url = format!("http://localhost:{}", websocket_server_port);
-            println!("Node starting...");
-            println!("Iris UI:      {}", url);
-            println!("Stats:        {}/stats", url);
-            println!("Websocket endpoint: {}/ws", url);
-        }
+        println!("Rod node starting...");
 
         let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
 
