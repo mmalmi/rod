@@ -134,10 +134,13 @@ impl Router {
             let _ = addr.send(Message::Get(get.clone()));
         }
 
+        let mut already_sent_to = HashSet::new();
+
         // Send to server peers
         for addr in self.server_peers.iter() {
             debug!("send to server peer");
             let _ = addr.send(Message::Get(get.clone()));
+            already_sent_to.insert(addr.clone());
         }
 
         // Ask network
@@ -151,6 +154,10 @@ impl Router {
                 if get.from == *addr {
                     continue;
                 }
+                if already_sent_to.contains(addr) {
+                    continue;
+                }
+                already_sent_to.insert(addr.clone());
                 match addr.send(Message::Get(get.clone())) {
                     Ok(_) => { sent_to += 1; },
                     _=> { errored.insert(addr.clone()); }
@@ -173,6 +180,10 @@ impl Router {
                 if get.from == *addr {
                     continue;
                 }
+                if already_sent_to.contains(addr) {
+                    continue;
+                }
+                already_sent_to.insert(addr.clone());
                 match addr.send(Message::Get(get.clone())) {
                     Ok(_) => {
                         if sent_to >= 4 {
@@ -251,12 +262,11 @@ impl Router {
                     let mut errored = HashSet::new();
                     while let Some(addr) = self.known_peers.iter().choose(&mut rng) {
                         sent_to += 1;
-                        /* TODO: seems like the following is necessary, but it causes a test to fail
+                        // TODO: seems like the following is necessary, but it causes a test to fail
                         if already_sent_to.contains(addr) {
                             continue;
                         }
                         already_sent_to.insert(addr.clone());
-                         */
                         if put.from == *addr {
                             continue;
                         }
