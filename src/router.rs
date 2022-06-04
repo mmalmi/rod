@@ -177,6 +177,9 @@ impl Router {
             let mut errored = HashSet::new();
             while let Some(addr) = self.known_peers.iter().choose(&mut rng) {
                 sent_to += 1;
+                if sent_to >= 4 {
+                    break;
+                }
                 if get.from == *addr {
                     continue;
                 }
@@ -185,11 +188,7 @@ impl Router {
                 }
                 already_sent_to.insert(addr.clone());
                 match addr.send(Message::Get(get.clone())) {
-                    Ok(_) => {
-                        if sent_to >= 4 {
-                            break;
-                        }
-                    },
+                    Ok(_) => {},
                     _=> { errored.insert(addr.clone()); }
                 }
             }
@@ -262,6 +261,9 @@ impl Router {
                     let mut errored = HashSet::new();
                     while let Some(addr) = self.known_peers.iter().choose(&mut rng) {
                         sent_to += 1;
+                        if sent_to >= 4 {
+                            break;
+                        }
                         // TODO: seems like the following is necessary, but it causes a test to fail
                         if already_sent_to.contains(addr) {
                             continue;
@@ -273,9 +275,6 @@ impl Router {
                         match addr.send(Message::Put(put.clone())) {
                             Ok(_) => {
                                 debug!("sent put to random dude");
-                                if sent_to >= 4 {
-                                    break;
-                                }
                             },
                             _=> { errored.insert(addr.clone()); }
                         }
