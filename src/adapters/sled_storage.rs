@@ -366,7 +366,7 @@ mod tests {
         let (sender, mut receiver) = unbounded_channel::<Message>();
         let return_addr = Addr::new(sender);
         let sled_storage = SledStorage::new_with_config(Config::default(), sled::Config::default().path(path), None);
-        let ctx = ActorContext::new("peer_id".to_string());
+        let mut ctx = ActorContext::new("peer_id".to_string());
         let sled_addr = ctx.start_actor(Box::new(sled_storage));
 
         let mut children = Children::default();

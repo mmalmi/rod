@@ -52,7 +52,7 @@ pub struct Node {
     parent: Arc<RwLock<Option<(String, Node)>>>,
     on_sender: broadcast::Sender<Value>,
     map_sender: broadcast::Sender<(String, Value)>,
-    actor_context: ActorContext,
+    actor_context: Box<ActorContext>,
     addr: Arc<RwLock<Option<Addr>>>,
     router: Arc<RwLock<Option<Addr>>>,
 }
@@ -97,7 +97,7 @@ impl Node {
     /// ```
     pub fn new_with_config(config: Config, storage_adapters: Vec<Box<dyn Actor>>, network_adapters: Vec<Box<dyn Actor>>) -> Self {
         let actor_context = ActorContext::new(random_string(16));
-        let node = Self {
+        let mut node = Self {
             path: vec![],
             uid: Arc::new(RwLock::new("".to_string())),
             children: Arc::new(RwLock::new(BTreeMap::new())),
@@ -106,10 +106,11 @@ impl Node {
             map_sender: broadcast::channel::<(String, Value)>(BROADCAST_CHANNEL_SIZE).0,
             addr: Arc::new(RwLock::new(None)),
             router: Arc::new(RwLock::new(None)),
-            actor_context: actor_context.clone()
+            actor_context: Box::new(actor_context)
         };
 
-        let addr = actor_context.start_actor(Box::new(node.clone()));
+        node.actor_context.node = Some(node.clone());
+        let addr = node.actor_context.start_actor(Box::new(node.clone()));
         *node.addr.write().unwrap() = Some(addr);
 
         let router = Box::new(Router::new(config, storage_adapters, network_adapters)); // actually, we should communicate with
@@ -204,15 +205,10 @@ impl Node {
         self.map_sender.subscribe()
     }
 
-    /// Set a Value for the Node.
-    pub fn put(&mut self, value: Value) {
-        let updated_at: f64 = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis() as f64;
-        self.on_sender.send(value.clone()).ok();
-        debug!("put {}", value.to_string());
-
-        // TODO: write the full chain of parents
-
-        if let Some((parent_id, _parent)) = &*self.parent.read().unwrap() {
+    fn put_to_parent(&mut self, value: Value, updated_at: f64) {
+        let parent = &*self.parent.read().unwrap();
+        if let Some((parent_id, parent)) = parent {
+            let mut parent = parent.clone();
             let mut children = Children::default();
             children.insert(self.path.last().unwrap().clone(), NodeData { value: value.clone(), updated_at });
             let my_addr = self.addr.read().unwrap().clone().unwrap();
@@ -220,11 +216,21 @@ impl Node {
             if let Some(router) = &*self.router.read().unwrap() {
                 let _ = router.send(Message::Put(put));
             }
+            parent.put_to_parent(Value::Link(self.uid.read().unwrap().to_string()), updated_at); // recursion! :)
         }
+    }
+
+    /// Set a Value for the Node.
+    pub fn put(&mut self, value: Value) {
+        let updated_at: f64 = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis() as f64;
+        self.on_sender.send(value.clone()).ok();
+        debug!("put {}", value.to_string());
+        self.put_to_parent(value, updated_at);
     }
 
     pub fn stop(&mut self) {
         info!("Node stopping");
         self.actor_context.stop();
+
     }
 }

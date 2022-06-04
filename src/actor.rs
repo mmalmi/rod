@@ -5,6 +5,7 @@ use std::marker::Send;
 use std::sync::{Arc, RwLock};
 use crate::message::Message;
 use crate::utils::random_string;
+use crate::Node;
 use tokio::sync::mpsc::{Sender, Receiver, UnboundedReceiver, UnboundedSender, unbounded_channel, channel};
 use tokio::task::JoinHandle;
 use futures_util::Future;
@@ -24,7 +25,7 @@ pub trait Actor: Send + Sync + 'static {
     fn subscribe_to_everything(&self) -> bool { false }
 }
 impl dyn Actor {
-    async fn run(&mut self, mut receiver: UnboundedReceiver<Message>, mut stop_receiver: Receiver<()>, context: ActorContext) {
+    async fn run(&mut self, mut receiver: UnboundedReceiver<Message>, mut stop_receiver: Receiver<()>, mut context: ActorContext) {
         self.pre_start(&context).await;
         loop {
             tokio::select! {
@@ -53,7 +54,8 @@ pub struct ActorContext {
     stop_signals: Arc<RwLock<Vec<Sender<()>>>>,
     task_handles: Arc<RwLock<Vec<JoinHandle<()>>>>,
     pub addr: Addr,
-    pub is_stopped: Arc<RwLock<bool>>
+    pub is_stopped: Arc<RwLock<bool>>,
+    pub node: Option<Node>
 }
 impl ActorContext {
     pub fn new(peer_id: String) -> Self {
@@ -63,7 +65,8 @@ impl ActorContext {
             task_handles: Arc::new(RwLock::new(Vec::new())),
             peer_id: Arc::new(RwLock::new(peer_id)),
             router: Addr::noop(),
-            is_stopped: Arc::new(RwLock::new(false))
+            is_stopped: Arc::new(RwLock::new(false)),
+            node: None
         }
     }
 
@@ -74,7 +77,8 @@ impl ActorContext {
             task_handles: Arc::new(RwLock::new(Vec::new())),
             peer_id: self.peer_id.clone(),
             router: self.router.clone(),
-            is_stopped: self.is_stopped.clone()
+            is_stopped: self.is_stopped.clone(),
+            node: self.node.clone()
         }
     }
 
@@ -115,13 +119,14 @@ impl ActorContext {
         addr
     }
 
-    pub fn stop(&self) {
+    pub fn stop(&mut self) {
         for handle in self.task_handles.read().unwrap().iter() {
             handle.abort();
         }
         for signal in self.stop_signals.read().unwrap().iter() {
             let _ = signal.try_send(());
         }
+        self.node = None;
         *self.is_stopped.write().unwrap() = true;
     }
 }

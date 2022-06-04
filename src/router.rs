@@ -273,7 +273,7 @@ impl Router {
                             continue;
                         }
                         match addr.send(Message::Put(put.clone())) {
-                            Ok(_) => {
+                            Ok(_) => { 
                                 debug!("sent put to random dude");
                             },
                             _=> { errored.insert(addr.clone()); }

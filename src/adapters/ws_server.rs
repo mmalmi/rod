@@ -2,6 +2,7 @@ use crate::message::Message;
 use crate::actor::{Actor, Addr, ActorContext};
 use crate::Config;
 use crate::adapters::ws_conn::WsConn;
+use crate::Node;
 
 use async_trait::async_trait;
 use std::collections::HashSet;
@@ -9,6 +10,7 @@ use std::sync::{Arc};
 use std::fs::File;
 use std::io::Read;
 use tokio::sync::RwLock;
+use tokio::time::{sleep, Duration};
 
 use futures_util::{StreamExt, future};
 use log::{info};
@@ -103,6 +105,16 @@ impl WsServer {
         eprintln!("Stats:              http://{}/stats", addr);
         server.await.expect("Web server failed");
     }
+
+    async fn update_stats(clients: Clients, mut stats: Node) {
+        stats.put("a".into());
+        loop {
+            let conns = clients.read().await.len().to_string();
+            eprintln!("conns {}", conns);
+            stats.get("ws_server_connections").put(conns.into());
+            sleep(Duration::from_millis(1000)).await;
+        }
+    }
 }
 #[async_trait]
 impl Actor for WsServer {
@@ -124,9 +136,18 @@ impl Actor for WsServer {
 
         let web_port = self.ws_config.port + 1;
         let peer_id = ctx.peer_id.read().unwrap().clone();
+        let peer_id_clone = peer_id.clone();
         ctx.child_task(async move {
-            Self::start_web_server(web_port, peer_id).await;
+            Self::start_web_server(web_port, peer_id_clone).await;
         });
+
+        if self.config.stats {
+            let mut node = ctx.node.as_ref().unwrap().clone();
+            let stats = node.get("node_stats").get(&peer_id);
+            ctx.child_task(async move {
+                Self::update_stats(clients, stats).await;
+            });
+        }
 
         // Create the event loop and TCP listener we'll accept connections on.
         let try_socket = TcpListener::bind(&addr).await;
@@ -134,6 +155,7 @@ impl Actor for WsServer {
         eprintln!("Websocket endpoint: ws://{}/ws", addr);
 
         let allow_public_space = self.config.allow_public_space;
+        let clients = self.clients.clone();
         if let Some(cert_path) = &self.ws_config.cert_path {
             let mut cert_file = File::open(cert_path).unwrap();
             let mut cert = vec![];

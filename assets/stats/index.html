@@ -124,8 +124,8 @@ fetch("/peer_id", {method:"get"}).then(async res => {
         document.getElementById('peer_id').innerText = peer_id;
         const stats = gun.get('node_stats').get(peer_id);
         [
-          'websocket_server_connections',
-          'websocket_client_connections',
+          'ws_server_connections',
+          'ws_client_connections',
           'graph_node_count',
           'graph_size_bytes',
           'total_memory',
