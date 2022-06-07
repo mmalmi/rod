@@ -209,18 +209,21 @@ impl Node {
         self.map_sender.subscribe()
     }
 
-    fn put_to_parent(&mut self, value: Value, updated_at: f64) {
+    fn add_parent_nodes(&mut self, updated_nodes: &mut BTreeMap<String, Children>, value: Value, updated_at: f64) {
         let parent = &*self.parent.read().unwrap();
         if let Some((parent_id, parent)) = parent {
+            if parent_id == "" {
+                return;
+            }
             let mut parent = parent.clone();
             let mut children = Children::default();
             children.insert(self.path.last().unwrap().clone(), NodeData { value: value.clone(), updated_at });
-            let my_addr = self.addr.read().unwrap().clone().unwrap();
-            let put = Put::new_from_kv(parent_id.to_string(), children, my_addr);
-            if let Some(router) = &*self.router.read().unwrap() {
-                let _ = router.send(Message::Put(put));
-            }
-            parent.put_to_parent(Value::Link(self.uid.read().unwrap().to_string()), updated_at); // recursion! :)
+            updated_nodes.insert(parent_id.to_string(), children);
+            parent.add_parent_nodes(
+                updated_nodes,
+                Value::Link(self.uid.read().unwrap().to_string()),
+                updated_at
+            );
         }
     }
 
@@ -229,7 +232,13 @@ impl Node {
         let updated_at: f64 = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis() as f64;
         self.on_sender.send(value.clone()).ok();
         debug!("put {}", value.to_string());
-        self.put_to_parent(value, updated_at);
+        let mut updated_nodes = BTreeMap::new();
+        self.add_parent_nodes(&mut updated_nodes, value, updated_at);
+        let my_addr = self.addr.read().unwrap().clone().unwrap();
+        let put = Put::new(updated_nodes, None, my_addr);
+        if let Some(router) = &*self.router.read().unwrap() {
+            let _ = router.send(Message::Put(put));
+        }
     }
 
     pub fn stop(&mut self) {
