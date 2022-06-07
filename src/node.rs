@@ -221,7 +221,7 @@ impl Node {
             updated_nodes.insert(parent_id.to_string(), children);
             parent.add_parent_nodes(
                 updated_nodes,
-                Value::Link(self.uid.read().unwrap().to_string()),
+                Value::Link(parent.id()),
                 updated_at
             );
         }

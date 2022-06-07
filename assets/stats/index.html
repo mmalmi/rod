@@ -32,7 +32,7 @@
                                     <td>
                                       Incoming connections
                                     </td>
-                                    <td class="text-center" id="websocket_server_connections">
+                                    <td class="text-center" id="ws_server_connections">
                                         -
                                     </td>
                                   </tr>
@@ -134,7 +134,9 @@ fetch("/peer_id", {method:"get"}).then(async res => {
           'process_uptime',
           'msgs_per_second'
         ].forEach(key =>
-          stats.get(key).on(value => document.getElementById(key).innerText = value)
+          stats.get(key).on(value =>
+            document.getElementById(key).innerText = value
+          )
         );
     }
 });
