@@ -73,6 +73,10 @@ impl Node {
         Self::new_with_config(Config::default(), Vec::new(), Vec::new())
     }
 
+    pub fn id(&self) -> String {
+        self.uid.read().unwrap().clone()
+    }
+
     /// Create a new root-level Node using custom configuration. Starts the default or configured network and storage adapters.
     ///
     /// # Examples

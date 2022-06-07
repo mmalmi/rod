@@ -84,7 +84,7 @@ impl From<Value> for SerdeJsonValue {
             Value::Text(t) => SerdeJsonValue::String(t),
             Value::Bit(b) => SerdeJsonValue::Bool(b),
             Value::Number(n) => json!(n),
-            Value::Link(l) => SerdeJsonValue::String(l) // TODO fix. Object?
+            Value::Link(l) => json!({"#": l})
         }
     }
 }
