@@ -66,6 +66,7 @@ impl WsServer {
             Err(_e) => {
                 // suppress errors from receiving normal http requests
                 // error!("Error during the websocket handshake occurred: {}", e);
+                // try to handle normal http request?
                 return;
             }
         };
@@ -106,13 +107,18 @@ impl WsServer {
         server.await.expect("Web server failed");
     }
 
-    async fn update_stats(clients: Clients, mut stats: Node) {
+    async fn update_stats(ctx: ActorContext, mut stats: Node) {
         stats.put("a".into());
+        let mut conns: usize = 0;
         loop {
-            let conns = clients.read().await.len().to_string();
+            sleep(Duration::from_millis(1000)).await;
+            let conns_new = ctx.child_actor_count() - 1;
+            if conns_new == conns {
+                continue;
+            }
+            conns = conns_new;
             eprintln!("conns {}", conns);
             stats.get("ws_server_connections").put(conns.into());
-            sleep(Duration::from_millis(1000)).await;
         }
     }
 }
@@ -131,7 +137,6 @@ impl Actor for WsServer {
 
     async fn pre_start(&mut self, ctx: &ActorContext) {
         let addr = format!("0.0.0.0:{}", self.ws_config.port).to_string();
-        let clients = self.clients.clone();
         let ctx = ctx.clone();
 
         let web_port = self.ws_config.port + 1;
@@ -144,8 +149,9 @@ impl Actor for WsServer {
         if self.config.stats {
             let mut node = ctx.node.as_ref().unwrap().clone();
             let stats = node.get("node_stats").get(&peer_id);
+            let ctx_clone = ctx.clone();
             ctx.child_task(async move {
-                Self::update_stats(clients, stats).await;
+                Self::update_stats(ctx_clone, stats).await;
             });
         }
 

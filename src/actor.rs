@@ -3,6 +3,7 @@ use std::hash::{Hash, Hasher};
 use std::fmt;
 use std::marker::Send;
 use std::sync::{Arc, RwLock};
+use std::collections::HashMap;
 use crate::message::Message;
 use crate::utils::random_string;
 use crate::Node;
@@ -51,7 +52,7 @@ impl dyn Actor {
 pub struct ActorContext {
     pub peer_id: Arc<RwLock<String>>,
     pub router: Addr,
-    stop_signals: Arc<RwLock<Vec<Sender<()>>>>,
+    stop_signals: Arc<RwLock<HashMap<Addr, Sender<()>>>>,
     task_handles: Arc<RwLock<Vec<JoinHandle<()>>>>,
     pub addr: Addr,
     pub is_stopped: Arc<RwLock<bool>>,
@@ -61,7 +62,7 @@ impl ActorContext {
     pub fn new(peer_id: String) -> Self {
         Self {
             addr: Addr::noop(),
-            stop_signals: Arc::new(RwLock::new(Vec::new())),
+            stop_signals: Arc::new(RwLock::new(HashMap::new())),
             task_handles: Arc::new(RwLock::new(Vec::new())),
             peer_id: Arc::new(RwLock::new(peer_id)),
             router: Addr::noop(),
@@ -70,10 +71,16 @@ impl ActorContext {
         }
     }
 
+    pub fn child_actor_count(&self) -> usize {
+        self.stop_signals.read().unwrap().len()
+    }
+
     fn child_context(&self, addr: Addr, stop_signal: Sender<()>) -> Self {
+        let mut stop_signals = HashMap::new();
+        stop_signals.insert(addr.clone(), stop_signal);
         Self {
             addr,
-            stop_signals: Arc::new(RwLock::new(vec![stop_signal])),
+            stop_signals: Arc::new(RwLock::new(stop_signals)),
             task_handles: Arc::new(RwLock::new(Vec::new())),
             peer_id: self.peer_id.clone(),
             router: self.router.clone(),
@@ -114,8 +121,13 @@ impl ActorContext {
         if is_router {
             new_context.router = addr.clone();
         }
-        self.stop_signals.write().unwrap().push(stop_sender);
-        tokio::spawn(async move { actor.run(receiver, stop_receiver, new_context).await }); // ActorSystem with HashMap<Addr, Sender> that lets us call stop() on all actors?
+        self.stop_signals.write().unwrap().insert(addr.clone(), stop_sender);
+        let stop_signals = self.stop_signals.clone();
+        let addr_clone = addr.clone();
+        tokio::spawn(async move {
+            actor.run(receiver, stop_receiver, new_context).await;
+            stop_signals.write().unwrap().remove(&addr_clone);
+        });
         addr
     }
 
@@ -123,7 +135,7 @@ impl ActorContext {
         for handle in self.task_handles.read().unwrap().iter() {
             handle.abort();
         }
-        for signal in self.stop_signals.read().unwrap().iter() {
+        for signal in self.stop_signals.read().unwrap().values() {
             let _ = signal.try_send(());
         }
         self.node = None;

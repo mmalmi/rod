@@ -42,7 +42,7 @@ impl Actor for WsConn {
         let hi = Message::Hi { from: ctx.addr.clone(), peer_id: ctx.peer_id.read().unwrap().clone() };
         let _ = self.sender.send(WsMessage::Text(hi.to_string())).await;
         let receiver = self.receiver.take().unwrap();
-        let ctx2 = ctx.clone();
+        let mut ctx2 = ctx.clone();
         let allow_public_space = self.allow_public_space;
         ctx.child_task(async move {
             let _ = receiver.try_for_each(|msg| {
@@ -61,6 +61,7 @@ impl Actor for WsConn {
                 }
                 future::ok(())
             }).await;
+            ctx2.stop();
         });
     }
 
