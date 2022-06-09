@@ -117,7 +117,6 @@ impl WsServer {
                 continue;
             }
             conns = conns_new;
-            eprintln!("conns {}", conns);
             stats.get("ws_server_connections").put(conns.into());
         }
     }
