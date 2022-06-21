@@ -19,14 +19,12 @@ use tokio::net::TcpListener;
 
 use tokio_tungstenite::MaybeTlsStream;
 
-use hyper::{Body, Request, Response};
-use hyper::service::{make_service_fn, service_fn};
-use hyper_staticfile::Static;
 use std::io::Error as IoError;
 use std::path::Path;
 
 type Clients = Arc<RwLock<HashSet<Addr>>>;
 
+#[derive(Clone)]
 pub struct WsServerConfig {
     pub port: u16,
     pub cert_path: Option<String>,
@@ -78,33 +76,32 @@ impl WsServer {
         clients.write().await.insert(addr);
     }
 
-    async fn handle_request<B>(req: Request<B>, iris: Static, stats: Static, peer_id: String) -> Result<Response<Body>, IoError> {
-        let path = req.uri().path();
-        if path.starts_with("/stats") {
-            return stats.clone().serve(req).await
-        } else if path.starts_with("/peer_id") {
-            return Ok(Response::new(peer_id.into()))
-        } else {
-            iris.clone().serve(req).await
+    async fn start_web_server(config: WsServerConfig, peer_id: String) {
+        use warp::Filter;
+        // Match any request and return hello world!
+        let iris = warp::fs::dir("./assets/iris");
+        let stats = warp::path("stats").and(warp::fs::dir("./assets/stats"));
+        let peer_id = warp::path("peer_id").map(move || format!("{}", peer_id));
+        let routes = warp::get().and(iris.or(stats).or(peer_id));
+
+        let port = config.port + 1;
+        if let Some(cert_path) = config.cert_path {
+            let key_path = config.key_path.unwrap();
+            let addr = format!("https://localhost:{}", port);
+            eprintln!("Iris UI:            {}", addr);
+            eprintln!("Stats:              {}/stats", addr);
+            warp::serve(routes)
+                .tls()
+                .cert_path(cert_path)
+                .key_path(key_path)
+                .run(([0, 0, 0, 0], port)).await;
+            return;
         }
-    }
 
-    async fn start_web_server(port: u16, peer_id: String) {
-        let iris = Static::new(Path::new("./assets/iris"));
-        let stats = Static::new(Path::new("./assets"));
-
-        let make_service = make_service_fn(|_| {
-            let iris = iris.clone();
-            let stats = stats.clone();
-            let peer_id = peer_id.clone();
-            future::ok::<_, hyper::Error>(service_fn(move |req| Self::handle_request(req, iris.clone(), stats.clone(), peer_id.clone())))
-        });
-
-        let addr = ([0, 0, 0, 0], port).into();
-        let server = hyper::Server::bind(&addr).serve(make_service);
-        eprintln!("Iris UI:            http://{}/", addr);
-        eprintln!("Stats:              http://{}/stats", addr);
-        server.await.expect("Web server failed");
+        let addr = format!("http://localhost:{}", port);
+        eprintln!("Iris UI:            {}", addr);
+        eprintln!("Stats:              {}/stats", addr);
+        warp::serve(routes).run(([0, 0, 0, 0], port)).await;
     }
 
     async fn update_stats(ctx: ActorContext, mut stats: Node) {
@@ -138,11 +135,11 @@ impl Actor for WsServer {
         let addr = format!("0.0.0.0:{}", self.ws_config.port).to_string();
         let ctx = ctx.clone();
 
-        let web_port = self.ws_config.port + 1;
         let peer_id = ctx.peer_id.read().unwrap().clone();
         let peer_id_clone = peer_id.clone();
+        let config_clone = self.ws_config.clone();
         ctx.child_task(async move {
-            Self::start_web_server(web_port, peer_id_clone).await;
+            Self::start_web_server(config_clone, peer_id_clone).await;
         });
 
         if self.config.stats {
