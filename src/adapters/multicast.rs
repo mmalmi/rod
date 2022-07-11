@@ -1,17 +1,17 @@
-use multicast_socket::{MulticastSocket, MulticastOptions, all_ipv4_interfaces};
-use std::net::{SocketAddrV4};
+use multicast_socket::{all_ipv4_interfaces, MulticastOptions, MulticastSocket};
+use std::net::SocketAddrV4;
 
+use crate::actor::{Actor, ActorContext};
 use crate::message::Message;
 use crate::Config;
-use crate::actor::{Actor, ActorContext};
 use async_trait::async_trait;
-use log::{info, debug, error};
+use log::{debug, error, info};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
 pub struct Multicast {
     socket: Arc<RwLock<MulticastSocket>>,
-    config: Config
+    config: Config,
 }
 
 impl Multicast {
@@ -40,18 +40,18 @@ impl Multicast {
                             if let Err(e) = ctx.router.send(Message::Put(put)) {
                                 error!("failed to send message to node: {:?}", e);
                             }
-                        },
+                        }
                         Message::Get(get) => {
                             let get = get.clone();
                             if let Err(e) = ctx.router.send(Message::Get(get)) {
                                 error!("failed to send message to node: {:?}", e);
                             }
-                        },
+                        }
                         _ => {}
                     }
                 }
-            },
-            Err(e) => error!("message parsing failed: {}", e)
+            }
+            Err(e) => error!("message parsing failed: {}", e),
         }
     }
 }
@@ -60,23 +60,39 @@ impl Multicast {
 impl Actor for Multicast {
     async fn handle(&mut self, msg: Message, ctx: &ActorContext) {
         debug!("out {}", msg.get_id());
-        if msg.is_from(&ctx.addr) { return; } // should this be in Actor?
+        if msg.is_from(&ctx.addr) {
+            return;
+        } // should this be in Actor?
         match msg {
             Message::Put(mut put) => {
-                if let Err(e) = self.socket.read().await.broadcast(put.to_string().as_bytes()) {
+                if let Err(e) = self
+                    .socket
+                    .read()
+                    .await
+                    .broadcast(put.to_string().as_bytes())
+                {
                     error!("multicast send error {}", e);
                 }
-            },
+            }
             Message::Get(get) => {
-                if let Err(e) = self.socket.read().await.broadcast(get.to_string().as_bytes()) {
+                if let Err(e) = self
+                    .socket
+                    .read()
+                    .await
+                    .broadcast(get.to_string().as_bytes())
+                {
                     error!("multicast send error {}", e);
                 }
-            },
-            _ => { debug!("not sending"); }
+            }
+            _ => {
+                debug!("not sending");
+            }
         }
     }
 
-    fn subscribe_to_everything(&self) -> bool { true }
+    fn subscribe_to_everything(&self) -> bool {
+        true
+    }
 
     async fn pre_start(&mut self, ctx: &ActorContext) {
         info!("Syncing over multicast\n");
@@ -93,9 +109,11 @@ impl Actor for Multicast {
             .expect("could not create and bind multicast socket");
 
         let allow_public_space = self.config.allow_public_space;
-        ctx.blocking_child_task(move || { // blocking — not optimal!
+        ctx.blocking_child_task(move || {
+            // blocking — not optimal!
             loop {
-                if let Ok(message) = socket.receive() { // this blocks
+                if let Ok(message) = socket.receive() {
+                    // this blocks
                     // TODO if message.from == multicast_[interface], don't resend to [interface]
                     if let Ok(data) = std::str::from_utf8(&message.data) {
                         Self::handle_incoming_message(data, &ctx_clone, allow_public_space);
@@ -108,5 +126,3 @@ impl Actor for Multicast {
         });
     }
 }
-
-

@@ -1,13 +1,11 @@
-use futures_util::{StreamExt};
-use tokio_tungstenite::{
-    connect_async,
-};
-use url::Url;
+use futures_util::StreamExt;
 use std::collections::HashMap;
+use tokio_tungstenite::connect_async;
+use url::Url;
 
+use crate::actor::{Actor, ActorContext, Addr};
 use crate::adapters::ws_conn::WsConn;
 use crate::message::Message;
-use crate::actor::{Actor, Addr, ActorContext};
 use crate::Config;
 use async_trait::async_trait;
 use log::{debug, info};
@@ -24,24 +22,24 @@ impl OutgoingWebsocketManager {
         OutgoingWebsocketManager {
             urls,
             clients: HashMap::new(),
-            config
+            config,
         }
     }
 }
 
 #[async_trait]
-impl Actor for OutgoingWebsocketManager { // TODO: support multiple outbound websockets
+impl Actor for OutgoingWebsocketManager {
+    // TODO: support multiple outbound websockets
     async fn pre_start(&mut self, ctx: &ActorContext) {
         info!("OutgoingWebsocketManager starting");
         for url in self.urls.iter() {
-            loop { // TODO break on actor shutdown
+            loop {
+                // TODO break on actor shutdown
                 sleep(Duration::from_millis(1000)).await;
                 if self.clients.contains_key(url) {
                     continue;
                 }
-                let result = connect_async(
-                    Url::parse(&url).expect("Can't connect to URL"),
-                ).await;
+                let result = connect_async(Url::parse(&url).expect("Can't connect to URL")).await;
                 if let Ok(tuple) = result {
                     let (socket, _) = tuple;
                     debug!("outgoing websocket opened to {}", url);
@@ -54,12 +52,12 @@ impl Actor for OutgoingWebsocketManager { // TODO: support multiple outbound web
         }
     }
 
-    fn subscribe_to_everything(&self) -> bool { true }
+    fn subscribe_to_everything(&self) -> bool {
+        true
+    }
 
     async fn handle(&mut self, message: Message, _ctx: &ActorContext) {
-        self.clients.retain(|_url,client| {
-            client.send(message.clone()).is_ok()
-        });
+        self.clients
+            .retain(|_url, client| client.send(message.clone()).is_ok());
     }
 }
-

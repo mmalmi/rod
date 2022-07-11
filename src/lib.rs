@@ -1,9 +1,10 @@
+pub mod actor;
+pub mod adapters;
+#[doc(hidden)]
+pub mod message; // pub for benchmarking
 mod node;
 mod router;
-mod utils;
 mod types;
-pub mod adapters;
-#[doc(hidden)] pub mod message; // pub for benchmarking
-pub mod actor;
-pub use node::{Node, Config};
+mod utils;
+pub use node::{Config, Node};
 pub use types::Value;
