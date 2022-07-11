@@ -1,15 +1,17 @@
-use async_trait::async_trait;
-use std::hash::{Hash, Hasher};
-use std::fmt;
-use std::marker::Send;
-use std::sync::{Arc, RwLock};
-use std::collections::HashMap;
 use crate::message::Message;
 use crate::utils::random_string;
 use crate::Node;
-use tokio::sync::mpsc::{Sender, Receiver, UnboundedReceiver, UnboundedSender, unbounded_channel, channel};
-use tokio::task::JoinHandle;
+use async_trait::async_trait;
 use futures_util::Future;
+use std::collections::HashMap;
+use std::fmt;
+use std::hash::{Hash, Hasher};
+use std::marker::Send;
+use std::sync::{Arc, RwLock};
+use tokio::sync::mpsc::{
+    channel, unbounded_channel, Receiver, Sender, UnboundedReceiver, UnboundedSender,
+};
+use tokio::task::JoinHandle;
 
 // TODO: stop signal. Or just call tokio runtime stop / abort? https://docs.rs/tokio/1.18.2/tokio/task/struct.JoinHandle.html#method.abort
 // TODO make this a trait. Move platform / runtime specific stuff here, so different versions can be used on wasm.
@@ -23,10 +25,17 @@ pub trait Actor: Send + Sync + 'static {
     async fn pre_start(&mut self, _context: &ActorContext) {}
     async fn stopping(&mut self, _context: &ActorContext) {}
     /// Tells the router if this Actor wants to receive all messages (like the Multicast adapter)
-    fn subscribe_to_everything(&self) -> bool { false }
+    fn subscribe_to_everything(&self) -> bool {
+        false
+    }
 }
 impl dyn Actor {
-    async fn run(&mut self, mut receiver: UnboundedReceiver<Message>, mut stop_receiver: Receiver<()>, mut context: ActorContext) {
+    async fn run(
+        &mut self,
+        mut receiver: UnboundedReceiver<Message>,
+        mut stop_receiver: Receiver<()>,
+        mut context: ActorContext,
+    ) {
         self.pre_start(&context).await;
         loop {
             tokio::select! {
@@ -56,7 +65,7 @@ pub struct ActorContext {
     task_handles: Arc<RwLock<Vec<JoinHandle<()>>>>,
     pub addr: Addr,
     pub is_stopped: Arc<RwLock<bool>>,
-    pub node: Option<Node>
+    pub node: Option<Node>,
 }
 impl ActorContext {
     pub fn new(peer_id: String) -> Self {
@@ -67,7 +76,7 @@ impl ActorContext {
             peer_id: Arc::new(RwLock::new(peer_id)),
             router: Addr::noop(),
             is_stopped: Arc::new(RwLock::new(false)),
-            node: None
+            node: None,
         }
     }
 
@@ -85,7 +94,7 @@ impl ActorContext {
             peer_id: self.peer_id.clone(),
             router: self.router.clone(),
             is_stopped: self.is_stopped.clone(),
-            node: self.node.clone()
+            node: self.node.clone(),
         }
     }
 
@@ -121,7 +130,10 @@ impl ActorContext {
         if is_router {
             new_context.router = addr.clone();
         }
-        self.stop_signals.write().unwrap().insert(addr.clone(), stop_sender);
+        self.stop_signals
+            .write()
+            .unwrap()
+            .insert(addr.clone(), stop_sender);
         let stop_signals = self.stop_signals.clone();
         let addr_clone = addr.clone();
         tokio::spawn(async move {
@@ -146,20 +158,20 @@ impl ActorContext {
 #[derive(Clone, Debug)]
 pub struct Addr {
     id: String,
-    sender: UnboundedSender<Message>
+    sender: UnboundedSender<Message>,
 }
 impl Addr {
     pub fn new(sender: UnboundedSender<Message>) -> Self {
         Self {
             id: random_string(32),
-            sender
+            sender,
         }
     }
 
     pub fn send(&self, msg: Message) -> Result<(), ()> {
         match self.sender.send(msg) {
             Ok(_) => Ok(()),
-            Err(_) => Err(())
+            Err(_) => Err(()),
         }
     }
 

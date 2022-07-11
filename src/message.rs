@@ -1,15 +1,15 @@
-use serde_json::{json, Value as JsonValue};
-use crate::utils::random_string;
-use std::collections::{HashSet, BTreeMap};
-use crate::types::{Value, NodeData, Children};
-use log::{debug, error};
-use std::convert::TryFrom;
 use crate::actor::Addr;
+use crate::types::{Children, NodeData, Value};
+use crate::utils::random_string;
 use java_utils::HashCode;
-use jsonwebtoken::Algorithm;
-use jsonwebtoken::crypto::verify;
-use ring::digest::{digest, SHA256};
 use jsonwebkey as jwk;
+use jsonwebtoken::crypto::verify;
+use jsonwebtoken::Algorithm;
+use log::{debug, error};
+use ring::digest::{digest, SHA256};
+use serde_json::{json, Value as JsonValue};
+use std::collections::{BTreeMap, HashSet};
+use std::convert::TryFrom;
 
 #[derive(Clone, Debug)]
 pub struct Get {
@@ -19,7 +19,7 @@ pub struct Get {
     pub node_id: String,
     pub checksum: Option<i32>,
     pub child_key: Option<String>,
-    pub json_str: Option<String>
+    pub json_str: Option<String>,
 }
 impl Get {
     pub fn new(node_id: String, child_key: Option<String>, from: Addr) -> Self {
@@ -30,7 +30,7 @@ impl Get {
             node_id,
             child_key,
             json_str: None,
-            checksum: None
+            checksum: None,
         }
     }
 
@@ -60,10 +60,14 @@ pub struct Put {
     pub in_response_to: Option<String>,
     pub updated_nodes: BTreeMap<String, Children>,
     pub checksum: Option<i32>,
-    pub json_str: Option<String>
+    pub json_str: Option<String>,
 }
 impl Put {
-    pub fn new(updated_nodes: BTreeMap<String, Children>, in_response_to: Option<String>, from: Addr) -> Self {
+    pub fn new(
+        updated_nodes: BTreeMap<String, Children>,
+        in_response_to: Option<String>,
+        from: Addr,
+    ) -> Self {
         Self {
             id: random_string(8),
             from,
@@ -71,7 +75,7 @@ impl Put {
             in_response_to,
             updated_nodes,
             checksum: None,
-            json_str: None
+            json_str: None,
         }
     }
 
@@ -125,10 +129,11 @@ impl Put {
 }
 
 #[derive(Clone, Debug)]
-pub enum Message { // TODO: NetworkMessage and InternalMessage
+pub enum Message {
+    // TODO: NetworkMessage and InternalMessage
     Get(Get),
     Put(Put),
-    Hi { from: Addr, peer_id: String }
+    Hi { from: Addr, peer_id: String },
 }
 
 impl Message {
@@ -136,7 +141,7 @@ impl Message {
         match self {
             Message::Get(get) => get.to_string(),
             Message::Put(mut put) => put.to_string(),
-            Message::Hi { from: _, peer_id } => json!({"dam": "hi","#": peer_id}).to_string()
+            Message::Hi { from: _, peer_id } => json!({"dam": "hi","#": peer_id}).to_string(),
         }
     }
 
@@ -144,7 +149,7 @@ impl Message {
         match self {
             Message::Get(get) => get.id.clone(),
             Message::Put(put) => put.id.clone(),
-            Message::Hi { from: _, peer_id } => peer_id.to_string()
+            Message::Hi { from: _, peer_id } => peer_id.to_string(),
         }
     }
 
@@ -152,7 +157,7 @@ impl Message {
         match self {
             Message::Get(get) => get.from == *addr,
             Message::Put(put) => put.from == *addr,
-            Message::Hi { from, peer_id: _ } => *from == *addr
+            Message::Hi { from, peer_id: _ } => *from == *addr,
         }
     }
 
@@ -160,17 +165,32 @@ impl Message {
         match self {
             Message::Get(get) => get.from.clone(),
             Message::Put(put) => put.from.clone(),
-            Message::Hi { from: _, peer_id: _ } => Addr::noop()
+            Message::Hi {
+                from: _,
+                peer_id: _,
+            } => Addr::noop(),
         }
     }
 
-    fn verify_sig(node_id: &str, node_data: &serde_json::Map<String, JsonValue>) -> Result<(), &'static str> {
-        for (child_key, timestamp) in node_data["_"][">"].as_object().ok_or("not an object")?.iter() {
-            let value = node_data.get(child_key).ok_or("no matching key in object and _")?;
+    fn verify_sig(
+        node_id: &str,
+        node_data: &serde_json::Map<String, JsonValue>,
+    ) -> Result<(), &'static str> {
+        for (child_key, timestamp) in node_data["_"][">"]
+            .as_object()
+            .ok_or("not an object")?
+            .iter()
+        {
+            let value = node_data
+                .get(child_key)
+                .ok_or("no matching key in object and _")?;
             let text = value.as_str().ok_or("not a string")?;
-            let json: JsonValue = serde_json::from_str(text).or(Err("Failed to parse signature as JSON"))?;
+            let json: JsonValue =
+                serde_json::from_str(text).or(Err("Failed to parse signature as JSON"))?;
             let signature_obj = json.as_object().ok_or("signature json was not an object")?;
-            let signed_data = signature_obj.get(":").ok_or("no signed data (:) in signature json")?;
+            let signed_data = signature_obj
+                .get(":")
+                .ok_or("no signed data (:) in signature json")?;
 
             let signed_obj = json!({
                 "#": node_id,
@@ -179,32 +199,48 @@ impl Message {
                 ">": timestamp
             });
 
-            let signature = signature_obj.get("~").ok_or("no signature (~) in signature json")?;
-            let signature = signature.as_str().ok_or("signature (~) in signature json was not a string")?;
-            let signature64 = base64::decode(signature).or(Err("signature (~) in signature json was not base64"))?;
+            let signature = signature_obj
+                .get("~")
+                .ok_or("no signature (~) in signature json")?;
+            let signature = signature
+                .as_str()
+                .ok_or("signature (~) in signature json was not a string")?;
+            let signature64 = base64::decode(signature)
+                .or(Err("signature (~) in signature json was not base64"))?;
             let signature = base64::encode_config(signature64, base64::URL_SAFE_NO_PAD);
             // TODO use jsonwebtoken underlying ring::signature functions directly, instead of having to re-encode
 
             let key = &node_id.split("/").next().unwrap()[1..];
             let mut split = key.split(".");
             let x = split.next().unwrap().to_string();
-            let y = split.next().ok_or("invalid key string: must be in format x.y")?;
+            let y = split
+                .next()
+                .ok_or("invalid key string: must be in format x.y")?;
             let y = y.to_string();
 
             let jwk_str = format!("{{\"kty\": \"EC\", \"crv\": \"P-256\", \"x\": \"{}\", \"y\": \"{}\", \"ext\": \"true\"}}", x, y).to_string();
-            let my_jwk: jwk::JsonWebKey = jwk_str.parse().or(Err("failed to parse JsonWebKey from string"))?;
+            let my_jwk: jwk::JsonWebKey = jwk_str
+                .parse()
+                .or(Err("failed to parse JsonWebKey from string"))?;
 
             let hash = digest(&SHA256, signed_obj.to_string().as_bytes()); // is verify already doing the hashing?
 
-            match verify(&signature, hash.as_ref(), &my_jwk.key.to_decoding_key(), Algorithm::ES256) {
-                Ok(is_good) => {
-                    match is_good {
-                        true => continue,
-                        _ => { return Err("bad signature") }
-                    }
+            match verify(
+                &signature,
+                hash.as_ref(),
+                &my_jwk.key.to_decoding_key(),
+                Algorithm::ES256,
+            ) {
+                Ok(is_good) => match is_good {
+                    true => continue,
+                    _ => return Err("bad signature"),
                 },
                 Err(_) => {
-                    error!("could not verify signature {} of {}", signature, signed_obj.to_string());
+                    error!(
+                        "could not verify signature {} of {}",
+                        signature,
+                        signed_obj.to_string()
+                    );
                     return Err("could not verify signature");
                 }
             }
@@ -212,30 +248,47 @@ impl Message {
         Ok(())
     }
 
-    fn from_put_obj(json: &JsonValue, json_str: String, msg_id: String, from: Addr, allow_public_space: bool) -> Result<Self, &'static str> {
-        let obj = json.get("put").unwrap().as_object().ok_or("invalid message: msg.put was not an object")?;
+    fn from_put_obj(
+        json: &JsonValue,
+        json_str: String,
+        msg_id: String,
+        from: Addr,
+        allow_public_space: bool,
+    ) -> Result<Self, &'static str> {
+        let obj = json
+            .get("put")
+            .unwrap()
+            .as_object()
+            .ok_or("invalid message: msg.put was not an object")?;
         let in_response_to = match json.get("@") {
             Some(in_response_to) => match in_response_to.as_str() {
                 Some(in_response_to) => Some(in_response_to.to_string()),
-                _ => { return Err("message @ field was not a string"); }
+                _ => {
+                    return Err("message @ field was not a string");
+                }
             },
-            _ => None
+            _ => None,
         };
         let checksum = match json.get("##") {
             Some(checksum) => match checksum.as_i64() {
                 Some(checksum) => Some(checksum as i32),
                 _ => None,
             },
-            _ => None
+            _ => None,
         };
         let mut updated_nodes = BTreeMap::<String, Children>::new();
         for (node_id, node_data) in obj.iter() {
-            let node_data = node_data.as_object().ok_or("put node data was not an object")?;
-            let updated_at_times = node_data["_"][">"].as_object().ok_or("no metadata _ in Put node object")?;
+            let node_data = node_data
+                .as_object()
+                .ok_or("put node data was not an object")?;
+            let updated_at_times = node_data["_"][">"]
+                .as_object()
+                .ok_or("no metadata _ in Put node object")?;
 
             let mut is_public_space = true;
             if let Some(first_letter) = node_id.chars().next() {
-                if first_letter == '~' { // signed data
+                if first_letter == '~' {
+                    // signed data
                     if let Err(e) = Self::verify_sig(node_id, node_data) {
                         error!("invalid sig: {} for msg {}", e, json_str);
                         return Err(e);
@@ -247,12 +300,17 @@ impl Message {
 
             let mut children = Children::default();
             for (child_key, child_val) in node_data.iter() {
-                if child_key == "_" { continue; }
-                let updated_at = updated_at_times.get(child_key).ok_or("no updated_at found for Put key")?;
+                if child_key == "_" {
+                    continue;
+                }
+                let updated_at = updated_at_times
+                    .get(child_key)
+                    .ok_or("no updated_at found for Put key")?;
                 let updated_at = updated_at.as_f64().ok_or("updated_at was not a number")?;
                 let value = Value::try_from(child_val.clone())?;
 
-                if node_id == "#" { // content-hash addressed data
+                if node_id == "#" {
+                    // content-hash addressed data
                     let content_hash = digest(&SHA256, value.to_string().as_bytes());
                     if *child_key != base64::encode(content_hash.as_ref()) {
                         return Err("invalid content hash");
@@ -272,12 +330,17 @@ impl Message {
             in_response_to,
             updated_nodes,
             checksum,
-            json_str: Some(json_str)
+            json_str: Some(json_str),
         };
         Ok(Message::Put(put))
     }
 
-    fn from_get_obj(json: &JsonValue, json_str: String, msg_id: String, from: Addr) -> Result<Self, &'static str> {
+    fn from_get_obj(
+        json: &JsonValue,
+        json_str: String,
+        msg_id: String,
+        from: Addr,
+    ) -> Result<Self, &'static str> {
         /* TODO: other types of child_key selectors than equality.
 
         node.get({'.': {'<': cursor, '-': true}, '%': 20 * 1000}).once().map().on((value, key) => { ...
@@ -289,21 +352,23 @@ impl Message {
         let get = json.get("get").unwrap();
         let node_id = match get["#"].as_str() {
             Some(str) => str,
-            _ => { return Err("no node id (#) found in get message"); }
+            _ => {
+                return Err("no node id (#) found in get message");
+            }
         };
         let checksum = match json.get("##") {
             Some(checksum) => match checksum.as_i64() {
                 Some(checksum) => Some(checksum as i32),
                 _ => None,
             },
-            _ => None
+            _ => None,
         };
         let child_key = match get.get(".") {
             Some(child_key) => match child_key.as_str() {
                 Some(child_key) => Some(child_key.to_string()),
-                _ => { return Err("get child_key . was not a string") }
+                _ => return Err("get child_key . was not a string"),
             },
-            _ => None
+            _ => None,
         };
         debug!("get node_id {}", node_id);
         let msg_id = msg_id.replace("\"", "");
@@ -314,19 +379,28 @@ impl Message {
             node_id: node_id.to_string(),
             child_key,
             json_str: Some(json_str),
-            checksum
+            checksum,
         };
         Ok(Message::Get(get))
     }
-    
-    pub fn from_json_obj(json: &JsonValue, json_str: String, from: Addr, allow_public_space: bool) -> Result<Self, &'static str> {
+
+    pub fn from_json_obj(
+        json: &JsonValue,
+        json_str: String,
+        from: Addr,
+        allow_public_space: bool,
+    ) -> Result<Self, &'static str> {
         let obj = match json.as_object() {
             Some(obj) => obj,
-            _ => { return Err("not a json object"); }
+            _ => {
+                return Err("not a json object");
+            }
         };
         let msg_id = match obj["#"].as_str() {
             Some(str) => str.to_string(),
-            _ => { return Err("msg id not a string"); }
+            _ => {
+                return Err("msg id not a string");
+            }
         };
         if msg_id.len() > 32 {
             return Err("msg id too long (> 32)");
@@ -339,7 +413,10 @@ impl Message {
         } else if obj.contains_key("get") {
             Self::from_get_obj(json, json_str, msg_id, from)
         } else if let Some(_dam) = obj.get("dam") {
-            Ok(Message::Hi { from, peer_id: msg_id })
+            Ok(Message::Hi {
+                from,
+                peer_id: msg_id,
+            })
         } else {
             Err("Unrecognized message")
         }
@@ -348,19 +425,26 @@ impl Message {
     pub fn try_from(s: &str, from: Addr, allow_public_space: bool) -> Result<Vec<Self>, &str> {
         let json: JsonValue = match serde_json::from_str(s) {
             Ok(json) => json,
-            Err(_) => { return Err("Failed to parse message as JSON"); }
+            Err(_) => {
+                return Err("Failed to parse message as JSON");
+            }
         };
-        
+
         if let Some(arr) = json.as_array() {
             let mut vec = Vec::<Self>::new();
             for msg in arr {
-                vec.push(Self::from_json_obj(msg, msg.to_string(), from.clone(), allow_public_space)?);
+                vec.push(Self::from_json_obj(
+                    msg,
+                    msg.to_string(),
+                    from.clone(),
+                    allow_public_space,
+                )?);
             }
             Ok(vec)
         } else {
             match Self::from_json_obj(&json, s.to_string(), from, allow_public_space) {
                 Ok(msg) => Ok(vec![msg]),
-                Err(e) => Err(e)
+                Err(e) => Err(e),
             }
         }
     }
@@ -368,8 +452,8 @@ impl Message {
 
 #[cfg(test)]
 mod tests {
-    use crate::message::Message;
     use crate::actor::Addr;
+    use crate::message::Message;
 
     #[test]
     fn public_space_write_allowed() {
@@ -395,7 +479,8 @@ mod tests {
 
     #[test]
     fn public_space_write_disallowed() {
-        let res = Message::try_from(r##"
+        let res = Message::try_from(
+            r##"
         [
           {
             "put": {
@@ -412,7 +497,10 @@ mod tests {
             "#": "yvd2vk4338i"
           }
         ]
-        "##, Addr::noop(), false);
+        "##,
+            Addr::noop(),
+            false,
+        );
         assert!(res.is_err());
     }
 
@@ -440,7 +528,8 @@ mod tests {
 
     #[test]
     fn invalid_content_addressed_data() {
-        let res = Message::try_from(r##"
+        let res = Message::try_from(
+            r##"
         [
           {
             "put": {
@@ -457,7 +546,10 @@ mod tests {
             "#": "yvd2vk4338i"
           }
         ]
-        "##, Addr::noop(), false);
+        "##,
+            Addr::noop(),
+            false,
+        );
         assert!(res.is_err());
     }
 
@@ -492,7 +584,8 @@ mod tests {
 
     #[test]
     fn invalid_user_signed_data() {
-        let res = Message::try_from(r##"
+        let res = Message::try_from(
+            r##"
         {
           "put": {
             "~BjxYTmcODm__M52FmMX_grHcafW0WiHpJUtVRCgEsZY._QiIs4tK22hebiZjGovtp3cHo1pAfYxoRODS_jyudA8": {
@@ -516,7 +609,10 @@ mod tests {
           },
           "#": "issWkzotF"
         }
-        "##, Addr::noop(), false);
+        "##,
+            Addr::noop(),
+            false,
+        );
         assert!(res.is_err());
     }
 }

@@ -1,5 +1,5 @@
-use rand::{thread_rng, Rng};
 use rand::distributions::Alphanumeric;
+use rand::{thread_rng, Rng};
 use std::collections::{HashMap, HashSet, VecDeque};
 
 pub fn random_string(len: usize) -> String {
@@ -16,7 +16,7 @@ pub fn random_string(len: usize) -> String {
 pub struct BoundedHashSet {
     set: HashSet<String>,
     queue: VecDeque<String>,
-    max_entries: usize
+    max_entries: usize,
 }
 
 impl BoundedHashSet {
@@ -24,7 +24,7 @@ impl BoundedHashSet {
         BoundedHashSet {
             set: HashSet::new(),
             queue: VecDeque::new(),
-            max_entries
+            max_entries,
         }
     }
 
@@ -52,7 +52,7 @@ impl BoundedHashSet {
 pub struct BoundedHashMap<K, V> {
     map: HashMap<K, V>,
     queue: VecDeque<K>,
-    max_entries: usize
+    max_entries: usize,
 }
 
 impl<K: Clone + std::hash::Hash + std::cmp::Eq, V> BoundedHashMap<K, V> {
@@ -60,7 +60,7 @@ impl<K: Clone + std::hash::Hash + std::cmp::Eq, V> BoundedHashMap<K, V> {
         BoundedHashMap {
             map: HashMap::new(),
             queue: VecDeque::new(),
-            max_entries
+            max_entries,
         }
     }
 

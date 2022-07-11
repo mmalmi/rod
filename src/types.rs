@@ -1,6 +1,6 @@
-use serde::{Serialize, Deserialize};
-use std::collections::BTreeMap;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as SerdeJsonValue};
+use std::collections::BTreeMap;
 use std::convert::TryFrom;
 
 /// Branch node
@@ -10,14 +10,14 @@ pub type Children = BTreeMap<String, NodeData>;
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct NodeData {
     pub value: Value,
-    pub updated_at: f64
+    pub updated_at: f64,
 }
 
 impl NodeData {
     pub fn default() -> Self {
         Self {
             value: Value::Null,
-            updated_at: 0.0
+            updated_at: 0.0,
         }
     }
 }
@@ -36,7 +36,7 @@ impl Value {
     pub fn size(&self) -> usize {
         match self {
             Value::Text(s) => s.len(),
-            _ => std::mem::size_of_val(self)
+            _ => std::mem::size_of_val(self),
         }
     }
 
@@ -65,26 +65,24 @@ impl TryFrom<SerdeJsonValue> for Value {
             SerdeJsonValue::Null => Ok(Value::Null),
             SerdeJsonValue::Bool(b) => Ok(Value::Bit(b)),
             SerdeJsonValue::String(s) => Ok(Value::Text(s)),
-            SerdeJsonValue::Number(n) => {
-                match n.as_f64() {
-                    Some(n) => Ok(Value::Number(n)),
-                    _ => Err("not convertible to f64")
-                }
+            SerdeJsonValue::Number(n) => match n.as_f64() {
+                Some(n) => Ok(Value::Number(n)),
+                _ => Err("not convertible to f64"),
             },
             SerdeJsonValue::Object(_) => Err("cannot convert json object into Value"),
-            SerdeJsonValue::Array(_) => Err("cannot convert array into Value")
+            SerdeJsonValue::Array(_) => Err("cannot convert array into Value"),
         }
     }
 }
 
 impl From<Value> for SerdeJsonValue {
-    fn from (v: Value) -> SerdeJsonValue {
+    fn from(v: Value) -> SerdeJsonValue {
         match v {
             Value::Null => SerdeJsonValue::Null,
             Value::Text(t) => SerdeJsonValue::String(t),
             Value::Bit(b) => SerdeJsonValue::Bool(b),
             Value::Number(n) => json!(n),
-            Value::Link(l) => json!({"#": l})
+            Value::Link(l) => json!({ "#": l }),
         }
     }
 }

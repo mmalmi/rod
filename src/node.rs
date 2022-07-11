@@ -1,17 +1,14 @@
-use std::collections::BTreeMap;
-use std::sync::{
-    Arc,
-    RwLock
-};
-use std::time::SystemTime; // TODO get time from ActorContext
+use crate::actor::{Actor, ActorContext, Addr};
+use crate::message::{Get, Message, Put};
 use crate::router::Router;
-use crate::message::{Message, Put, Get};
-use crate::types::{Value, NodeData, Children};
-use crate::actor::{Addr, ActorContext, Actor};
+use crate::types::{Children, NodeData, Value};
 use crate::utils::random_string;
-use log::{debug, info};
-use tokio::sync::broadcast; // TODO replace with generics: Sender and Receiver traits?
 use async_trait::async_trait;
+use log::{debug, info};
+use std::collections::BTreeMap;
+use std::sync::{Arc, RwLock};
+use std::time::SystemTime; // TODO get time from ActorContext
+use tokio::sync::broadcast; // TODO replace with generics: Sender and Receiver traits?
 
 static BROADCAST_CHANNEL_SIZE: usize = 10;
 
@@ -99,7 +96,11 @@ impl Node {
     ///
     /// })
     /// ```
-    pub fn new_with_config(config: Config, storage_adapters: Vec<Box<dyn Actor>>, network_adapters: Vec<Box<dyn Actor>>) -> Self {
+    pub fn new_with_config(
+        config: Config,
+        storage_adapters: Vec<Box<dyn Actor>>,
+        network_adapters: Vec<Box<dyn Actor>>,
+    ) -> Self {
         let actor_context = ActorContext::new(random_string(16));
         let mut node = Self {
             path: vec![],
@@ -110,7 +111,7 @@ impl Node {
             map_sender: broadcast::channel::<(String, Value)>(BROADCAST_CHANNEL_SIZE).0,
             addr: Arc::new(RwLock::new(None)),
             router: Arc::new(RwLock::new(None)),
-            actor_context: Box::new(actor_context)
+            actor_context: Box::new(actor_context),
         };
 
         node.actor_context.node = Some(node.clone());
@@ -118,8 +119,8 @@ impl Node {
         *node.addr.write().unwrap() = Some(addr);
 
         let router = Box::new(Router::new(config, storage_adapters, network_adapters)); // actually, we should communicate with
-        // MemoryStorage (or sled), which has a special role in maintaining our version of the current state?
-        // MemoryStorage can then communicate with router as needed.
+                                                                                        // MemoryStorage (or sled), which has a special role in maintaining our version of the current state?
+                                                                                        // MemoryStorage can then communicate with router as needed.
         let router_addr = node.actor_context.start_router(router);
         *node.router.write().unwrap() = Some(router_addr);
 
@@ -135,7 +136,9 @@ impl Node {
                     if let Some(child) = self.children.read().unwrap().get(&child) {
                         let _ = child.on_sender.send(child_data.value.clone());
                     }
-                    let _ = self.map_sender.send((child.to_string(), child_data.value.clone()));
+                    let _ = self
+                        .map_sender
+                        .send((child.to_string(), child_data.value.clone()));
                 }
             }
         }
@@ -151,13 +154,16 @@ impl Node {
         let node = Self {
             path,
             children: Arc::new(RwLock::new(BTreeMap::new())),
-            parent: Arc::new(RwLock::new(Some((self.uid.read().unwrap().clone(), self.clone())))),
+            parent: Arc::new(RwLock::new(Some((
+                self.uid.read().unwrap().clone(),
+                self.clone(),
+            )))),
             on_sender: broadcast::channel::<Value>(BROADCAST_CHANNEL_SIZE).0,
             map_sender: broadcast::channel::<(String, Value)>(BROADCAST_CHANNEL_SIZE).0,
             uid: Arc::new(RwLock::new(new_child_uid)),
             router: self.router.clone(),
             addr: Arc::new(RwLock::new(None)),
-            actor_context: self.actor_context.clone()
+            actor_context: self.actor_context.clone(),
         };
         let addr = self.actor_context.start_actor(Box::new(node.clone()));
         *node.addr.write().unwrap() = Some(addr);
@@ -209,7 +215,12 @@ impl Node {
         self.map_sender.subscribe()
     }
 
-    fn add_parent_nodes(&mut self, updated_nodes: &mut BTreeMap<String, Children>, value: Value, updated_at: f64) {
+    fn add_parent_nodes(
+        &mut self,
+        updated_nodes: &mut BTreeMap<String, Children>,
+        value: Value,
+        updated_at: f64,
+    ) {
         let parent = &*self.parent.read().unwrap();
         if let Some((parent_id, parent)) = parent {
             if parent_id == "" {
@@ -217,19 +228,24 @@ impl Node {
             }
             let mut parent = parent.clone();
             let mut children = Children::default();
-            children.insert(self.path.last().unwrap().clone(), NodeData { value: value.clone(), updated_at });
-            updated_nodes.insert(parent_id.to_string(), children);
-            parent.add_parent_nodes(
-                updated_nodes,
-                Value::Link(parent.id()),
-                updated_at
+            children.insert(
+                self.path.last().unwrap().clone(),
+                NodeData {
+                    value: value.clone(),
+                    updated_at,
+                },
             );
+            updated_nodes.insert(parent_id.to_string(), children);
+            parent.add_parent_nodes(updated_nodes, Value::Link(parent.id()), updated_at);
         }
     }
 
     /// Set a Value for the Node.
     pub fn put(&mut self, value: Value) {
-        let updated_at: f64 = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis() as f64;
+        let updated_at: f64 = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as f64;
         self.on_sender.send(value.clone()).ok();
         debug!("put {}", value.to_string());
         let mut updated_nodes = BTreeMap::new();
@@ -244,6 +260,5 @@ impl Node {
     pub fn stop(&mut self) {
         info!("Node stopping");
         self.actor_context.stop();
-
     }
 }
