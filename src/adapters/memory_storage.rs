@@ -1,7 +1,7 @@
-use std::collections::{HashMap, HashSet, BTreeMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
-use crate::message::{Message, Put, Get};
 use crate::actor::{Actor, ActorContext};
+use crate::message::{Get, Message, Put};
 use crate::types::*;
 
 use async_trait::async_trait;
@@ -23,17 +23,20 @@ impl MemoryStorage {
         if let Some(children) = self.store.read().unwrap().get(&get.node_id).cloned() {
             debug!("have {}: {:?}", get.node_id, children);
             let reply_with_children = match &get.child_key {
-                Some(child_key) => { // reply with specific child if it's found
+                Some(child_key) => {
+                    // reply with specific child if it's found
                     match children.get(child_key) {
                         Some(child_val) => {
                             let mut r = BTreeMap::new();
                             r.insert(child_key.clone(), child_val.clone());
                             r
-                        },
-                        None => { return; }
+                        }
+                        None => {
+                            return;
+                        }
                     }
-                },
-                None => children.clone() // reply with all children of this node
+                }
+                None => children.clone(), // reply with all children of this node
             };
             let mut reply_with_nodes = BTreeMap::new();
             reply_with_nodes.insert(get.node_id.clone(), reply_with_children);
@@ -48,7 +51,8 @@ impl MemoryStorage {
     }
 
     fn handle_put(&self, put: Put, _ctx: &ActorContext) {
-        for (node_id, update_data) in put.updated_nodes.iter().rev() { // return in reverse
+        for (node_id, update_data) in put.updated_nodes.iter().rev() {
+            // return in reverse
             debug!("saving k-v {}: {:?}", node_id, update_data);
             let mut write = self.store.write().unwrap();
             if let Some(children) = write.get_mut(node_id) {
@@ -87,5 +91,3 @@ impl Actor for MemoryStorage {
         }
     }
 }
-
-

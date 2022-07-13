@@ -1,21 +1,21 @@
-use crate::message::Message;
-use crate::actor::{Actor, Addr, ActorContext};
-use crate::Config;
+use crate::actor::{Actor, ActorContext, Addr};
 use crate::adapters::ws_conn::WsConn;
+use crate::message::Message;
+use crate::Config;
 use crate::Node;
 
 use async_trait::async_trait;
 use std::collections::HashSet;
-use std::sync::{Arc};
 use std::fs::File;
 use std::io::Read;
+use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{sleep, Duration};
 
-use futures_util::{StreamExt, future};
-use log::{info};
-use tokio_native_tls::native_tls::{Identity};
+use futures_util::{future, StreamExt};
+use log::info;
 use tokio::net::TcpListener;
+use tokio_native_tls::native_tls::Identity;
 
 use tokio_tungstenite::MaybeTlsStream;
 
@@ -43,7 +43,7 @@ impl Default for WsServerConfig {
 pub struct WsServer {
     config: Config,
     ws_config: WsServerConfig,
-    clients: Clients
+    clients: Clients,
 }
 impl WsServer {
     pub fn new(config: Config) -> Self {
@@ -54,11 +54,16 @@ impl WsServer {
         Self {
             config,
             ws_config,
-            clients: Clients::default()
+            clients: Clients::default(),
         }
     }
 
-    async fn handle_stream(stream: MaybeTlsStream<tokio::net::TcpStream>, ctx: &ActorContext, clients: Clients, allow_public_space: bool) {
+    async fn handle_stream(
+        stream: MaybeTlsStream<tokio::net::TcpStream>,
+        ctx: &ActorContext,
+        clients: Clients,
+        allow_public_space: bool,
+    ) {
         let ws_stream = match tokio_tungstenite::accept_async(stream).await {
             Ok(s) => s,
             Err(_e) => {
@@ -94,7 +99,8 @@ impl WsServer {
                 .tls()
                 .cert_path(cert_path)
                 .key_path(key_path)
-                .run(([0, 0, 0, 0], port)).await;
+                .run(([0, 0, 0, 0], port))
+                .await;
             return;
         }
 
@@ -183,8 +189,14 @@ impl Actor for WsServer {
                             let stream = acceptor.accept(stream).await;
                             match stream {
                                 Ok(stream) => {
-                                    Self::handle_stream(MaybeTlsStream::NativeTls(stream), &ctx, clients.clone(), allow_public_space).await;
-                                },
+                                    Self::handle_stream(
+                                        MaybeTlsStream::NativeTls(stream),
+                                        &ctx,
+                                        clients.clone(),
+                                        allow_public_space,
+                                    )
+                                    .await;
+                                }
                                 _ => {}
                             }
                         });
@@ -194,7 +206,13 @@ impl Actor for WsServer {
         } else {
             ctx.clone().child_task(async move {
                 while let Ok((stream, _)) = listener.accept().await {
-                    Self::handle_stream(MaybeTlsStream::Plain(stream), &ctx, clients.clone(), allow_public_space).await;
+                    Self::handle_stream(
+                        MaybeTlsStream::Plain(stream),
+                        &ctx,
+                        clients.clone(),
+                        allow_public_space,
+                    )
+                    .await;
                 }
             });
         }

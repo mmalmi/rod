@@ -1,18 +1,22 @@
-use criterion::{criterion_group, criterion_main, Criterion};
 use criterion::async_executor::FuturesExecutor;
-use rod::{Node, Config};
-use rod::adapters::{SledStorage, MemoryStorage, WsServer, OutgoingWebsocketManager};
+use criterion::{criterion_group, criterion_main, Criterion};
+use rod::actor::Addr;
+use rod::adapters::{MemoryStorage, OutgoingWebsocketManager, SledStorage, WsServer};
+use rod::message::Message;
+use rod::{Config, Node};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::runtime::Runtime;
 use tokio::time::{sleep, Duration};
-use std::sync::atomic::{AtomicUsize, Ordering};
-use rod::actor::Addr;
-use rod::message::Message;
 
 fn criterion_benchmark(c: &mut Criterion) {
-    let rt  = Runtime::new().unwrap();
+    let rt = Runtime::new().unwrap();
     c.bench_function("memory_storage get-put", |b| {
         rt.block_on(async {
-            let mut db = Node::new_with_config(Config::default(), vec![Box::new(MemoryStorage::new())], vec![]);
+            let mut db = Node::new_with_config(
+                Config::default(),
+                vec![Box::new(MemoryStorage::new())],
+                vec![],
+            );
             let counter: AtomicUsize = AtomicUsize::new(0);
             b.to_async(FuturesExecutor).iter(|| {
                 let mut db = db.clone();
@@ -37,7 +41,11 @@ fn criterion_benchmark(c: &mut Criterion) {
         rt.block_on(async {
             sleep(Duration::from_millis(100)).await;
             let config = Config::default();
-            let sled = SledStorage::new_with_config(config.clone(), sled::Config::default().path(path), None);
+            let sled = SledStorage::new_with_config(
+                config.clone(),
+                sled::Config::default().path(path),
+                None,
+            );
             let mut db = Node::new_with_config(config.clone(), vec![Box::new(sled)], vec![]);
             let counter: AtomicUsize = AtomicUsize::new(0);
             b.to_async(FuturesExecutor).iter(|| {
@@ -61,10 +69,21 @@ fn criterion_benchmark(c: &mut Criterion) {
         rt.block_on(async {
             //sleep(Duration::from_millis(100)).await;
             let ws_server = Box::new(WsServer::new(Config::default()));
-            let ws_client = Box::new(OutgoingWebsocketManager::new(Config::default(), vec!["http://localhost:4944/ws".to_string()]));
-            let mut peer1 = Node::new_with_config(Config::default(), vec![Box::new(MemoryStorage::new())], vec![ws_server]);
+            let ws_client = Box::new(OutgoingWebsocketManager::new(
+                Config::default(),
+                vec!["http://localhost:4944/ws".to_string()],
+            ));
+            let mut peer1 = Node::new_with_config(
+                Config::default(),
+                vec![Box::new(MemoryStorage::new())],
+                vec![ws_server],
+            );
             //sleep(Duration::from_millis(1000)).await; // let the server start
-            let mut peer2 = Node::new_with_config(Config::default(), vec![Box::new(MemoryStorage::new())], vec![ws_client]);
+            let mut peer2 = Node::new_with_config(
+                Config::default(),
+                vec![Box::new(MemoryStorage::new())],
+                vec![ws_client],
+            );
             //sleep(Duration::from_millis(1000)).await; // let the ws connect
             let counter: AtomicUsize = AtomicUsize::new(0);
             b.to_async(FuturesExecutor).iter(|| {

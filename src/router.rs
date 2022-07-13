@@ -1,12 +1,12 @@
-use crate::message::{Message, Put, Get};
 use crate::actor::{Actor, ActorContext, Addr};
-use crate::{Config};
-use crate::utils::{BoundedHashSet, BoundedHashMap};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use crate::message::{Get, Message, Put};
+use crate::utils::{BoundedHashMap, BoundedHashSet};
+use crate::Config;
 use async_trait::async_trait;
-use std::collections::{HashMap, HashSet};
 use log::{debug, error, info};
 use rand::{seq::IteratorRandom, thread_rng};
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 static SEEN_MSGS_MAX_SIZE: usize = 10000;
 
@@ -60,13 +60,19 @@ impl Actor for Router {
         match msg {
             Message::Put(put) => self.handle_put(put),
             Message::Get(get) => self.handle_get(get),
-            Message::Hi { from, peer_id: _ } => { self.known_peers.insert(from); }
+            Message::Hi { from, peer_id: _ } => {
+                self.known_peers.insert(from);
+            }
         };
     }
 }
 
 impl Router {
-    pub fn new(config: Config, storage_adapter_actors: Vec<Box<dyn Actor>>, network_adapter_actors: Vec<Box<dyn Actor>>) -> Self {
+    pub fn new(
+        config: Config,
+        storage_adapter_actors: Vec<Box<dyn Actor>>,
+        network_adapter_actors: Vec<Box<dyn Actor>>,
+    ) -> Self {
         Self {
             config,
             known_peers: HashSet::new(),
@@ -120,14 +126,20 @@ impl Router {
         if self.is_message_seen(&get.id) {
             return;
         }
-        let seen_get_message = SeenGetMessage { from: get.from.clone(), last_reply_checksum: get.checksum.clone() };
-        self.seen_get_messages.insert(get.id.clone(), seen_get_message);
+        let seen_get_message = SeenGetMessage {
+            from: get.from.clone(),
+            last_reply_checksum: get.checksum.clone(),
+        };
+        self.seen_get_messages
+            .insert(get.id.clone(), seen_get_message);
 
         // Record subscriber
         let topic = get.node_id.split("/").next().unwrap_or("");
         debug!("{} subscribed to {}", get.from, topic);
-        self.subscribers_by_topic.entry(topic.to_string())
-            .or_insert_with(HashSet::new).insert(get.from.clone());
+        self.subscribers_by_topic
+            .entry(topic.to_string())
+            .or_insert_with(HashSet::new)
+            .insert(get.from.clone());
 
         // Ask storage
         for addr in self.storage_adapters.iter() {
@@ -159,12 +171,19 @@ impl Router {
                 }
                 already_sent_to.insert(addr.clone());
                 match addr.send(Message::Get(get.clone())) {
-                    Ok(_) => { sent_to += 1; },
-                    _=> { errored.insert(addr.clone()); }
+                    Ok(_) => {
+                        sent_to += 1;
+                    }
+                    _ => {
+                        errored.insert(addr.clone());
+                    }
                 }
             }
         }
-        debug!("sent get to a random sample of subscribers of size {}", sent_to);
+        debug!(
+            "sent get to a random sample of subscribers of size {}",
+            sent_to
+        );
         if errored.len() > 0 {
             if let Some(topic_subscribers) = self.subscribers_by_topic.get_mut(topic) {
                 for addr in errored {
@@ -188,8 +207,10 @@ impl Router {
                 }
                 already_sent_to.insert(addr.clone());
                 match addr.send(Message::Get(get.clone())) {
-                    Ok(_) => {},
-                    _=> { errored.insert(addr.clone()); }
+                    Ok(_) => {}
+                    _ => {
+                        errored.insert(addr.clone());
+                    }
                 }
             }
             for addr in errored {
@@ -207,14 +228,15 @@ impl Router {
         match &put.in_response_to {
             Some(in_response_to) => {
                 if let Some(seen_get_message) = self.seen_get_messages.get_mut(in_response_to) {
-                    if put.checksum != None && put.checksum == seen_get_message.last_reply_checksum {
+                    if put.checksum != None && put.checksum == seen_get_message.last_reply_checksum
+                    {
                         debug!("same reply already sent");
                         return;
                     } // failing these conditions, should we still send the ack to someone?
                     seen_get_message.last_reply_checksum = put.checksum.clone();
                     let _ = seen_get_message.from.send(Message::Put(put));
                 }
-            },
+            }
             _ => {
                 // Save to storage
                 for addr in self.storage_adapters.iter() {
@@ -240,7 +262,8 @@ impl Router {
                 for node_id in put.clone().updated_nodes.keys() {
                     let topic = node_id.split("/").next().unwrap_or("");
                     if let Some(topic_subscribers) = self.subscribers_by_topic.get_mut(topic) {
-                        topic_subscribers.retain(|addr| {  // send & remove closed addresses
+                        topic_subscribers.retain(|addr| {
+                            // send & remove closed addresses
                             if put.from == *addr {
                                 return true;
                             }
@@ -249,8 +272,11 @@ impl Router {
                             }
                             already_sent_to.insert(addr.clone());
                             match addr.send(Message::Put(put.clone())) {
-                                Ok(_) => { sent_to += 1; true },
-                                _=> false
+                                Ok(_) => {
+                                    sent_to += 1;
+                                    true
+                                }
+                                _ => false,
                             }
                         })
                     }
@@ -275,8 +301,10 @@ impl Router {
                         match addr.send(Message::Put(put.clone())) {
                             Ok(_) => {
                                 debug!("sent put to random dude");
-                            },
-                            _=> { errored.insert(addr.clone()); }
+                            }
+                            _ => {
+                                errored.insert(addr.clone());
+                            }
                         }
                     }
                     for addr in errored {
