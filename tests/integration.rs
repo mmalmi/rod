@@ -86,14 +86,22 @@ mod tests {
     #[tokio::test]
     async fn connect_and_sync_longer_path_over_websocket() {
         let config = Config::default();
+
+        let ws_server = WsServer::new_with_config(
+            config.clone(),
+            WsServerConfig {
+                port: 4946,
+                ..WsServerConfig::default()
+            },
+        );
         let mut peer1 = Node::new_with_config(
             config.clone(),
             vec![],
-            vec![Box::new(WsServer::new(config.clone()))],
+            vec![Box::new(ws_server)],
         );
         let ws_client = OutgoingWebsocketManager::new(
             config.clone(),
-            vec!["ws://localhost:4944/ws".to_string()],
+            vec!["ws://localhost:4946/ws".to_string()],
         );
         let mut peer2 = Node::new_with_config(config.clone(), vec![], vec![Box::new(ws_client)]);
         sleep(Duration::from_millis(2000)).await;
@@ -129,21 +137,28 @@ mod tests {
     async fn websocket_sync_over_relay_peer() {
         let config = Config::default();
 
+        let ws_server = WsServer::new_with_config(
+            config.clone(),
+            WsServerConfig {
+                port: 4948,
+                ..WsServerConfig::default()
+            },
+        );
         let mut relay = Node::new_with_config(
             config.clone(),
             vec![],
-            vec![Box::new(WsServer::new(config.clone()))],
+            vec![Box::new(ws_server)],
         );
 
         let ws_client = OutgoingWebsocketManager::new(
             config.clone(),
-            vec!["ws://localhost:4944/ws".to_string()],
+            vec!["ws://localhost:4948/ws".to_string()],
         );
         let mut peer1 = Node::new_with_config(config.clone(), vec![], vec![Box::new(ws_client)]);
 
         let ws_client = OutgoingWebsocketManager::new(
             config.clone(),
-            vec!["ws://localhost:4944/ws".to_string()],
+            vec!["ws://localhost:4948/ws".to_string()],
         );
         let mut peer2 = Node::new_with_config(config.clone(), vec![], vec![Box::new(ws_client)]);
 
@@ -174,17 +189,23 @@ mod tests {
     async fn websocket_sync_over_2_relay_peers() {
         let config = Config::default();
 
-        let ws_server1 = WsServer::new(config.clone());
+        let ws_server1 = WsServer::new_with_config(
+            config.clone(),
+            WsServerConfig {
+                port: 4950,
+                ..WsServerConfig::default()
+            },
+        );
         let ws_server2 = WsServer::new_with_config(
             config.clone(),
             WsServerConfig {
-                port: 4945,
+                port: 4952,
                 ..WsServerConfig::default()
             },
         );
         let ws_client = OutgoingWebsocketManager::new(
             config.clone(),
-            vec!["ws://localhost:4944/ws".to_string()],
+            vec!["ws://localhost:4950/ws".to_string()],
         );
         let mut relay1 = Node::new_with_config(config.clone(), vec![], vec![Box::new(ws_server1)]);
         let mut relay2 = Node::new_with_config(
@@ -195,13 +216,13 @@ mod tests {
 
         let ws_client = OutgoingWebsocketManager::new(
             config.clone(),
-            vec!["ws://localhost:4944/ws".to_string()],
+            vec!["ws://localhost:4950/ws".to_string()],
         );
         let mut peer1 = Node::new_with_config(config.clone(), vec![], vec![Box::new(ws_client)]);
 
         let ws_client = OutgoingWebsocketManager::new(
             config.clone(),
-            vec!["ws://localhost:4945/ws".to_string()],
+            vec!["ws://localhost:4952/ws".to_string()],
         );
         let mut peer2 = Node::new_with_config(config.clone(), vec![], vec![Box::new(ws_client)]);
 
@@ -235,12 +256,18 @@ mod tests {
         enable_logger();
         let config = Config::default();
 
-        let ws_server1 = WsServer::new(config.clone());
+        let ws_server1 = WsServer::new_with_config(
+            config.clone(),
+            WsServerConfig {
+                port: 4954,
+                ..WsServerConfig::default()
+            },
+        );
         let mut peer1 = Node::new_with_config(config.clone(), vec![], vec![Box::new(ws_server1)]);
 
         let ws_client = OutgoingWebsocketManager::new(
             config.clone(),
-            vec!["ws://localhost:4944/ws".to_string()],
+            vec!["ws://localhost:4954/ws".to_string()],
         );
         let mut peer2 = Node::new_with_config(config.clone(), vec![], vec![Box::new(ws_client)]);
 

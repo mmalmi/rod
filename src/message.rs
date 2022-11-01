@@ -281,7 +281,7 @@ impl Message {
             let node_data = node_data
                 .as_object()
                 .ok_or("put node data was not an object")?;
-            let updated_at_times = node_data["_"][">"]
+            let updated_at_times = node_data["_"][">"] // TODO this panics if _ is not an object and silently crashes the websocket
                 .as_object()
                 .ok_or("no metadata _ in Put node object")?;
 
