@@ -63,6 +63,11 @@ RUST_LOG=debug cargo watch -x 'run -- start'
 cargo test
 ```
 
+Watch for code changes and re-run tests that contain the word "stats":
+```
+RUST_LOG=debug cargo watch -x 'test stats'
+```
+
 ```
 cargo bench
 ```

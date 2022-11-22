@@ -74,6 +74,10 @@ impl Node {
         self.uid.read().unwrap().clone()
     }
 
+    pub fn peer_id(&self) -> String {
+        self.actor_context.peer_id.read().unwrap().clone()
+    }
+
     /// Create a new root-level Node using custom configuration. Starts the default or configured network and storage adapters.
     ///
     /// # Examples

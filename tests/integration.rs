@@ -271,14 +271,17 @@ mod tests {
         );
         let mut peer2 = Node::new_with_config(config.clone(), vec![], vec![Box::new(ws_client)]);
 
-        sleep(Duration::from_millis(1000)).await;
+        sleep(Duration::from_millis(2000)).await;
+
+        let peer1_id = peer1.peer_id();
+        assert!(!peer1_id.is_empty());
 
         let mut sub = peer2
             .get("node_stats")
-            .get(&peer1.id())
+            .get(&peer1_id)
             .get("ws_server_connections")
             .on();
-        sleep(Duration::from_millis(100)).await;
+        sleep(Duration::from_millis(1000)).await;
         let res = sub.recv().await;
         info!("res {:?}", res);
         peer1.stop();
