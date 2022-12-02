@@ -244,6 +244,7 @@ impl Router {
                         continue;
                     }
                     let _ = addr.send(Message::Put(put.clone()));
+                    debug!("sent to adapter {}", addr);
                 }
 
                 let mut already_sent_to = HashSet::new();

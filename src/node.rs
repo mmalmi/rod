@@ -3,6 +3,7 @@ use crate::message::{Get, Message, Put};
 use crate::router::Router;
 use crate::types::{Children, NodeData, Value};
 use crate::utils::random_string;
+use crate::adapters::MemoryStorage;
 use async_trait::async_trait;
 use log::{debug, info};
 use std::collections::BTreeMap;
@@ -67,7 +68,9 @@ impl Actor for Node {
 impl Node {
     /// Create a new root-level Node using default configuration. No network or storage adapters are started.
     pub fn new() -> Self {
-        Self::new_with_config(Config::default(), Vec::new(), Vec::new())
+        // Use MemoryStorage by default
+        let storage = MemoryStorage::new();
+        Self::new_with_config(Config::default(), vec![Box::new(storage)], Vec::new())
     }
 
     pub fn id(&self) -> String {
@@ -228,7 +231,7 @@ impl Node {
         let parent = &*self.parent.read().unwrap();
         if let Some((parent_id, parent)) = parent {
             if parent_id == "" {
-                return;
+                return; // TODO: this breaks first_put_then_get test
             }
             let mut parent = parent.clone();
             let mut children = Children::default();
