@@ -50,6 +50,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn once_returns_value_or_none() {
+        let mut db = Node::new_with_config(
+            Config::default(),
+            vec![Box::new(MemoryStorage::new())],
+            vec![],
+        );
+        let mut node = db.get("Finglas1").get("Finglas2");
+        node.put("Fingolfin".into());
+        let Some(Value::Text(str)) = node.once(None).await else {
+            panic!("once didn't find val");
+        };
+        assert_eq!(&str, "Fingolfin");
+        assert!(db.get("Fin").get("golf").get("fin").once(None).await.is_none());
+        db.get("Fin").get("golf").get("fin").put(Value::Null);
+        assert!(!db.get("Fin").get("golf").get("fin").once(None).await.is_none());
+    }
+
+    #[tokio::test]
     async fn connect_and_sync_over_websocket() {
         let config = Config::default();
         let mut peer1 = Node::new_with_config(
@@ -247,6 +265,15 @@ mod tests {
             }
             _ => panic!("Expected Value::Text"),
         }
+
+        assert!(peer2.get("gamma").get("name").once(None).await.is_none());
+        assert!(peer1.get("gamma").get("name").once(None).await.is_none());
+        peer1.get("gamma").get("name").put("once".into());
+        let Some(Value::Text(str)) = peer2.get("gamma").get("name").once(None).await else {
+            panic!("once: Expected Value::Text");
+        };
+        assert_eq!(&str, "once");
+
         peer1.stop();
         peer2.stop();
         relay1.stop();

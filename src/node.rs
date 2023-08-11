@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use log::{debug, info};
 use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
-use std::time::SystemTime; // TODO get time from ActorContext
+use std::time::{SystemTime, Duration}; // TODO get time from ActorContext
 use tokio::sync::broadcast; // TODO replace with generics: Sender and Receiver traits?
 
 static BROADCAST_CHANNEL_SIZE: usize = 10;
@@ -200,6 +200,14 @@ impl Node {
             let _ = router.send(Message::Get(get));
         }
         self.on_sender.subscribe()
+    }
+    /// Get back the value only once, or None when not found.
+    pub async fn once(&mut self, wait: Option<Duration>) -> Option<Value> {
+        let val = tokio::time::timeout(
+            wait.unwrap_or(Duration::from_millis(66)),
+            self.on().recv(),
+        ).await.ok()?.expect("recv error??");
+        Some(val)
     }
 
     // TODO: optionally specify which adapters to ask
