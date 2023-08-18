@@ -196,10 +196,12 @@ impl Node {
             addr = self.addr.read().unwrap().clone().unwrap();
         }
         let get = Get::new(node_id, key, addr);
+        // subscribe before send
+        let subscriber = self.on_sender.subscribe();
         if let Some(router) = self.router.read().unwrap().clone() {
             let _ = router.send(Message::Get(get));
         }
-        self.on_sender.subscribe()
+        subscriber
     }
 
     // TODO: optionally specify which adapters to ask
@@ -218,8 +220,15 @@ impl Node {
 
     /// Subscribe to all children of this Node.
     pub fn map(&self) -> broadcast::Receiver<(String, Value)> {
-        // TODO: send get messages to adapters!!
-        self.map_sender.subscribe()
+        let node_id = self.uid.read().unwrap().to_string();
+        let addr = self.addr.read().unwrap().clone().unwrap();
+        let get = Get::new(node_id, None, addr);
+        // subscribe before send
+        let subscriber = self.map_sender.subscribe();
+        if let Some(router) = self.router.read().unwrap().clone() {
+            let _ = router.send(Message::Get(get));
+        }
+        subscriber
     }
 
     fn add_parent_nodes(
