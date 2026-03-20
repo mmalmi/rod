@@ -219,8 +219,8 @@ impl Node {
             return self.clone();
         }
         debug!("get key {}", key);
-        if self.children.read().unwrap().contains_key(key) {
-            self.children.read().unwrap().get(key).unwrap().clone() // TODO: theoretically, key could have been removed?
+        if let Some(child) = self.children.read().unwrap().get(key) {
+            child.clone()
         } else {
             self.new_child(key.to_string())
         }
